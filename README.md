@@ -24,6 +24,8 @@ measurement quality, checkpoint evidence, and escalation timelines. The
 [report and privacy contract](docs/REPORTS.md) defines schema v1 and default redaction.
 The [process-control contract](docs/PROCESS_CONTROL.md) defines the owned group, direct exec,
 signal targets, and noninteractive terminal boundary.
+The [identity and containment contract](docs/IDENTITY_AND_CONTAINMENT.md) defines PID reuse,
+descendant discovery, escape evidence, aggregation, and cleanup limits.
 
 ## Safety boundary
 

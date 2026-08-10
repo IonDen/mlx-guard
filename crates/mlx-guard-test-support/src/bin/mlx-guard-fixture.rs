@@ -48,6 +48,10 @@ fn run() -> Result<(), RunError> {
         "shared" => run_shared(limits),
         "cpu-stall" => run_cpu_stall(limits),
         "spawn-churn" => run_spawn_churn(),
+        "double-fork" => run_double_fork(limits),
+        "double-fork-intermediate" => run_double_fork_intermediate(limits),
+        "setsid-parent" => run_setsid_parent(limits),
+        "setsid-stall" => run_setsid_stall(),
         "fast-root-exit" => run_fast_root_exit(limits),
         "checkpoint-parent" => run_checkpoint_parent(limits),
         "short-exit" => Ok(()),
@@ -148,7 +152,7 @@ fn run_spawn_churn() -> Result<(), RunError> {
         .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
     for _ in 0..6 {
         let status = Command::new(&executable)
-            .args(["short-exit", "1", "50"])
+            .args(["cpu-stall", "1", "50"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -161,6 +165,99 @@ fn run_spawn_churn() -> Result<(), RunError> {
         }
     }
     write_phase("CHURNED children=6")
+}
+
+fn run_double_fork(limits: FixtureLimits) -> Result<(), RunError> {
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let wall_ms = limits.wall_time().as_millis().to_string();
+    let intermediate = Command::new(executable)
+        .args(["double-fork-intermediate", "1", &wall_ms])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| RunError::fixture(format!("intermediate failed: {error}")))?;
+    let intermediate_pid = intermediate.id();
+    let output = intermediate
+        .wait_with_output()
+        .map_err(|error| RunError::fixture(format!("intermediate wait failed: {error}")))?;
+    if !output.status.success() {
+        return Err(RunError::fixture("intermediate did not exit normally"));
+    }
+    let output = String::from_utf8(output.stdout)
+        .map_err(|_| RunError::fixture("intermediate output was not UTF-8"))?;
+    let child_pid = output
+        .trim()
+        .strip_prefix("GRANDCHILD pid=")
+        .ok_or_else(|| RunError::fixture("intermediate omitted grandchild PID"))?
+        .parse::<u32>()
+        .map_err(|_| RunError::fixture("grandchild PID was not numeric"))?;
+    write_phase(&format!(
+        "REPARENTED pid={child_pid} intermediate_pid={intermediate_pid}"
+    ))?;
+    loop {
+        thread::park();
+    }
+}
+
+fn run_double_fork_intermediate(limits: FixtureLimits) -> Result<(), RunError> {
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let wall_ms = limits.wall_time().as_millis().to_string();
+    let child = Command::new(executable)
+        .args(["cpu-stall", "1", &wall_ms])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| RunError::fixture(format!("grandchild failed: {error}")))?;
+    write_phase(&format!("GRANDCHILD pid={}", child.id()))
+}
+
+fn run_setsid_parent(limits: FixtureLimits) -> Result<(), RunError> {
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let wall_ms = limits.wall_time().as_millis().to_string();
+    let mut child = Command::new(executable)
+        .args(["setsid-stall", "1", &wall_ms])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| RunError::fixture(format!("setsid child failed: {error}")))?;
+    let output = child
+        .stdout
+        .take()
+        .ok_or_else(|| RunError::fixture("setsid stdout was not piped"))?;
+    let ready = io::BufReader::new(output)
+        .lines()
+        .next()
+        .ok_or_else(|| RunError::fixture("setsid child omitted identity"))?
+        .map_err(|error| RunError::fixture(format!("setsid output failed: {error}")))?;
+    write_phase(&ready)?;
+    loop {
+        thread::park();
+    }
+}
+
+fn run_setsid_stall() -> Result<(), RunError> {
+    // SAFETY: setsid has no pointer arguments; failure is checked before identity getters.
+    if unsafe { libc::setsid() } == -1 {
+        return Err(RunError::fixture(format!(
+            "setsid failed: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    // SAFETY: these identity getters have no preconditions.
+    let (process_id, group_id, parent_id) =
+        unsafe { (libc::getpid(), libc::getpgrp(), libc::getppid()) };
+    write_phase(&format!(
+        "ESCAPED pid={process_id} pgid={group_id} parent_pid={parent_id}"
+    ))?;
+    loop {
+        thread::park();
+    }
 }
 
 fn run_fast_root_exit(limits: FixtureLimits) -> Result<(), RunError> {

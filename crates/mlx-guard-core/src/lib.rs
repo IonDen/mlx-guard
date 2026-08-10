@@ -1,5 +1,7 @@
 //! Platform-isolated core for the authoritative native supervisor.
 
+#[cfg(unix)]
+mod identity;
 mod outcome;
 mod platform;
 mod policy;
@@ -7,6 +9,12 @@ mod policy;
 mod process_control;
 mod report;
 
+#[cfg(unix)]
+pub use identity::{
+    AggregateFootprint, CleanupReport, ContainmentEvent, IdentityTracker, IdentityUnavailable,
+    NativeProcessInventory, ObservationFailure, ObservationFailureKind, ProcessIdentity,
+    ProcessObservation, ProcessSnapshot, SnapshotError, TrackingFrame, wait_for_owned_group_empty,
+};
 pub use outcome::{SignalNumber, SupervisorOutcome};
 pub use platform::{PlatformSupport, platform_support};
 pub use policy::{
