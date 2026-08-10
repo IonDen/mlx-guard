@@ -11,7 +11,9 @@ use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitSta
 
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
-use crate::{SignalNumber, SignalResult};
+use crate::{CHECKPOINT_FD_ENV, CheckpointWorkerEndpoint, SignalNumber, SignalResult};
+
+const CHECKPOINT_CHILD_FD: libc::c_int = 198;
 
 /// How one child standard stream is connected.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +55,7 @@ pub enum LaunchErrorKind {
     NotExecutable,
     SpawnFailed,
     ProcessGroupValidationFailed,
+    InvalidCheckpointChannel,
 }
 
 /// Redacted launch failure suitable for CLI outcome mapping.
@@ -94,6 +97,9 @@ impl fmt::Display for LaunchError {
             LaunchErrorKind::SpawnFailed => "command launch failed",
             LaunchErrorKind::ProcessGroupValidationFailed => {
                 "new process group could not be validated"
+            }
+            LaunchErrorKind::InvalidCheckpointChannel => {
+                "checkpoint channel configuration is invalid"
             }
         };
         formatter.write_str(message)
@@ -212,6 +218,29 @@ impl OwnedProcess {
     ///
     /// Returns [`LaunchError`] for invalid preflight state, failed exec, or group validation.
     pub fn launch(options: &LaunchOptions) -> Result<Self, LaunchError> {
+        Self::launch_inner(options, None)
+    }
+
+    /// Launch with one explicitly inherited checkpoint descriptor.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LaunchError`] for normal launch failures or a reserved-environment collision.
+    pub fn launch_with_checkpoint(
+        options: &LaunchOptions,
+        endpoint: CheckpointWorkerEndpoint,
+    ) -> Result<Self, LaunchError> {
+        let result = Self::launch_inner(options, Some(&endpoint));
+        // The supervisor must not retain the worker's side of the socketpair after spawn.
+        // Closing it here makes worker exit observable as EOF on the supervisor endpoint.
+        drop(endpoint);
+        result
+    }
+
+    fn launch_inner(
+        options: &LaunchOptions,
+        checkpoint: Option<&CheckpointWorkerEndpoint>,
+    ) -> Result<Self, LaunchError> {
         if options.stdin == StdioMode::Inherit {
             validate_noninteractive_terminal(io::stdin().is_terminal())?;
         }
@@ -240,6 +269,33 @@ impl OwnedProcess {
             .stdout(options.stdout.open())
             .stderr(options.stderr.open())
             .process_group(0);
+        if let Some(checkpoint) = checkpoint {
+            if options.env.contains_key(CHECKPOINT_FD_ENV) {
+                return Err(LaunchError::new(LaunchErrorKind::InvalidCheckpointChannel));
+            }
+            let checkpoint_fd = checkpoint.raw_fd();
+            command.env(CHECKPOINT_FD_ENV, CHECKPOINT_CHILD_FD.to_string());
+            // SAFETY: this runs after fork and before exec. It duplicates the owned socket onto a
+            // reserved descriptor after stdio remapping, then clears close-on-exec on that copy.
+            unsafe {
+                command.pre_exec(move || {
+                    if libc::dup2(checkpoint_fd, CHECKPOINT_CHILD_FD) == -1 {
+                        return Err(io::Error::last_os_error());
+                    }
+                    let flags = libc::fcntl(CHECKPOINT_CHILD_FD, libc::F_GETFD);
+                    if flags == -1
+                        || libc::fcntl(
+                            CHECKPOINT_CHILD_FD,
+                            libc::F_SETFD,
+                            flags & !libc::FD_CLOEXEC,
+                        ) == -1
+                    {
+                        return Err(io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
 
         let mut child = command.spawn().map_err(map_spawn_error)?;
         let raw_pid = i32::try_from(child.id())

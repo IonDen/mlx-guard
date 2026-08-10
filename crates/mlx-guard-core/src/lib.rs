@@ -1,6 +1,8 @@
 //! Platform-isolated core for the authoritative native supervisor.
 
 #[cfg(unix)]
+mod checkpoint;
+#[cfg(unix)]
 mod identity;
 mod outcome;
 mod platform;
@@ -11,6 +13,15 @@ mod report;
 #[cfg(unix)]
 mod sampling;
 
+#[cfg(unix)]
+pub use checkpoint::{
+    CHECKPOINT_FD_ENV, CHECKPOINT_PROTOCOL_VERSION, CheckpointAcknowledgement,
+    CheckpointArtifactKind, CheckpointArtifactMetadata, CheckpointChannel, CheckpointChannelError,
+    CheckpointChannelRequestError, CheckpointHello, CheckpointNonce, CheckpointPoll,
+    CheckpointProtocol, CheckpointProtocolError, CheckpointProtocolState, CheckpointRejection,
+    CheckpointRequest, CheckpointSignalConfig, CheckpointSignalConfigError,
+    CheckpointWorkerEndpoint, CheckpointWorkerStatus, MAX_CHECKPOINT_FRAME_BYTES,
+};
 #[cfg(unix)]
 pub use identity::{
     AggregateFootprint, CleanupReport, ContainmentEvent, IdentityTracker, IdentityUnavailable,

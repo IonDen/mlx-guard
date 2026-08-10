@@ -31,7 +31,8 @@ supported.
 Checkpoint delivery has a different target type. A cooperative endpoint must be negotiated as a
 positive, live member of the owned group. Membership is checked when the endpoint is created and
 again immediately before delivery. The checkpoint signal targets that PID only. TERM and KILL never
-use the endpoint target.
+use the endpoint target. The inherited channel and FD-only readiness handshake are defined in the
+[checkpoint protocol](CHECKPOINT_PROTOCOL.md); no checkpoint signal is enabled before readiness.
 
 ## Terminal and stdio behavior
 

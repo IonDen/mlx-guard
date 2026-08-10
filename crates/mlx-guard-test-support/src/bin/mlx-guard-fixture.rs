@@ -3,15 +3,20 @@
 use std::env;
 use std::fs::{File, OpenOptions};
 use std::hint::black_box;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, Read, Write};
 use std::os::fd::FromRawFd;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::process::{Command, Stdio};
 use std::ptr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use mlx_guard_core::{
+    CHECKPOINT_FD_ENV, CheckpointAcknowledgement, CheckpointHello, CheckpointNonce,
+    CheckpointRequest, CheckpointWorkerStatus, MAX_CHECKPOINT_FRAME_BYTES,
+};
 use mlx_guard_test_support::FixtureLimits;
 
 const USAGE_EXIT: u8 = 64;
@@ -19,6 +24,8 @@ const PROTOCOL_EXIT: u8 = 65;
 const FIXTURE_EXIT: u8 = 70;
 const ARTIFACT_EXIT: u8 = 74;
 const TIMEOUT_EXIT: i32 = 124;
+
+static CHECKPOINT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 fn main() -> ExitCode {
     match run() {
@@ -56,6 +63,12 @@ fn run() -> Result<(), RunError> {
         "setsid-stall" => run_setsid_stall(),
         "fast-root-exit" => run_fast_root_exit(limits),
         "checkpoint-parent" => run_checkpoint_parent(limits),
+        "checkpoint-success" => run_checkpoint_worker("success", limits),
+        "checkpoint-blocked" => run_checkpoint_worker("blocked", limits),
+        "checkpoint-exit" => run_checkpoint_worker("exit", limits),
+        "checkpoint-cancel" => run_checkpoint_worker("cancel", limits),
+        "checkpoint-allocate" => run_checkpoint_worker("allocate", limits),
+        "checkpoint-spoof" => run_checkpoint_worker("spoof", limits),
         "short-exit" => Ok(()),
         "setsid" => run_setsid(),
         "ignore-term" => run_ignore_term(),
@@ -320,6 +333,125 @@ fn run_checkpoint_parent(limits: FixtureLimits) -> Result<(), RunError> {
     loop {
         thread::park();
     }
+}
+
+extern "C" fn checkpoint_signal_handler(_signal: libc::c_int) {
+    CHECKPOINT_REQUESTED.store(true, Ordering::SeqCst);
+}
+
+fn run_checkpoint_worker(mode: &str, limits: FixtureLimits) -> Result<(), RunError> {
+    let fd: i32 = env::var(CHECKPOINT_FD_ENV)
+        .map_err(|_| RunError::usage("checkpoint descriptor is required"))?
+        .parse()
+        .map_err(|_| RunError::usage("checkpoint descriptor must be numeric"))?;
+    // SAFETY: the supervisor passes this process ownership of one inherited socket descriptor.
+    let mut channel = unsafe { File::from_raw_fd(fd) };
+    let hello_frame = read_checkpoint_frame(&mut channel)?
+        .ok_or_else(|| RunError::protocol("checkpoint hello ended before a frame"))?;
+    let hello = CheckpointHello::decode(&hello_frame)
+        .map_err(|error| RunError::protocol(error.to_string()))?;
+    CHECKPOINT_REQUESTED.store(false, Ordering::SeqCst);
+    // SAFETY: the handler only stores to a process-local atomic flag and SIGUSR1 is validated by the
+    // checkpoint protocol configuration.
+    if unsafe {
+        libc::signal(
+            libc::SIGUSR1,
+            checkpoint_signal_handler as *const () as libc::sighandler_t,
+        )
+    } == libc::SIG_ERR
+    {
+        return Err(RunError::fixture(format!(
+            "checkpoint signal setup failed: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    channel
+        .write_all(&hello.ready_frame())
+        .and_then(|()| channel.flush())
+        .map_err(|error| RunError::protocol(format!("checkpoint ready failed: {error}")))?;
+    write_phase(&format!("READY mode=checkpoint-{mode}"))?;
+    while !CHECKPOINT_REQUESTED.load(Ordering::SeqCst) {
+        thread::park_timeout(Duration::from_millis(1));
+    }
+    if mode == "exit" {
+        return Ok(());
+    }
+    let Some(request) = read_checkpoint_request(&mut channel)? else {
+        if mode == "cancel" {
+            return write_phase("CANCELLED");
+        }
+        return Err(RunError::protocol(
+            "checkpoint request ended before a frame",
+        ));
+    };
+    if mode == "blocked" {
+        thread::sleep(Duration::from_millis(limits.allocation_bytes()));
+    }
+    let allocation = if mode == "allocate" {
+        let length = usize::try_from(limits.allocation_bytes())
+            .map_err(|_| RunError::fixture("checkpoint allocation does not fit usize"))?;
+        Some(AnonymousMapping::new(length)?)
+    } else {
+        None
+    };
+    if mode == "spoof" {
+        let spoof = CheckpointAcknowledgement::new(
+            CheckpointNonce::from_bytes([8; 32]),
+            request.request_id(),
+            CheckpointWorkerStatus::Completed,
+            None,
+        )
+        .encode();
+        channel
+            .write_all(&spoof)
+            .and_then(|()| channel.flush())
+            .map_err(|error| RunError::protocol(format!("checkpoint spoof failed: {error}")))?;
+        thread::sleep(Duration::from_millis(20));
+    }
+    let acknowledgement =
+        CheckpointAcknowledgement::for_request(&request, CheckpointWorkerStatus::Completed, None)
+            .encode();
+    channel
+        .write_all(&acknowledgement)
+        .and_then(|()| channel.flush())
+        .map_err(|error| RunError::protocol(format!("checkpoint ack failed: {error}")))?;
+    black_box(&allocation);
+    loop {
+        thread::park();
+    }
+}
+
+fn read_checkpoint_request(channel: &mut File) -> Result<Option<CheckpointRequest>, RunError> {
+    let Some(frame) = read_checkpoint_frame(channel)? else {
+        return Ok(None);
+    };
+    CheckpointRequest::decode(&frame)
+        .map(Some)
+        .map_err(|error| RunError::protocol(error.to_string()))
+}
+
+fn read_checkpoint_frame(channel: &mut File) -> Result<Option<Vec<u8>>, RunError> {
+    let mut header = [0_u8; 4];
+    match channel.read_exact(&mut header) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(error) => {
+            return Err(RunError::protocol(format!(
+                "checkpoint request header failed: {error}"
+            )));
+        }
+    }
+    let body_len = u32::from_be_bytes(header) as usize;
+    if body_len > MAX_CHECKPOINT_FRAME_BYTES {
+        return Err(RunError::protocol("checkpoint request was oversized"));
+    }
+    let mut frame = Vec::with_capacity(4 + body_len);
+    frame.extend_from_slice(&header);
+    frame.resize(4 + body_len, 0);
+    channel
+        .read_exact(&mut frame[4..])
+        .map_err(|error| RunError::protocol(format!("checkpoint request body failed: {error}")))?;
+    Ok(Some(frame))
 }
 
 fn run_setsid() -> Result<(), RunError> {
