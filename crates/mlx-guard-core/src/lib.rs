@@ -6,6 +6,7 @@ mod advisory;
 mod checkpoint;
 #[cfg(unix)]
 mod identity;
+mod intervention;
 mod outcome;
 mod platform;
 mod policy;
@@ -30,11 +31,17 @@ pub use identity::{
     NativeProcessInventory, ObservationFailure, ObservationFailureKind, ProcessIdentity,
     ProcessObservation, ProcessSnapshot, SnapshotError, TrackingFrame, wait_for_owned_group_empty,
 };
+pub use intervention::{
+    Actuation, ActuationOutcome, InterventionActuator, InterventionEngine, InterventionEvidence,
+    InterventionProgress, InterventionRecord, MAX_INTERVENTION_RECORDS,
+};
+#[cfg(unix)]
+pub use intervention::{CheckpointBinding, CheckpointObservation, ProcessInterventionActuator};
 pub use outcome::{SignalNumber, SupervisorOutcome};
 pub use platform::{PlatformSupport, platform_support};
 pub use policy::{
-    Action, CheckpointDisposition, Event, PolicyConfig, PolicyConfigError, PolicyMachine,
-    PolicyState, SampleEvent,
+    Action, ActuationFailure, ActuationKind, CheckpointDisposition, Event, POLICY_CONTRACT_VERSION,
+    PolicyConfig, PolicyConfigError, PolicyMachine, PolicyState, SampleEvent,
 };
 #[cfg(unix)]
 pub use process_control::{

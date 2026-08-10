@@ -74,6 +74,7 @@ fn two_fresh_breaches_request_checkpoint_and_false_ack_is_ignored() {
             Action::RequestCheckpoint {
                 request_id: 1,
                 overshoot_bytes: 1,
+                deadline_at: ms(60),
             },
         ]
     );
@@ -306,6 +307,7 @@ fn long_sleep_advances_one_safety_phase_per_observed_tick() {
         [Action::RequestCheckpoint {
             request_id: 1,
             overshoot_bytes: 0,
+            deadline_at: ms(550),
         }]
     );
     assert_eq!(

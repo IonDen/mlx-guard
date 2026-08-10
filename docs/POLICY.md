@@ -1,6 +1,6 @@
 # Policy contract
 
-The v0.1 policy is a pure state machine driven by ordered monotonic events. Only the sampled,
+Policy contract version 1 is a pure state machine driven by ordered monotonic events. Only the sampled,
 OS-accounted aggregate footprint can trigger a memory intervention. An optional wall-time limit is
 the only other destructive input. Pressure, swap, compressor, wired-memory, MLX, and growth-rate
 metrics are advisory and cannot change state.
@@ -17,14 +17,18 @@ metrics are advisory and cannot change state.
 | normal or warning | tick | wall limit reached | checkpoint-requested or terminating | request checkpoint or send TERM |
 | checkpoint-requested | authenticated matching acknowledgement | before timeout | terminating | send TERM |
 | checkpoint-requested | tick | checkpoint deadline reached | terminating | send TERM |
+| checkpoint-requested | checkpoint setup or delivery failure | always | terminating | send TERM |
 | terminating | tick | TERM grace reached | emergency | send KILL |
+| terminating | TERM delivery failure | always | emergency | send KILL |
+| emergency | KILL delivery failure | always | supervisor-error | report typed failure |
 | any active state | repeated terminal signal | intervention already started | emergency | send KILL |
 | any active state | process exit | always | exited | report observed result |
 
 Values between recovery and warning retain the previous normal or warning state. A sample at or
 above the ordinary limit contributes to the consecutive-breach count. A sample below that limit
 resets the count. A sample at or above the emergency threshold skips checkpoint and TERM grace.
-Overshoot is recorded as aggregate footprint minus the configured limit.
+Overshoot is recorded as aggregate footprint minus the configured limit. Each checkpoint action
+includes its state-machine deadline, so the runtime does not reconstruct or extend it.
 
 ## Measurement quality and clocks
 
@@ -51,6 +55,10 @@ allows the state machine to record `acknowledged_unverified_durability`. Even th
 does not prove that checkpoint bytes are complete or durable. A missing, late, mismatched, or
 unauthenticated acknowledgement cannot delay TERM beyond the checkpoint timeout.
 
+Checkpoint setup, channel, endpoint, or worker failures are distinct from a command that never
+negotiated checkpoint support. Both paths proceed to TERM, but the recorded disposition remains
+different.
+
 The supervisor continues sampling after TERM or KILL when possible. The final report counts these
 post-signal observations and records a final footprint only when one was actually measured. Signal
 delivery itself never proves process exit, footprint reclamation, or Metal reclamation.
@@ -63,6 +71,8 @@ delivery itself never proves process exit, footprint reclamation, or Metal recla
 | `100, 101` with two required breaches | record, then request checkpoint with 1 byte overshoot |
 | wrong request ID, unauthenticated acknowledgement, matching authenticated acknowledgement | ignore, ignore, send TERM |
 | checkpoint timeout, then TERM-grace timeout | send TERM, then send KILL |
+| checkpoint delivery failure | send TERM with checkpoint-failure disposition |
+| TERM failure, then KILL failure | send KILL, then report terminal supervisor error |
 | aggregate `151` with limit `100`, emergency `150` | record, send KILL, record 51-byte overshoot |
 | stale, wide, missing with allowance `3` | record each missing result, then fail according to mode |
 

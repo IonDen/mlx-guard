@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::SignalNumber;
 
+/// Stable version of the public state-machine decision contract.
+pub const POLICY_CONTRACT_VERSION: u16 = 1;
+
 /// Configuration for the pure enforcement state machine.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PolicyConfig {
@@ -53,8 +56,29 @@ pub enum PolicyState {
 pub enum CheckpointDisposition {
     AcknowledgedUnverifiedDurability,
     TimedOut,
+    SkippedCheckpointFailure,
     SkippedObservationFailure,
     SkippedNotNegotiated,
+}
+
+/// The platform side effect whose execution failed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActuationKind {
+    Checkpoint,
+    Term,
+    Kill,
+    ForwardSignal,
+}
+
+/// A bounded, non-sensitive classification of a platform actuation failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ActuationFailure {
+    CheckpointUnavailable,
+    CheckpointRejected,
+    ProcessMissing,
+    PermissionDenied,
+    InvalidTarget,
+    SignalFailed,
 }
 
 /// A measurement delivered to the policy machine.
@@ -82,6 +106,11 @@ pub enum Event {
         at: Duration,
         signal: SignalNumber,
     },
+    ActuationFailed {
+        at: Duration,
+        action: ActuationKind,
+        failure: ActuationFailure,
+    },
     ProcessExited {
         at: Duration,
         final_footprint_bytes: Option<u64>,
@@ -89,12 +118,13 @@ pub enum Event {
 }
 
 impl Event {
-    fn at(&self) -> Duration {
+    pub(crate) fn at(&self) -> Duration {
         match self {
             Self::Sample(sample) => sample.processed_at,
             Self::Tick { at }
             | Self::CheckpointAck { at, .. }
             | Self::ExternalSignal { at, .. }
+            | Self::ActuationFailed { at, .. }
             | Self::ProcessExited { at, .. } => *at,
         }
     }
@@ -108,6 +138,7 @@ pub enum Action {
     RequestCheckpoint {
         request_id: u64,
         overshoot_bytes: u64,
+        deadline_at: Duration,
     },
     SendTerm {
         checkpoint: CheckpointDisposition,
@@ -121,6 +152,10 @@ pub enum Action {
     ReportExit {
         final_footprint_bytes: Option<u64>,
         post_signal_observations: u32,
+    },
+    ReportSupervisorError {
+        action: ActuationKind,
+        failure: ActuationFailure,
     },
 }
 
@@ -226,6 +261,26 @@ impl PolicyMachine {
         self.state
     }
 
+    /// Return the stable decision-contract version used by this machine.
+    #[must_use]
+    pub const fn contract_version(&self) -> u16 {
+        POLICY_CONTRACT_VERSION
+    }
+
+    /// Return the next state-machine deadline that the runtime must schedule.
+    #[must_use]
+    pub const fn next_deadline(&self) -> Option<Duration> {
+        match self.state {
+            PolicyState::CheckpointRequested => self.checkpoint_deadline,
+            PolicyState::Terminating | PolicyState::SupervisorError => self.term_deadline,
+            PolicyState::Observe
+            | PolicyState::Normal
+            | PolicyState::Warning
+            | PolicyState::Emergency
+            | PolicyState::Exited => None,
+        }
+    }
+
     /// Apply one ordered event and return side effects in execution order.
     pub fn apply(&mut self, event: Event) -> Vec<Action> {
         if self.state == PolicyState::Exited {
@@ -259,6 +314,11 @@ impl PolicyMachine {
                 authenticated,
             } => self.apply_checkpoint_ack(at, request_id, authenticated),
             Event::ExternalSignal { at, signal } => self.apply_external_signal(at, signal),
+            Event::ActuationFailed {
+                at,
+                action,
+                failure,
+            } => self.apply_actuation_failed(at, action, failure),
             Event::ProcessExited { .. } => unreachable!("process exit handled before dispatch"),
         }
     }
@@ -320,11 +380,17 @@ impl PolicyMachine {
             self.state = PolicyState::Warning;
             let mut actions = vec![Action::RecordObservation];
             if self.breach_streak >= self.config.required_breach_samples {
+                let overshoot_bytes = bytes.saturating_sub(self.config.limit_bytes);
                 actions.extend(self.begin_graceful(
                     sample.processed_at,
-                    bytes.saturating_sub(self.config.limit_bytes),
+                    overshoot_bytes,
                     CheckpointDisposition::SkippedNotNegotiated,
                 ));
+                if self.config.checkpoint_timeout.is_none() {
+                    actions.push(Action::RecordOvershoot {
+                        bytes: overshoot_bytes,
+                    });
+                }
             }
             return actions;
         }
@@ -370,13 +436,15 @@ impl PolicyMachine {
     ) -> Vec<Action> {
         if let Some(timeout) = self.config.checkpoint_timeout {
             let request_id = self.next_request_id;
+            let deadline_at = at.saturating_add(timeout);
             self.next_request_id = self.next_request_id.saturating_add(1);
             self.active_request_id = Some(request_id);
-            self.checkpoint_deadline = Some(at.saturating_add(timeout));
+            self.checkpoint_deadline = Some(deadline_at);
             self.state = PolicyState::CheckpointRequested;
             vec![Action::RequestCheckpoint {
                 request_id,
                 overshoot_bytes,
+                deadline_at,
             }]
         } else {
             self.state = PolicyState::Terminating;
@@ -459,6 +527,42 @@ impl PolicyMachine {
         self.intervention_started = true;
         self.term_deadline = Some(at.saturating_add(self.config.term_grace));
         vec![Action::ForwardSignal(signal)]
+    }
+
+    fn apply_actuation_failed(
+        &mut self,
+        at: Duration,
+        action: ActuationKind,
+        failure: ActuationFailure,
+    ) -> Vec<Action> {
+        match action {
+            ActuationKind::Checkpoint if self.state == PolicyState::CheckpointRequested => {
+                self.active_request_id = None;
+                self.checkpoint_deadline = None;
+                self.state = PolicyState::Terminating;
+                self.intervention_started = true;
+                self.term_deadline = Some(at.saturating_add(self.config.term_grace));
+                vec![Action::SendTerm {
+                    checkpoint: CheckpointDisposition::SkippedCheckpointFailure,
+                }]
+            }
+            ActuationKind::Term | ActuationKind::ForwardSignal => {
+                self.active_request_id = None;
+                self.checkpoint_deadline = None;
+                self.term_deadline = None;
+                self.state = PolicyState::Emergency;
+                self.intervention_started = true;
+                vec![Action::SendKill]
+            }
+            ActuationKind::Kill | ActuationKind::Checkpoint => {
+                self.active_request_id = None;
+                self.checkpoint_deadline = None;
+                self.term_deadline = None;
+                self.state = PolicyState::SupervisorError;
+                self.intervention_started = true;
+                vec![Action::ReportSupervisorError { action, failure }]
+            }
+        }
     }
 
     fn fail_clock(&mut self) -> Vec<Action> {

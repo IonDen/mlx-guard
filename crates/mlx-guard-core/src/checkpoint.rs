@@ -186,6 +186,11 @@ impl CheckpointAcknowledgement {
     }
 
     #[must_use]
+    pub const fn request_id(&self) -> u64 {
+        self.request_id
+    }
+
+    #[must_use]
     pub fn encode(self) -> Vec<u8> {
         let mut body = Vec::with_capacity(ACKNOWLEDGEMENT_BODY_BYTES);
         body.extend_from_slice(&MAGIC);

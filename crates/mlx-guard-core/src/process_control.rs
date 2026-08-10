@@ -142,6 +142,7 @@ pub enum ControlErrorKind {
     InvalidRootStatus,
     UnsupportedExternalSignal,
     InvalidCheckpointEndpoint,
+    GroupQueryFailed,
     SignalFailed,
 }
 
@@ -182,6 +183,7 @@ impl fmt::Display for ControlError {
             ControlErrorKind::InvalidCheckpointEndpoint => {
                 "checkpoint endpoint is not a live member of the owned process group"
             }
+            ControlErrorKind::GroupQueryFailed => "owned process-group query failed",
             ControlErrorKind::SignalFailed => "signal delivery failed",
         };
         formatter.write_str(message)
@@ -349,6 +351,32 @@ impl OwnedProcess {
     #[must_use]
     pub const fn process_group_id(&self) -> i32 {
         self.process_group.get()
+    }
+
+    /// Check whether the validated owned process group still has a live member without waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControlError`] when the zero-signal process-group query fails unexpectedly.
+    pub fn owned_group_exists(&self) -> Result<bool, ControlError> {
+        let target = self
+            .process_group
+            .get()
+            .checked_neg()
+            .ok_or_else(|| ControlError::new(ControlErrorKind::GroupQueryFailed))?;
+        // SAFETY: the process group is positive and validated, so its negation cannot target zero.
+        if unsafe { libc::kill(target, 0) } == 0 {
+            return Ok(true);
+        }
+        let error = io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Ok(true),
+            _ => Err(ControlError::from_io(
+                ControlErrorKind::GroupQueryFailed,
+                error,
+            )),
+        }
     }
 
     /// Take the piped child stdin, if configured.
