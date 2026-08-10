@@ -173,6 +173,63 @@ pub struct ReportConfiguration {
 }
 
 /// Advisory values stored beside, but never used as, v0.1 policy input.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisoryScope {
+    System,
+    OwnedProcessGroup,
+}
+
+/// Stable source names for advisory observations.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisorySource {
+    DispatchMemoryPressure,
+    SysctlVmSwapusage,
+    HostStatistics64,
+    DerivedFootprintSamples,
+}
+
+/// Freshness of an advisory value at the time it was projected into a sample window.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisoryFreshness {
+    Fresh,
+    InitialUnknown,
+    Stale,
+    Unavailable,
+}
+
+/// System memory-pressure level reported by an operating-system event source.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryPressureLevel {
+    Normal,
+    Warning,
+    Critical,
+}
+
+/// Scope, source, timestamp, and freshness attached to one additive advisory field.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AdvisoryMetricMetadata {
+    pub scope: AdvisoryScope,
+    pub source: AdvisorySource,
+    pub captured_at_ms: u64,
+    pub freshness: AdvisoryFreshness,
+}
+
+/// Per-field metadata added without changing the frozen schema-v1 value shapes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AdvisoryMetadata {
+    pub pressure_events: AdvisoryMetricMetadata,
+    pub pressure_level: AdvisoryMetricMetadata,
+    pub swap_bytes: AdvisoryMetricMetadata,
+    pub compressor_bytes: AdvisoryMetricMetadata,
+    pub wired_bytes: AdvisoryMetricMetadata,
+    pub growth_bytes_per_second: AdvisoryMetricMetadata,
+}
+
+/// Advisory values stored beside, but never used as, v0.1 policy input.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AdvisoryMetrics {
     pub pressure_events: Observed<u64>,
@@ -180,6 +237,10 @@ pub struct AdvisoryMetrics {
     pub compressor_bytes: Observed<u64>,
     pub wired_bytes: Observed<u64>,
     pub growth_bytes_per_second: Observed<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pressure_level: Option<Observed<MemoryPressureLevel>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<AdvisoryMetadata>,
 }
 
 /// One bounded aggregate sampling window.
@@ -467,6 +528,7 @@ impl ReportV1 {
         }) && self.samples.last().is_none_or(|sample| {
             sample.captured_at_ms <= sample.processed_at_ms && sample.window_ms > 0
         });
+        let advisory_valid = self.samples.iter().all(valid_advisory_metrics);
         let transitions_ordered = ordered_by(&self.transitions, |item| item.at_ms)
             && self.transitions.iter().all(|item| item.from != item.to);
         let signals_ordered = ordered_by(&self.signals, |item| item.at_ms)
@@ -497,6 +559,9 @@ impl ReportV1 {
             .max()
             .unwrap_or(0);
 
+        if !advisory_valid {
+            return Err(ReportError::InvalidAdvisoryMetrics);
+        }
         if !samples_ordered
             || !transitions_ordered
             || !signals_ordered
@@ -508,6 +573,67 @@ impl ReportV1 {
             return Err(ReportError::InvalidEventOrder);
         }
         Ok(())
+    }
+}
+
+fn valid_advisory_metrics(sample: &SampleWindow) -> bool {
+    let (Some(pressure_level), Some(metadata)) =
+        (&sample.advisory.pressure_level, &sample.advisory.metadata)
+    else {
+        return sample.advisory.pressure_level.is_none() && sample.advisory.metadata.is_none();
+    };
+    let expected = [
+        (
+            &metadata.pressure_events,
+            AdvisoryScope::System,
+            AdvisorySource::DispatchMemoryPressure,
+            freshness_for(&sample.advisory.pressure_events),
+        ),
+        (
+            &metadata.pressure_level,
+            AdvisoryScope::System,
+            AdvisorySource::DispatchMemoryPressure,
+            freshness_for(pressure_level),
+        ),
+        (
+            &metadata.swap_bytes,
+            AdvisoryScope::System,
+            AdvisorySource::SysctlVmSwapusage,
+            freshness_for(&sample.advisory.swap_bytes),
+        ),
+        (
+            &metadata.compressor_bytes,
+            AdvisoryScope::System,
+            AdvisorySource::HostStatistics64,
+            freshness_for(&sample.advisory.compressor_bytes),
+        ),
+        (
+            &metadata.wired_bytes,
+            AdvisoryScope::System,
+            AdvisorySource::HostStatistics64,
+            freshness_for(&sample.advisory.wired_bytes),
+        ),
+        (
+            &metadata.growth_bytes_per_second,
+            AdvisoryScope::OwnedProcessGroup,
+            AdvisorySource::DerivedFootprintSamples,
+            freshness_for(&sample.advisory.growth_bytes_per_second),
+        ),
+    ];
+    expected.iter().all(|(metadata, scope, source, freshness)| {
+        metadata.scope == *scope
+            && metadata.source == *source
+            && metadata.freshness == *freshness
+            && metadata.captured_at_ms <= sample.processed_at_ms
+    })
+}
+
+fn freshness_for<T>(observation: &Observed<T>) -> AdvisoryFreshness {
+    match observation {
+        Observed::Available { .. } => AdvisoryFreshness::Fresh,
+        Observed::Unknown => AdvisoryFreshness::InitialUnknown,
+        Observed::Stale { .. } => AdvisoryFreshness::Stale,
+        Observed::Unavailable { .. } | Observed::Error { .. } => AdvisoryFreshness::Unavailable,
     }
 }
 
@@ -526,6 +652,7 @@ pub enum ReportError {
     InvalidConfiguration,
     InvalidPrivacy,
     InvalidEventOrder,
+    InvalidAdvisoryMetrics,
     Json(serde_json::Error),
 }
 
@@ -538,6 +665,7 @@ impl fmt::Display for ReportError {
             Self::InvalidConfiguration => "invalid report configuration",
             Self::InvalidPrivacy => "report privacy defaults were weakened",
             Self::InvalidEventOrder => "invalid report event ordering",
+            Self::InvalidAdvisoryMetrics => "invalid advisory metric metadata",
             Self::Json(_) => "report JSON is malformed",
         };
         formatter.write_str(message)

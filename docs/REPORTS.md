@@ -22,6 +22,12 @@ they do not include a path or raw operating-system message. Checkpoint request d
 `requested_unverified`. An authenticated worker response is
 `acknowledged_unverified_durability`, which still does not prove durable bytes.
 
+Advisory values retain their original schema-v1 fields. New writers may also add `pressure_level`
+and per-field `metadata` with the metric scope, public API source, observation timestamp, and
+freshness. Readers remain compatible with earlier schema-v1 reports where those additive fields are
+absent. Validation rejects metadata whose source, scope, freshness, or timestamp contradicts the
+value it describes.
+
 ## Default redaction
 
 Redaction happens in memory before JSON reaches the persistence layer. Schema v1 has no fields for
@@ -49,6 +55,6 @@ schema-v1 defaults always record `upload: disabled` and `retention: user_managed
 
 `ReportV1::validate` rejects weakened privacy assertions, malformed identities or hashes, invalid
 configuration, invalid signal numbers, reversed sample clocks, unordered records, impossible
-checkpoint fields, and an outcome timestamp earlier than recorded activity. `to_json_pretty`
-validates before serialization. `from_json` validates after parsing and strips unknown fields when
-the typed report is serialized again.
+checkpoint fields, inconsistent advisory metadata, and an outcome timestamp earlier than recorded
+activity. `to_json_pretty` validates before serialization. `from_json` validates after parsing and
+strips unknown fields when the typed report is serialized again.

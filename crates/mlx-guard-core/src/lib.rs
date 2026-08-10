@@ -1,6 +1,8 @@
 //! Platform-isolated core for the authoritative native supervisor.
 
 #[cfg(unix)]
+mod advisory;
+#[cfg(unix)]
 mod checkpoint;
 #[cfg(unix)]
 mod identity;
@@ -40,10 +42,11 @@ pub use process_control::{
     LaunchOptions, OwnedProcess, RootOutcome, StdioMode, validate_noninteractive_terminal,
 };
 pub use report::{
-    AdvisoryMetrics, ArtifactErrorCode, ArtifactErrorRecord, Capabilities, CapturePolicy,
-    CheckpointRecord, CheckpointStatus, EscapeEvidence, ObservationError, Observed,
-    PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1,
-    RetentionPolicy, RunIdentity, SampleWindow, SignalRecord, SignalResult, SignalTarget,
+    AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
+    AdvisorySource, ArtifactErrorCode, ArtifactErrorRecord, Capabilities, CapturePolicy,
+    CheckpointRecord, CheckpointStatus, EscapeEvidence, MemoryPressureLevel, ObservationError,
+    Observed, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode,
+    ReportV1, RetentionPolicy, RunIdentity, SampleWindow, SignalRecord, SignalResult, SignalTarget,
     TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason, UploadPolicy,
 };
 #[cfg(unix)]
@@ -55,3 +58,9 @@ pub use sampling::{
 
 /// Package version supplied by the workspace manifest.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+#[cfg(unix)]
+pub use advisory::{
+    AdvisorySnapshot, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationError,
+    CalibrationGuidance, NativeAdvisoryObserver, ObserveCalibration, PrelaunchSummary,
+    PrelaunchWarning,
+};

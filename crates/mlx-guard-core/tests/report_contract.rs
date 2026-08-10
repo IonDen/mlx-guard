@@ -1,9 +1,11 @@
 use std::ffi::OsString;
+use std::time::Duration;
 
 use mlx_guard_core::{
-    AdvisoryMetrics, ArtifactErrorCode, ArtifactErrorRecord, Capabilities, CheckpointRecord,
-    CheckpointStatus, EscapeEvidence, ObservationError, Observed, PolicyState, PrivacyDefaults,
-    REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode, ReportV1, RunIdentity, SampleWindow,
+    AdvisoryMetrics, AdvisoryScope, AdvisorySnapshot, ArtifactErrorCode, ArtifactErrorRecord,
+    Capabilities, CheckpointRecord, CheckpointStatus, EscapeEvidence, MemoryPressureLevel,
+    ObservationError, Observed, PolicyState, PrivacyDefaults, REPORT_SCHEMA_VERSION,
+    ReportConfiguration, ReportError, ReportMode, ReportV1, RunIdentity, SampleWindow,
     SignalRecord, SignalResult, SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord,
     UnavailableReason,
 };
@@ -66,6 +68,8 @@ fn report() -> ReportV1 {
                     code: ObservationError::PermissionDenied,
                 },
                 growth_bytes_per_second: Observed::Available { value: 20 },
+                pressure_level: None,
+                metadata: None,
             },
         }],
         transitions: vec![TransitionRecord {
@@ -188,6 +192,41 @@ fn non_utf8_executable_bytes_are_not_copied_into_json() {
     )
     .unwrap();
     assert_eq!(identity.executable_basename, "<non-utf8>");
+}
+
+#[test]
+fn additive_advisory_metadata_is_compatible_but_cross_field_mismatches_are_rejected() {
+    // Catches accepting advisory scope/source/freshness labels unrelated to their actual values.
+    let snapshot = AdvisorySnapshot::new(
+        Duration::from_millis(10),
+        Observed::Available { value: 1 },
+        Observed::Available {
+            value: MemoryPressureLevel::Normal,
+        },
+        Observed::Available { value: 2 },
+        Observed::Available { value: 3 },
+        Observed::Available { value: 4 },
+    );
+    let mut enriched = report();
+    enriched.samples[0].advisory = snapshot.with_growth(
+        &Observed::Available { value: 20 },
+        Some(Duration::from_millis(10)),
+    );
+    assert!(enriched.validate().is_ok());
+    let encoded = enriched.to_json_pretty().unwrap();
+    assert!(encoded.contains("\"source\": \"host_statistics64\""));
+
+    enriched.samples[0]
+        .advisory
+        .metadata
+        .as_mut()
+        .unwrap()
+        .wired_bytes
+        .scope = AdvisoryScope::OwnedProcessGroup;
+    assert!(matches!(
+        enriched.validate(),
+        Err(ReportError::InvalidAdvisoryMetrics)
+    ));
 }
 
 #[test]

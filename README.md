@@ -28,6 +28,8 @@ The [identity and containment contract](docs/IDENTITY_AND_CONTAINMENT.md) define
 descendant discovery, escape evidence, aggregation, and cleanup limits.
 The [footprint sampling contract](docs/SAMPLING.md) defines measurement windows, freshness,
 partial results, bounded history, and sleep/wake behavior.
+The [observe and calibration guide](docs/OBSERVE_AND_CALIBRATION.md) explains advisory system
+metrics, pre-launch warnings, and how to choose an explicit limit from repeated safe runs.
 The [checkpoint protocol](docs/CHECKPOINT_PROTOCOL.md) defines FD-only readiness, nonce-bound frames,
 deadline handling, signal safety, and redacted worker acknowledgements.
 
