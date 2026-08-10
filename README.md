@@ -19,7 +19,8 @@ mlx-guard run --max-footprint 26GiB -- python train.py
 ```
 
 See [the command-line contract](docs/CLI.md) for the exact unit grammar, exit codes, signal rules,
-and noninteractive terminal boundary.
+and noninteractive terminal boundary. See [the policy contract](docs/POLICY.md) for thresholds,
+measurement quality, checkpoint evidence, and escalation timelines.
 
 ## Safety boundary
 
