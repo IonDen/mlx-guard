@@ -47,6 +47,8 @@ fn run() -> Result<(), RunError> {
         "allocate" => run_allocate(limits),
         "shared" => run_shared(limits),
         "cpu-stall" => run_cpu_stall(limits),
+        "fanout-stall" => run_fanout_stall(limits),
+        "idle-stall" => run_idle_stall(),
         "spawn-churn" => run_spawn_churn(),
         "double-fork" => run_double_fork(limits),
         "double-fork-intermediate" => run_double_fork_intermediate(limits),
@@ -89,15 +91,7 @@ fn run_allocate(limits: FixtureLimits) -> Result<(), RunError> {
     expect_command(&mut lines, "allocate")?;
     let length = usize::try_from(limits.allocation_bytes())
         .map_err(|_| RunError::fixture("allocation does not fit usize"))?;
-    let mut allocation = Vec::new();
-    allocation
-        .try_reserve_exact(length)
-        .map_err(|error| RunError::fixture(format!("allocation failed: {error}")))?;
-    allocation.resize(length, 0);
-    for index in (0..length).step_by(4096) {
-        allocation[index] = 0xA5;
-    }
-    allocation[length - 1] = 0xA5;
+    let allocation = AnonymousMapping::new(length)?;
     black_box(&allocation);
     write_phase("ALLOCATED")?;
 
@@ -144,6 +138,39 @@ fn run_cpu_stall(limits: FixtureLimits) -> Result<(), RunError> {
         iterations = black_box(iterations.wrapping_add(1));
     }
     write_phase(&format!("DONE iterations={iterations}"))
+}
+
+fn run_fanout_stall(limits: FixtureLimits) -> Result<(), RunError> {
+    let member_count = usize::try_from(limits.allocation_bytes())
+        .map_err(|_| RunError::fixture("member count does not fit usize"))?;
+    if !(2..=16).contains(&member_count) {
+        return Err(RunError::usage("fanout member count must be within 2..=16"));
+    }
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let wall_ms = limits.wall_time().as_millis().to_string();
+    let mut children = Vec::with_capacity(member_count - 1);
+    for _ in 1..member_count {
+        let child = Command::new(&executable)
+            .args(["idle-stall", "1", &wall_ms])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| RunError::fixture(format!("fanout child failed: {error}")))?;
+        children.push(child);
+    }
+    black_box(&children);
+    write_phase(&format!("READY mode=fanout-stall members={member_count}"))?;
+    loop {
+        thread::park();
+    }
+}
+
+fn run_idle_stall() -> Result<(), RunError> {
+    loop {
+        thread::park();
+    }
 }
 
 fn run_spawn_churn() -> Result<(), RunError> {
@@ -430,6 +457,46 @@ impl RunError {
 struct SharedMapping {
     address: *mut libc::c_void,
     length: usize,
+}
+
+struct AnonymousMapping {
+    address: *mut libc::c_void,
+    length: usize,
+}
+
+impl AnonymousMapping {
+    fn new(length: usize) -> Result<Self, RunError> {
+        // SAFETY: arguments describe a new private anonymous mapping; failure is checked.
+        let address = unsafe {
+            libc::mmap(
+                ptr::null_mut(),
+                length,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            )
+        };
+        if address == libc::MAP_FAILED {
+            return Err(RunError::fixture(format!(
+                "mmap failed: {}",
+                io::Error::last_os_error()
+            )));
+        }
+        // SAFETY: mmap returned a writable region of exactly `length` bytes.
+        unsafe { ptr::write_bytes(address.cast::<u8>(), 0xA5, length) };
+        Ok(Self { address, length })
+    }
+}
+
+impl Drop for AnonymousMapping {
+    fn drop(&mut self) {
+        // SAFETY: the address and length come from the successful mmap and are unmapped once here.
+        let result = unsafe { libc::munmap(self.address, self.length) };
+        if result != 0 {
+            eprintln!("munmap failed: {}", io::Error::last_os_error());
+        }
+    }
 }
 
 impl SharedMapping {

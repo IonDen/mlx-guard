@@ -1,0 +1,361 @@
+#![cfg(target_os = "macos")]
+#![allow(unsafe_code)]
+
+use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::io::{BufRead, BufReader, Write};
+use std::os::unix::process::CommandExt;
+use std::process::{Child, Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use mlx_guard_core::{
+    FootprintSample, FootprintSampler, IdentityTracker, LaunchOptions, NativeProcessInventory,
+    OwnedProcess, RootOutcome, SampleOutcome, SamplingConfig, StdioMode,
+};
+
+const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
+const ALLOCATION_BYTES: u64 = 64 * 1024 * 1024;
+
+fn fixture(mode: &str, bytes: u64, wall_ms: u64) -> LaunchOptions {
+    LaunchOptions {
+        command: vec![
+            OsString::from(FIXTURE),
+            OsString::from(mode),
+            OsString::from(bytes.to_string()),
+            OsString::from(wall_ms.to_string()),
+        ],
+        cwd: None,
+        clear_env: false,
+        env: BTreeMap::new(),
+        stdin: StdioMode::Piped,
+        stdout: StdioMode::Piped,
+        stderr: StdioMode::Piped,
+    }
+}
+
+fn read_phase(output: &mut BufReader<std::process::ChildStdout>, expected: &str) {
+    let mut line = String::new();
+    output.read_line(&mut line).unwrap();
+    assert!(
+        line.starts_with(expected),
+        "expected {expected:?}, got {line:?}"
+    );
+}
+
+fn send(input: &mut std::process::ChildStdin, command: &str) {
+    writeln!(input, "{command}").unwrap();
+    input.flush().unwrap();
+}
+
+fn complete_bytes(sample: &FootprintSample) -> u64 {
+    match sample.outcome {
+        SampleOutcome::Complete { total_bytes } => total_bytes,
+        ref outcome => panic!("expected complete footprint, got {outcome:?}"),
+    }
+}
+
+fn sampler_for(process: &OwnedProcess, inventory: NativeProcessInventory) -> FootprintSampler {
+    let root = inventory
+        .inspect(process.root_pid().cast_signed())
+        .unwrap()
+        .identity;
+    let tracker = IdentityTracker::new(root, process.process_group_id()).unwrap();
+    let config = SamplingConfig::new(
+        Duration::from_millis(10),
+        Duration::from_millis(100),
+        Duration::from_millis(10),
+        32,
+    )
+    .unwrap();
+    FootprintSampler::new(config, tracker)
+}
+
+#[test]
+fn anonymous_allocation_and_release_match_the_predeclared_reference_bounds() {
+    // Catches substituting RSS, mapping size, or delayed synthetic values for Darwin footprint.
+    let inventory = NativeProcessInventory::new();
+    inventory.probe_footprint().unwrap();
+    let mut process = OwnedProcess::launch(&fixture("allocate", ALLOCATION_BYTES, 5_000)).unwrap();
+    let mut input = process.take_stdin().unwrap();
+    let mut output = BufReader::new(process.take_stdout().unwrap());
+    read_phase(&mut output, "READY mode=allocate");
+    let mut sampler = sampler_for(&process, inventory);
+    let epoch = Instant::now();
+    let baseline = complete_bytes(sampler.sample_native(&inventory, epoch));
+
+    send(&mut input, "allocate");
+    read_phase(&mut output, "ALLOCATED");
+    let allocated = sampler.sample_native(&inventory, epoch).clone();
+    let allocated_delta = complete_bytes(&allocated).saturating_sub(baseline);
+    let magnitude_error = allocated_delta.abs_diff(ALLOCATION_BYTES);
+    assert!(
+        magnitude_error <= ALLOCATION_BYTES / 100,
+        "baseline={baseline} allocated_delta={allocated_delta} magnitude_error={magnitude_error} sample={allocated:#?}"
+    );
+    assert!(
+        allocated
+            .finished_at
+            .checked_sub(allocated.started_at)
+            .unwrap()
+            <= Duration::from_millis(10)
+    );
+
+    send(&mut input, "release");
+    read_phase(&mut output, "RELEASED");
+    let released = sampler.sample_native(&inventory, epoch).clone();
+    let release_residual = complete_bytes(&released).saturating_sub(baseline);
+    assert!(
+        release_residual <= ALLOCATION_BYTES / 100,
+        "baseline={baseline} release_residual={release_residual} sample={released:#?}"
+    );
+    assert!(
+        released
+            .finished_at
+            .checked_sub(released.started_at)
+            .unwrap()
+            <= Duration::from_millis(10)
+    );
+
+    send(&mut input, "exit");
+    read_phase(&mut output, "EXIT");
+    assert_eq!(process.wait_root().unwrap(), RootOutcome::Exited(0));
+}
+
+#[test]
+fn sampling_continues_after_term_while_a_worker_is_still_alive() {
+    // Catches stopping observation at signal delivery instead of at observed process exit.
+    let inventory = NativeProcessInventory::new();
+    let mut process = OwnedProcess::launch(&fixture("ignore-term", 1, 2_000)).unwrap();
+    let mut output = BufReader::new(process.take_stdout().unwrap());
+    read_phase(&mut output, "READY mode=ignore-term");
+    let mut sampler = sampler_for(&process, inventory);
+    let epoch = Instant::now();
+
+    process.terminate_group().unwrap();
+    let after_term = sampler.sample_native(&inventory, epoch).clone();
+    assert!(after_term.members.iter().any(|member| {
+        member.identity.pid == process.root_pid().cast_signed() && member.footprint_bytes.is_some()
+    }));
+    process.kill_group().unwrap();
+    process.wait_root().unwrap();
+}
+
+#[test]
+fn targeted_sampling_still_detects_a_child_that_leaves_the_owned_group() {
+    // Catches optimizing group enumeration by dropping the separate descendant walk.
+    let inventory = NativeProcessInventory::new();
+    let mut process = OwnedProcess::launch(&fixture("setsid-parent", 1, 2_000)).unwrap();
+    let mut output = BufReader::new(process.take_stdout().unwrap());
+    read_phase(&mut output, "ESCAPED");
+    let mut sampler = sampler_for(&process, inventory);
+    let sample = sampler.sample_native(&inventory, Instant::now()).clone();
+    assert_eq!(sample.escaped_identities.len(), 1);
+    assert!(
+        sample
+            .members
+            .iter()
+            .any(|member| { member.identity.pid == process.root_pid().cast_signed() })
+    );
+}
+
+#[test]
+fn targeted_sampling_observes_real_child_churn_without_growing_history() {
+    // Catches a group fast path that only ever returns the root process.
+    let inventory = NativeProcessInventory::new();
+    let mut process = OwnedProcess::launch(&fixture("spawn-churn", 1, 2_000)).unwrap();
+    let mut output = BufReader::new(process.take_stdout().unwrap());
+    read_phase(&mut output, "READY mode=spawn-churn");
+    let mut sampler = sampler_for(&process, inventory);
+    let epoch = Instant::now();
+    let deadline = Instant::now() + Duration::from_millis(500);
+    let mut saw_child = false;
+    while Instant::now() < deadline && process.try_wait_root().unwrap().is_none() {
+        let sample = sampler.sample_native(&inventory, epoch);
+        saw_child |= sample.members.len() > 1;
+        thread::sleep(Duration::from_millis(2));
+    }
+    assert!(saw_child);
+    assert!(sampler.history_len() <= sampler.history_capacity());
+}
+
+#[test]
+fn sixteen_member_group_sample_window_p95_stays_within_ten_milliseconds() {
+    // Catches performing unbounded work or serial waits inside one observation window.
+    let inventory = NativeProcessInventory::new();
+    let mut process = OwnedProcess::launch(&fixture("fanout-stall", 16, 3_000)).unwrap();
+    let mut output = BufReader::new(process.take_stdout().unwrap());
+    read_phase(&mut output, "READY mode=fanout-stall members=16");
+    let mut sampler = sampler_for(&process, inventory);
+    let epoch = Instant::now();
+    let mut windows = Vec::new();
+    for _ in 0..50 {
+        let sample = sampler.sample_native(&inventory, epoch);
+        assert_eq!(sample.members.len(), 16);
+        windows.push(sample.finished_at.checked_sub(sample.started_at).unwrap());
+    }
+    windows.sort_unstable();
+    let p95 = windows[47];
+    eprintln!("sixteen_member_sample_window_p95={p95:?}");
+    assert!(p95 <= Duration::from_millis(10), "p95={p95:?}");
+}
+
+struct IdleProcessGroup {
+    process_group_id: i32,
+    children: Vec<Child>,
+}
+
+impl IdleProcessGroup {
+    fn spawn(member_count: usize, lifetime: Duration) -> Self {
+        assert!((1..=16).contains(&member_count));
+        let lifetime_seconds = lifetime.as_secs().max(1).to_string();
+        let root = Command::new("/bin/sleep")
+            .arg(&lifetime_seconds)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let process_group_id = root.id().cast_signed();
+        let mut group = Self {
+            process_group_id,
+            children: vec![root],
+        };
+        for _ in 1..member_count {
+            let child = Command::new("/bin/sleep")
+                .arg(&lifetime_seconds)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(process_group_id)
+                .spawn()
+                .unwrap();
+            group.children.push(child);
+        }
+        group
+    }
+
+    fn root_pid(&self) -> i32 {
+        self.children[0].id().cast_signed()
+    }
+}
+
+impl Drop for IdleProcessGroup {
+    fn drop(&mut self) {
+        // SAFETY: this harness created and retained the positive process group until this cleanup.
+        unsafe {
+            libc::kill(-self.process_group_id, libc::SIGKILL);
+        }
+        for child in &mut self.children {
+            child.wait().ok();
+        }
+    }
+}
+
+fn cpu_seconds() -> f64 {
+    let mut value = std::mem::MaybeUninit::<libc::timespec>::zeroed();
+    // SAFETY: clock_gettime writes the full timespec for the current-process CPU clock on success.
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, value.as_mut_ptr()) },
+        0
+    );
+    // SAFETY: the successful clock_gettime call initialized the output structure.
+    let value = unsafe { value.assume_init() };
+    Duration::new(
+        value.tv_sec.cast_unsigned(),
+        u32::try_from(value.tv_nsec).unwrap(),
+    )
+    .as_secs_f64()
+}
+
+fn current_footprint(inventory: NativeProcessInventory) -> u64 {
+    inventory
+        .inspect(std::process::id().cast_signed())
+        .unwrap()
+        .footprint_bytes
+        .unwrap()
+}
+
+#[test]
+#[ignore = "30-minute reference-host endurance acceptance"]
+fn thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds() {
+    const MEMBER_COUNT: usize = 16;
+    const HISTORY_CAPACITY: usize = 256;
+    const MAX_RSS_BYTES: u64 = 20 * 1024 * 1024;
+    const MAX_RSS_GROWTH_BYTES: u64 = 2 * 1024 * 1024;
+
+    let run_seconds = std::env::var("MLX_GUARD_ENDURANCE_SECONDS")
+        .map_or(1_800, |value| value.parse::<u64>().unwrap());
+    assert!((1..=1_800).contains(&run_seconds));
+    let warmup = if run_seconds >= 60 {
+        Duration::from_secs(10)
+    } else {
+        Duration::from_millis(100)
+    };
+    let duration = Duration::from_secs(run_seconds);
+    let group = IdleProcessGroup::spawn(MEMBER_COUNT, warmup + duration + Duration::from_secs(30));
+    let inventory = NativeProcessInventory::new();
+    let root = inventory.inspect(group.root_pid()).unwrap().identity;
+    let tracker = IdentityTracker::new(root, group.process_group_id).unwrap();
+    let config = SamplingConfig::new(
+        Duration::from_millis(50),
+        Duration::from_millis(100),
+        Duration::from_millis(10),
+        HISTORY_CAPACITY,
+    )
+    .unwrap();
+    let mut sampler = FootprintSampler::new(config, tracker);
+    let epoch = Instant::now();
+    let warmup_deadline = Instant::now() + warmup;
+    while Instant::now() < warmup_deadline {
+        let sample = sampler.sample_native(&inventory, epoch);
+        assert_eq!(sample.members.len(), MEMBER_COUNT);
+        thread::sleep(sampler.delay_until_next(epoch.elapsed()).unwrap());
+    }
+
+    let started = Instant::now();
+    let cpu_started = cpu_seconds();
+    let rss_started = current_footprint(inventory);
+    let mut max_rss = rss_started;
+    let mut next_progress = Duration::from_secs(60);
+    while started.elapsed() < duration {
+        let sample = sampler.sample_native(&inventory, epoch);
+        assert_eq!(sample.members.len(), MEMBER_COUNT);
+        assert!(matches!(sample.outcome, SampleOutcome::Complete { .. }));
+        if started.elapsed() >= next_progress {
+            let rss = current_footprint(inventory);
+            max_rss = max_rss.max(rss);
+            eprintln!(
+                "endurance elapsed_s={} rss_bytes={} history_len={}",
+                started.elapsed().as_secs(),
+                rss,
+                sampler.history_len()
+            );
+            next_progress += Duration::from_secs(60);
+        }
+        thread::sleep(sampler.delay_until_next(epoch.elapsed()).unwrap());
+    }
+    let elapsed = started.elapsed();
+    let cpu_used = cpu_seconds() - cpu_started;
+    let final_rss = current_footprint(inventory);
+    max_rss = max_rss.max(final_rss);
+    let cpu_percent = cpu_used / elapsed.as_secs_f64() * 100.0;
+    eprintln!(
+        "endurance complete elapsed_s={} cpu_percent={cpu_percent:.4} start_rss_bytes={rss_started} final_rss_bytes={final_rss} max_rss_bytes={max_rss} history_len={}",
+        elapsed.as_secs(),
+        sampler.history_len()
+    );
+
+    if run_seconds == 1_800 {
+        assert_eq!(sampler.history_len(), HISTORY_CAPACITY);
+        assert!(cpu_percent <= 2.0, "cpu_percent={cpu_percent:.4}");
+        assert!(max_rss <= MAX_RSS_BYTES, "max_rss={max_rss}");
+        assert!(
+            final_rss <= rss_started.saturating_add(MAX_RSS_GROWTH_BYTES),
+            "start_rss={rss_started} final_rss={final_rss}"
+        );
+    } else {
+        assert!(sampler.history_len() <= HISTORY_CAPACITY);
+    }
+}

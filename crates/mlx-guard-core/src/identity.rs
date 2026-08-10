@@ -322,6 +322,14 @@ impl IdentityTracker {
                 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
         }
     }
+
+    fn snapshot_scope(&self) -> (ProcessIdentity, i32, Vec<i32>) {
+        (
+            self.root,
+            self.owned_group,
+            self.tracked.keys().map(|identity| identity.pid).collect(),
+        )
+    }
 }
 
 fn descends_from_root(
@@ -413,6 +421,16 @@ impl NativeProcessInventory {
         Self
     }
 
+    /// Probe whether this host exposes the required Darwin physical-footprint capability.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed unavailable result instead of inferring support from the operating system
+    /// name or from topology-only process inspection.
+    pub fn probe_footprint(&self) -> Result<(), IdentityUnavailable> {
+        native::probe_footprint()
+    }
+
     /// Inspect a positive PID and bind its current start token.
     ///
     /// # Errors
@@ -445,6 +463,19 @@ impl NativeProcessInventory {
     /// Returns [`SnapshotError`] only when the PID list itself cannot be obtained.
     pub fn snapshot(&self) -> Result<ProcessSnapshot, SnapshotError> {
         let pids = native::list_pids()?;
+        Ok((*self).snapshot_pids(pids))
+    }
+
+    pub(crate) fn snapshot_for_tracker(
+        self,
+        tracker: &IdentityTracker,
+    ) -> Result<ProcessSnapshot, SnapshotError> {
+        let (root, owned_group, tracked_pids) = tracker.snapshot_scope();
+        let pids = native::list_relevant_pids(root.pid, owned_group, &tracked_pids)?;
+        Ok(self.snapshot_pids(pids))
+    }
+
+    fn snapshot_pids(self, pids: Vec<i32>) -> ProcessSnapshot {
         let mut observations = Vec::new();
         let mut failures = Vec::new();
         for pid in pids {
@@ -456,10 +487,10 @@ impl NativeProcessInventory {
                 }),
             }
         }
-        Ok(ProcessSnapshot {
+        ProcessSnapshot {
             observations,
             failures,
-        })
+        }
     }
 
     /// Signal only after exact identity revalidation.
@@ -509,7 +540,7 @@ pub fn wait_for_owned_group_empty(
 ) -> CleanupReport {
     let deadline = Instant::now() + timeout;
     loop {
-        match inventory.snapshot() {
+        match inventory.snapshot_for_tracker(tracker) {
             Ok(snapshot) => {
                 let frame = tracker.update(snapshot);
                 let survivors: Vec<_> = frame
@@ -558,6 +589,7 @@ pub fn wait_for_owned_group_empty(
 
 #[cfg(target_os = "macos")]
 mod native {
+    use std::collections::{BTreeSet, VecDeque};
     use std::ffi::c_void;
     use std::mem::{MaybeUninit, size_of};
     use std::ptr;
@@ -601,6 +633,8 @@ mod native {
 
     unsafe extern "C" {
         fn proc_listallpids(buffer: *mut c_void, buffersize: i32) -> i32;
+        fn proc_listpgrppids(pgrpid: i32, buffer: *mut c_void, buffersize: i32) -> i32;
+        fn proc_listchildpids(ppid: i32, buffer: *mut c_void, buffersize: i32) -> i32;
         fn proc_pidinfo(
             pid: i32,
             flavor: i32,
@@ -609,6 +643,16 @@ mod native {
             buffersize: i32,
         ) -> i32;
         fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut c_void) -> i32;
+    }
+
+    pub(super) fn probe_footprint() -> Result<(), IdentityUnavailable> {
+        // SAFETY: getpid has no preconditions and returns the current positive process identifier.
+        let current_pid = unsafe { libc::getpid() };
+        let observation = inspect(current_pid)?;
+        observation
+            .footprint_bytes
+            .map(|_| ())
+            .ok_or(IdentityUnavailable::Unsupported)
     }
 
     pub(super) fn list_pids() -> Result<Vec<i32>, SnapshotError> {
@@ -632,6 +676,72 @@ mod native {
         // SAFETY: the buffer holds `capacity` i32 values and `bytes` describes its full size.
         let count = unsafe { proc_listallpids(pids.as_mut_ptr().cast::<c_void>(), bytes) };
         if count < 0 {
+            return Err(SnapshotError {
+                kind: ObservationFailureKind::EnumerationFailed,
+            });
+        }
+        pids.truncate(usize::try_from(count).unwrap_or(0));
+        pids.retain(|pid| *pid > 0);
+        Ok(pids)
+    }
+
+    pub(super) fn list_relevant_pids(
+        root_pid: i32,
+        owned_group: i32,
+        tracked_pids: &[i32],
+    ) -> Result<Vec<i32>, SnapshotError> {
+        let mut relevant: BTreeSet<i32> = tracked_pids
+            .iter()
+            .copied()
+            .filter(|pid| *pid > 0)
+            .collect();
+        relevant.insert(root_pid);
+        relevant.extend(list_related_pids(proc_listpgrppids, owned_group)?);
+
+        let mut visited = BTreeSet::new();
+        let mut pending: VecDeque<_> = relevant.iter().copied().collect();
+        while let Some(parent_pid) = pending.pop_front() {
+            if !visited.insert(parent_pid) {
+                continue;
+            }
+            for child_pid in list_related_pids(proc_listchildpids, parent_pid)? {
+                if relevant.insert(child_pid) {
+                    pending.push_back(child_pid);
+                }
+            }
+        }
+        Ok(relevant.into_iter().collect())
+    }
+
+    type RelatedPidList = unsafe extern "C" fn(i32, *mut c_void, i32) -> i32;
+
+    fn list_related_pids(
+        function: RelatedPidList,
+        identifier: i32,
+    ) -> Result<Vec<i32>, SnapshotError> {
+        // SAFETY: a null buffer asks libproc for the current capacity estimate.
+        let estimate = unsafe { function(identifier, ptr::null_mut(), 0) };
+        if estimate < 0 {
+            return Err(SnapshotError {
+                kind: ObservationFailureKind::EnumerationFailed,
+            });
+        }
+        if estimate == 0 {
+            return Ok(Vec::new());
+        }
+        let capacity = usize::try_from(estimate)
+            .ok()
+            .and_then(|value| value.checked_add(16))
+            .ok_or(SnapshotError {
+                kind: ObservationFailureKind::EnumerationFailed,
+            })?;
+        let mut pids = vec![0_i32; capacity];
+        let bytes = i32::try_from(capacity * size_of::<i32>()).map_err(|_| SnapshotError {
+            kind: ObservationFailureKind::EnumerationFailed,
+        })?;
+        // SAFETY: the buffer holds `capacity` i32 values and the function only writes that buffer.
+        let count = unsafe { function(identifier, pids.as_mut_ptr().cast::<c_void>(), bytes) };
+        if count < 0 || usize::try_from(count).is_ok_and(|count| count >= capacity) {
             return Err(SnapshotError {
                 kind: ObservationFailureKind::EnumerationFailed,
             });
@@ -743,6 +853,10 @@ mod native {
     use super::{IdentityUnavailable, ProcessIdentity, ProcessObservation, SnapshotError};
     use crate::ObservationFailureKind;
 
+    pub(super) fn probe_footprint() -> Result<(), IdentityUnavailable> {
+        Err(IdentityUnavailable::Unsupported)
+    }
+
     pub(super) fn list_pids() -> Result<Vec<i32>, SnapshotError> {
         let entries = fs::read_dir("/proc").map_err(|_| SnapshotError {
             kind: ObservationFailureKind::EnumerationFailed,
@@ -752,6 +866,14 @@ mod native {
             .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
             .filter(|pid| *pid > 0)
             .collect())
+    }
+
+    pub(super) fn list_relevant_pids(
+        _root_pid: i32,
+        _owned_group: i32,
+        _tracked_pids: &[i32],
+    ) -> Result<Vec<i32>, SnapshotError> {
+        list_pids()
     }
 
     pub(super) fn inspect(pid: i32) -> Result<ProcessObservation, IdentityUnavailable> {
@@ -798,10 +920,22 @@ mod native {
     use super::{IdentityUnavailable, ProcessObservation, SnapshotError};
     use crate::ObservationFailureKind;
 
+    pub(super) fn probe_footprint() -> Result<(), IdentityUnavailable> {
+        Err(IdentityUnavailable::Unsupported)
+    }
+
     pub(super) fn list_pids() -> Result<Vec<i32>, SnapshotError> {
         Err(SnapshotError {
             kind: ObservationFailureKind::Unsupported,
         })
+    }
+
+    pub(super) fn list_relevant_pids(
+        _root_pid: i32,
+        _owned_group: i32,
+        _tracked_pids: &[i32],
+    ) -> Result<Vec<i32>, SnapshotError> {
+        list_pids()
     }
 
     pub(super) fn inspect(_pid: i32) -> Result<ProcessObservation, IdentityUnavailable> {

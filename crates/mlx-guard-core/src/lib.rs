@@ -8,6 +8,8 @@ mod policy;
 #[cfg(unix)]
 mod process_control;
 mod report;
+#[cfg(unix)]
+mod sampling;
 
 #[cfg(unix)]
 pub use identity::{
@@ -32,6 +34,12 @@ pub use report::{
     PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1,
     RetentionPolicy, RunIdentity, SampleWindow, SignalRecord, SignalResult, SignalTarget,
     TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason, UploadPolicy,
+};
+#[cfg(unix)]
+pub use sampling::{
+    FootprintSample, FootprintSampler, MAX_SAMPLE_HISTORY_CAPACITY, MAX_SAMPLE_INTERVAL,
+    MIN_SAMPLE_INTERVAL, ProcessFootprintSample, SampleOutcome, SamplingClockError, SamplingConfig,
+    SamplingConfigError,
 };
 
 /// Package version supplied by the workspace manifest.

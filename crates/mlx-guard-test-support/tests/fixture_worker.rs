@@ -129,6 +129,20 @@ fn cpu_stall_worker_remains_bounded() {
 }
 
 #[test]
+fn fanout_worker_exposes_a_bounded_real_process_group() {
+    // Catches replacing the 16-member performance fixture with synthetic identity records.
+    let output = Command::new(FIXTURE)
+        .args(["fanout-stall", "16", "100"])
+        .output()
+        .expect("fanout fixture must run");
+    assert_eq!(output.status.code(), Some(124));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "READY mode=fanout-stall members=16\n"
+    );
+}
+
+#[test]
 fn shared_mapping_worker_acknowledges_unmap() {
     // Catches substituting MAP_PRIVATE or a synthetic acknowledgement for the shared mapping.
     let mut session = Session::spawn("shared", 8 * 1024 * 1024, 1_000);

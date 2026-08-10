@@ -187,6 +187,19 @@ fn native_inventory_binds_start_time_and_refuses_a_stale_direct_signal() {
 }
 
 #[test]
+fn native_footprint_capability_is_probed_instead_of_assumed() {
+    // Catches treating the Linux topology adapter as proof of Darwin footprint support.
+    let inventory = NativeProcessInventory::new();
+    #[cfg(target_os = "macos")]
+    inventory.probe_footprint().unwrap();
+    #[cfg(target_os = "linux")]
+    assert_eq!(
+        inventory.probe_footprint().unwrap_err(),
+        IdentityUnavailable::Unsupported
+    );
+}
+
+#[test]
 fn real_churn_double_fork_and_root_zombie_keep_bound_identities() {
     // Catches synthetic topology tests, lost reparented members, or reaping the root before evidence.
     let inventory = NativeProcessInventory::new();

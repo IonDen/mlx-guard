@@ -26,6 +26,8 @@ The [process-control contract](docs/PROCESS_CONTROL.md) defines the owned group,
 signal targets, and noninteractive terminal boundary.
 The [identity and containment contract](docs/IDENTITY_AND_CONTAINMENT.md) defines PID reuse,
 descendant discovery, escape evidence, aggregation, and cleanup limits.
+The [footprint sampling contract](docs/SAMPLING.md) defines measurement windows, freshness,
+partial results, bounded history, and sleep/wake behavior.
 
 ## Safety boundary
 
