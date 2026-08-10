@@ -1,0 +1,554 @@
+use std::error::Error;
+use std::ffi::OsString;
+use std::fmt;
+use std::path::Path;
+
+use serde::{Deserialize, Serialize};
+
+use crate::PolicyState;
+
+/// The only report schema major understood by this package.
+pub const REPORT_SCHEMA_VERSION: u32 = 1;
+
+/// A typed observation that never confuses missing data with numeric zero.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum Observed<T> {
+    Available { value: T },
+    Unknown,
+    Unavailable { reason: UnavailableReason },
+    Stale { last_seen_at_ms: u64 },
+    Error { code: ObservationError },
+}
+
+/// Fixed reasons an observation may not exist.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UnavailableReason {
+    NotSupported,
+    NotNegotiated,
+    NotApplicable,
+    NonUtf8,
+}
+
+/// Redacted observation failures safe to persist.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationError {
+    PermissionDenied,
+    ProcessMissing,
+    MalformedKernelData,
+    ClockAnomaly,
+    Internal,
+}
+
+/// Privacy-safe identity fields derived from a command invocation.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct RunIdentity {
+    pub run_id: String,
+    pub executable_basename: String,
+    pub argument_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub correlation_hash: Option<String>,
+}
+
+impl RunIdentity {
+    /// Project literal argv into the fields allowed by schema v1.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReportError`] for empty argv, unsafe run identifiers, invalid hashes, or an
+    /// argument count that cannot be represented by the schema.
+    pub fn from_argv(
+        run_id: &str,
+        argv: &[OsString],
+        correlation_hash: Option<&str>,
+    ) -> Result<Self, ReportError> {
+        let executable = argv.first().ok_or(ReportError::InvalidIdentity)?;
+        let basename = Path::new(executable)
+            .file_name()
+            .ok_or(ReportError::InvalidIdentity)?
+            .to_str()
+            .unwrap_or("<non-utf8>")
+            .to_owned();
+        let argument_count = u32::try_from(argv.len().saturating_sub(1))
+            .map_err(|_| ReportError::InvalidIdentity)?;
+        let identity = Self {
+            run_id: run_id.to_owned(),
+            executable_basename: basename,
+            argument_count,
+            correlation_hash: correlation_hash.map(ToOwned::to_owned),
+        };
+        identity.validate()?;
+        Ok(identity)
+    }
+
+    fn validate(&self) -> Result<(), ReportError> {
+        let valid_run_id = self.run_id.strip_prefix("run_").is_some_and(|suffix| {
+            suffix.len() == 32
+                && suffix
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
+        if !valid_run_id
+            || self.executable_basename.is_empty()
+            || self.executable_basename.len() > 255
+            || matches!(self.executable_basename.as_str(), "." | "..")
+            || self.executable_basename.contains(['/', '\\'])
+            || self
+                .correlation_hash
+                .as_deref()
+                .is_some_and(|hash| !valid_correlation_hash(hash))
+        {
+            return Err(ReportError::InvalidIdentity);
+        }
+        Ok(())
+    }
+}
+
+fn valid_correlation_hash(value: &str) -> bool {
+    let Some(digest) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_package_version(value: &str) -> bool {
+    let core_end = value.find(['-', '+']).unwrap_or(value.len());
+    let core = &value[..core_end];
+    let mut parts = core.split('.');
+    let numbers_valid = (0..3).all(|_| {
+        parts
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    }) && parts.next().is_none();
+    numbers_valid
+        && value.len() <= 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
+}
+
+/// Capabilities captured before command launch.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Capabilities {
+    pub darwin_footprint: Observed<bool>,
+    pub owned_process_group: Observed<bool>,
+    pub checkpoint_channel: Observed<bool>,
+}
+
+/// Public operating mode recorded in a report.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReportMode {
+    Observe,
+    Enforce,
+}
+
+/// Normalized, non-secret policy configuration.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReportConfiguration {
+    pub mode: ReportMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_footprint_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning_footprint_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_footprint_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emergency_footprint_bytes: Option<u64>,
+    pub required_breach_samples: u32,
+    pub max_missing_samples: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wall_time_ms: Option<u64>,
+    pub sample_interval_ms: u64,
+    pub max_sample_age_ms: u64,
+    pub max_sample_window_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint_timeout_ms: Option<u64>,
+    pub term_grace_ms: u64,
+}
+
+/// Advisory values stored beside, but never used as, v0.1 policy input.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AdvisoryMetrics {
+    pub pressure_events: Observed<u64>,
+    pub swap_bytes: Observed<u64>,
+    pub compressor_bytes: Observed<u64>,
+    pub wired_bytes: Observed<u64>,
+    pub growth_bytes_per_second: Observed<i64>,
+}
+
+/// One bounded aggregate sampling window.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SampleWindow {
+    pub captured_at_ms: u64,
+    pub processed_at_ms: u64,
+    pub window_ms: u64,
+    pub aggregate_footprint_bytes: Observed<u64>,
+    pub advisory: AdvisoryMetrics,
+}
+
+/// One state transition requested by the pure policy machine.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TransitionRecord {
+    pub at_ms: u64,
+    pub from: PolicyState,
+    pub to: PolicyState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate_footprint_bytes: Option<u64>,
+}
+
+/// The only signal targets represented by schema v1.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalTarget {
+    OwnedProcessGroup,
+    CooperativeEndpoint,
+}
+
+/// Redacted result of a signal-delivery attempt.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalResult {
+    Delivered,
+    ProcessMissing,
+    PermissionDenied,
+    Failed,
+}
+
+/// One signal attempt and its observed system-call result.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SignalRecord {
+    pub at_ms: u64,
+    pub signal: u8,
+    pub target: SignalTarget,
+    pub result: SignalResult,
+}
+
+/// Worker checkpoint evidence, not a durability assertion.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckpointStatus {
+    NotNegotiated,
+    RequestedUnverified,
+    AcknowledgedUnverifiedDurability,
+    TimedOut,
+    Cancelled,
+}
+
+/// Final checkpoint protocol state and the time it was observed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CheckpointRecord {
+    pub status: CheckpointStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_ms: Option<u64>,
+}
+
+/// Best-effort evidence that a descendant escaped the owned group.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct EscapeEvidence {
+    pub detected: Observed<bool>,
+}
+
+/// Redacted persistence failures.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactErrorCode {
+    CreateFailed,
+    WriteFailed,
+    SyncFailed,
+    RenameFailed,
+    PermissionFailed,
+}
+
+/// One persistence failure without its sensitive path or operating-system message.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ArtifactErrorRecord {
+    pub at_ms: u64,
+    pub code: ArtifactErrorCode,
+}
+
+/// Typed terminal result. Child status fields stay separate from supervisor outcomes.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TerminalKind {
+    ChildExited { code: u8 },
+    ChildSignaled { signal: u8 },
+    LaunchNotFound,
+    LaunchNotExecutable,
+    InvalidConfiguration,
+    PolicyIntervention,
+    SupervisorFailure,
+    PartialArtifactFailure,
+}
+
+/// Final observed outcome and footprint availability.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TerminalOutcome {
+    pub at_ms: u64,
+    #[serde(flatten)]
+    pub kind: TerminalKind,
+    pub final_footprint_bytes: Observed<u64>,
+}
+
+/// Upload behavior frozen for v0.1.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UploadPolicy {
+    Disabled,
+}
+
+/// Retention behavior frozen for v0.1.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetentionPolicy {
+    UserManaged,
+}
+
+/// Sensitive capture surface frozen for v0.1.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapturePolicy {
+    RedactedMetadataOnly,
+    RedactedMetadataWithCorrelationHash,
+}
+
+/// Privacy assertions that every schema-v1 writer must uphold before persistence.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PrivacyDefaults {
+    pub redacted_before_persistence: bool,
+    pub file_mode: String,
+    pub upload: UploadPolicy,
+    pub retention: RetentionPolicy,
+    pub capture: CapturePolicy,
+}
+
+impl Default for PrivacyDefaults {
+    fn default() -> Self {
+        Self {
+            redacted_before_persistence: true,
+            file_mode: "0600".to_owned(),
+            upload: UploadPolicy::Disabled,
+            retention: RetentionPolicy::UserManaged,
+            capture: CapturePolicy::RedactedMetadataOnly,
+        }
+    }
+}
+
+/// Complete schema-v1 report.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ReportV1 {
+    pub schema_version: u32,
+    pub package_version: String,
+    pub run: RunIdentity,
+    pub capabilities: Capabilities,
+    pub configuration: ReportConfiguration,
+    pub samples: Vec<SampleWindow>,
+    pub transitions: Vec<TransitionRecord>,
+    pub signals: Vec<SignalRecord>,
+    pub checkpoint: CheckpointRecord,
+    pub escape: EscapeEvidence,
+    pub artifact_errors: Vec<ArtifactErrorRecord>,
+    pub outcome: TerminalOutcome,
+    pub privacy: PrivacyDefaults,
+}
+
+impl ReportV1 {
+    /// Validate schema, privacy, ordering, and cross-field invariants.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed [`ReportError`] when the report cannot be safely written as schema v1.
+    pub fn validate(&self) -> Result<(), ReportError> {
+        if self.schema_version != REPORT_SCHEMA_VERSION {
+            return Err(ReportError::UnsupportedSchema);
+        }
+        if !valid_package_version(&self.package_version) {
+            return Err(ReportError::InvalidPackageVersion);
+        }
+        self.run.validate()?;
+        self.validate_configuration()?;
+        self.validate_privacy()?;
+        self.validate_events()?;
+        Ok(())
+    }
+
+    /// Serialize a validated report with stable field order and a final newline.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReportError`] if validation or JSON serialization fails.
+    pub fn to_json_pretty(&self) -> Result<String, ReportError> {
+        self.validate()?;
+        let mut encoded = serde_json::to_string_pretty(self).map_err(ReportError::Json)?;
+        encoded.push('\n');
+        Ok(encoded)
+    }
+
+    /// Parse schema v1 while ignoring unknown fields for forward-compatible readers.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReportError`] for malformed JSON, unsupported schema majors, or invalid values.
+    pub fn from_json(value: &str) -> Result<Self, ReportError> {
+        let report: Self = serde_json::from_str(value).map_err(ReportError::Json)?;
+        report.validate()?;
+        Ok(report)
+    }
+
+    fn validate_configuration(&self) -> Result<(), ReportError> {
+        let basic_values_valid = self.configuration.sample_interval_ms > 0
+            && self.configuration.required_breach_samples > 0
+            && self.configuration.max_missing_samples > 0
+            && self.configuration.max_sample_age_ms > 0
+            && self.configuration.max_sample_window_ms > 0
+            && self.configuration.term_grace_ms > 0
+            && self
+                .configuration
+                .checkpoint_timeout_ms
+                .is_none_or(|value| value > 0)
+            && self
+                .configuration
+                .wall_time_ms
+                .is_none_or(|value| value > 0);
+        let mode_valid = match self.configuration.mode {
+            ReportMode::Observe => {
+                self.configuration.max_footprint_bytes.is_none()
+                    && self.configuration.warning_footprint_bytes.is_none()
+                    && self.configuration.recovery_footprint_bytes.is_none()
+                    && self.configuration.emergency_footprint_bytes.is_none()
+                    && self.configuration.wall_time_ms.is_none()
+                    && self.configuration.checkpoint_timeout_ms.is_none()
+            }
+            ReportMode::Enforce => match (
+                self.configuration.recovery_footprint_bytes,
+                self.configuration.warning_footprint_bytes,
+                self.configuration.max_footprint_bytes,
+                self.configuration.emergency_footprint_bytes,
+            ) {
+                (Some(recovery), Some(warning), Some(limit), Some(emergency)) => {
+                    recovery < warning && warning < limit && limit < emergency
+                }
+                _ => false,
+            },
+        };
+        if !basic_values_valid || !mode_valid {
+            return Err(ReportError::InvalidConfiguration);
+        }
+        Ok(())
+    }
+
+    fn validate_privacy(&self) -> Result<(), ReportError> {
+        if !self.privacy.redacted_before_persistence
+            || self.privacy.file_mode != "0600"
+            || self.privacy.upload != UploadPolicy::Disabled
+            || self.privacy.retention != RetentionPolicy::UserManaged
+            || self.privacy.capture
+                != if self.run.correlation_hash.is_some() {
+                    CapturePolicy::RedactedMetadataWithCorrelationHash
+                } else {
+                    CapturePolicy::RedactedMetadataOnly
+                }
+        {
+            return Err(ReportError::InvalidPrivacy);
+        }
+        Ok(())
+    }
+
+    fn validate_events(&self) -> Result<(), ReportError> {
+        let samples_ordered = self.samples.windows(2).all(|pair| {
+            pair[0].processed_at_ms <= pair[1].processed_at_ms
+                && pair[0].captured_at_ms <= pair[0].processed_at_ms
+                && pair[0].window_ms > 0
+        }) && self.samples.last().is_none_or(|sample| {
+            sample.captured_at_ms <= sample.processed_at_ms && sample.window_ms > 0
+        });
+        let transitions_ordered = ordered_by(&self.transitions, |item| item.at_ms)
+            && self.transitions.iter().all(|item| item.from != item.to);
+        let signals_ordered = ordered_by(&self.signals, |item| item.at_ms)
+            && self
+                .signals
+                .iter()
+                .all(|item| (1..=127).contains(&item.signal));
+        let artifacts_ordered = ordered_by(&self.artifact_errors, |item| item.at_ms);
+        let checkpoint_valid = match self.checkpoint.status {
+            CheckpointStatus::NotNegotiated => self.checkpoint.at_ms.is_none(),
+            CheckpointStatus::RequestedUnverified
+            | CheckpointStatus::AcknowledgedUnverifiedDurability
+            | CheckpointStatus::TimedOut
+            | CheckpointStatus::Cancelled => self.checkpoint.at_ms.is_some(),
+        };
+        let terminal_signal_valid = match self.outcome.kind {
+            TerminalKind::ChildSignaled { signal } => (1..=127).contains(&signal),
+            _ => true,
+        };
+        let last_event = self
+            .samples
+            .iter()
+            .map(|item| item.processed_at_ms)
+            .chain(self.transitions.iter().map(|item| item.at_ms))
+            .chain(self.signals.iter().map(|item| item.at_ms))
+            .chain(self.artifact_errors.iter().map(|item| item.at_ms))
+            .chain(self.checkpoint.at_ms)
+            .max()
+            .unwrap_or(0);
+
+        if !samples_ordered
+            || !transitions_ordered
+            || !signals_ordered
+            || !artifacts_ordered
+            || !checkpoint_valid
+            || !terminal_signal_valid
+            || self.outcome.at_ms < last_event
+        {
+            return Err(ReportError::InvalidEventOrder);
+        }
+        Ok(())
+    }
+}
+
+fn ordered_by<T>(items: &[T], timestamp: impl Fn(&T) -> u64) -> bool {
+    items
+        .windows(2)
+        .all(|pair| timestamp(&pair[0]) <= timestamp(&pair[1]))
+}
+
+/// Validation or serialization failure without sensitive source text.
+#[derive(Debug)]
+pub enum ReportError {
+    InvalidIdentity,
+    UnsupportedSchema,
+    InvalidPackageVersion,
+    InvalidConfiguration,
+    InvalidPrivacy,
+    InvalidEventOrder,
+    Json(serde_json::Error),
+}
+
+impl fmt::Display for ReportError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let message = match self {
+            Self::InvalidIdentity => "invalid redacted run identity",
+            Self::UnsupportedSchema => "unsupported report schema version",
+            Self::InvalidPackageVersion => "invalid package version",
+            Self::InvalidConfiguration => "invalid report configuration",
+            Self::InvalidPrivacy => "report privacy defaults were weakened",
+            Self::InvalidEventOrder => "invalid report event ordering",
+            Self::Json(_) => "report JSON is malformed",
+        };
+        formatter.write_str(message)
+    }
+}
+
+impl Error for ReportError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Json(error) => Some(error),
+            _ => None,
+        }
+    }
+}

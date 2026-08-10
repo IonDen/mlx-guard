@@ -2,6 +2,8 @@ use std::error::Error;
 use std::fmt;
 use std::time::Duration;
 
+use serde::{Deserialize, Serialize};
+
 use crate::SignalNumber;
 
 /// Configuration for the pure enforcement state machine.
@@ -33,7 +35,8 @@ impl fmt::Display for PolicyConfigError {
 impl Error for PolicyConfigError {}
 
 /// The externally visible phase of policy evaluation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PolicyState {
     Observe,
     Normal,
