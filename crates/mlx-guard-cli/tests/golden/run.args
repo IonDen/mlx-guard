@@ -1,0 +1,17 @@
+run
+--max-footprint
+26GiB
+--sample-interval
+50ms
+--wall-time
+2h
+--cwd
+/work
+--clear-env
+--env
+TOKEN=redacted
+--
+python
+train.py
+--epochs
+2

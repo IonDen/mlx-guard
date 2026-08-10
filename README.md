@@ -9,14 +9,17 @@ process.
 
 The project is under active v0.1 development. The Darwin footprint API, process identity checks,
 owned process-group cleanup, signal forwarding, noninteractive terminal behavior, and bounded Metal
-response have working feasibility tests. The checked-in CLI is still an empty shell. Its arguments
-and output are not public yet.
+response have working feasibility tests. The checked-in CLI now validates the frozen command
+contract, but the supervision runtime is not wired yet.
 
 The intended command shape is:
 
 ```bash
-mlx-guard run --max-footprint 26G -- python train.py
+mlx-guard run --max-footprint 26GiB -- python train.py
 ```
+
+See [the command-line contract](docs/CLI.md) for the exact unit grammar, exit codes, signal rules,
+and noninteractive terminal boundary.
 
 ## Safety boundary
 

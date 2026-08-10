@@ -1,0 +1,7 @@
+observe
+--sample-interval
+100ms
+--
+python
+-c
+print('ok')
