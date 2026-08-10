@@ -3,6 +3,8 @@
 mod outcome;
 mod platform;
 mod policy;
+#[cfg(unix)]
+mod process_control;
 mod report;
 
 pub use outcome::{SignalNumber, SupervisorOutcome};
@@ -10,6 +12,11 @@ pub use platform::{PlatformSupport, platform_support};
 pub use policy::{
     Action, CheckpointDisposition, Event, PolicyConfig, PolicyConfigError, PolicyMachine,
     PolicyState, SampleEvent,
+};
+#[cfg(unix)]
+pub use process_control::{
+    CheckpointEndpoint, ControlError, ControlErrorKind, LaunchError, LaunchErrorKind,
+    LaunchOptions, OwnedProcess, RootOutcome, StdioMode, validate_noninteractive_terminal,
 };
 pub use report::{
     AdvisoryMetrics, ArtifactErrorCode, ArtifactErrorRecord, Capabilities, CapturePolicy,

@@ -22,6 +22,8 @@ See [the command-line contract](docs/CLI.md) for the exact unit grammar, exit co
 and noninteractive terminal boundary. See [the policy contract](docs/POLICY.md) for thresholds,
 measurement quality, checkpoint evidence, and escalation timelines. The
 [report and privacy contract](docs/REPORTS.md) defines schema v1 and default redaction.
+The [process-control contract](docs/PROCESS_CONTROL.md) defines the owned group, direct exec,
+signal targets, and noninteractive terminal boundary.
 
 ## Safety boundary
 

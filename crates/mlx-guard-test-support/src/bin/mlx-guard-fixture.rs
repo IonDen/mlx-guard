@@ -48,7 +48,8 @@ fn run() -> Result<(), RunError> {
         "shared" => run_shared(limits),
         "cpu-stall" => run_cpu_stall(limits),
         "spawn-churn" => run_spawn_churn(),
-        "fast-root-exit" => run_fast_root_exit(),
+        "fast-root-exit" => run_fast_root_exit(limits),
+        "checkpoint-parent" => run_checkpoint_parent(limits),
         "short-exit" => Ok(()),
         "setsid" => run_setsid(),
         "ignore-term" => run_ignore_term(),
@@ -162,11 +163,12 @@ fn run_spawn_churn() -> Result<(), RunError> {
     write_phase("CHURNED children=6")
 }
 
-fn run_fast_root_exit() -> Result<(), RunError> {
+fn run_fast_root_exit(limits: FixtureLimits) -> Result<(), RunError> {
     let executable = env::current_exe()
         .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let child_wall_ms = limits.wall_time().as_millis().to_string();
     let child = Command::new(executable)
-        .args(["cpu-stall", "1", "100"])
+        .args(["cpu-stall", "1", &child_wall_ms])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -174,6 +176,26 @@ fn run_fast_root_exit() -> Result<(), RunError> {
         .map_err(|error| RunError::fixture(format!("fast-exit child failed: {error}")))?;
     write_phase(&format!("CHILD pid={}", child.id()))?;
     std::process::exit(23);
+}
+
+fn run_checkpoint_parent(limits: FixtureLimits) -> Result<(), RunError> {
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let child = Command::new(executable)
+        .args([
+            "cpu-stall",
+            "1",
+            &limits.wall_time().as_millis().to_string(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| RunError::fixture(format!("checkpoint child failed: {error}")))?;
+    write_phase(&format!("CHILD pid={}", child.id()))?;
+    loop {
+        thread::park();
+    }
 }
 
 fn run_setsid() -> Result<(), RunError> {

@@ -82,6 +82,7 @@ dependencies = [
 name = "mlx-guard-core"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "serde_json",
 ]
@@ -91,6 +92,7 @@ name = "mlx-guard-test-support"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "mlx-guard-core",
 ]
 
 [[package]]

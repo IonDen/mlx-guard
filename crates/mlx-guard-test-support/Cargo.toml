@@ -17,3 +17,6 @@ workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
+
+[dev-dependencies]
+mlx-guard-core = { path = "../mlx-guard-core", version = "=0.1.0" }
