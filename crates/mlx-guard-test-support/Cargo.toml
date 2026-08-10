@@ -1,0 +1,19 @@
+[package]
+name = "mlx-guard-test-support"
+description = "Bounded test fixtures for mlx-guard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "mlx-guard-fixture"
+path = "src/bin/mlx-guard-fixture.rs"
+
+[lints]
+workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"

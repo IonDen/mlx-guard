@@ -2,24 +2,46 @@
 
 External runtime safety supervision for MLX workloads on Apple Silicon.
 
-`mlx-guard` is planned as an external, application-neutral circuit breaker for MLX commands. It will
-observe OS-accounted macOS process footprint from a separate native supervisor, request an optional
-cooperative checkpoint, and escalate against an explicitly configured limit. It reduces risk; it
-cannot guarantee that polling beats every allocation spike or system-wide failure.
+`mlx-guard` is an application-neutral circuit breaker for MLX commands. A small native parent will
+sample macOS-accounted process footprint, request an optional cooperative checkpoint, and escalate
+TERM and KILL against an explicit limit. The enforcement loop stays outside Python and the MLX
+process.
 
-Planned command shape:
+The project is under active v0.1 development. The Darwin footprint API, process identity checks,
+owned process-group cleanup, signal forwarding, noninteractive terminal behavior, and bounded Metal
+response have working feasibility tests. The checked-in CLI is still an empty shell. Its arguments
+and output are not public yet.
+
+The intended command shape is:
 
 ```bash
 mlx-guard run --max-footprint 26G -- python train.py
 ```
 
-The project is in the research and planning phase. MetalGuard already covers adjacent in-application
-MLX safety and recovery. The first gate therefore decides build-versus-contribute, validates demand,
-and proves that an unprivileged parent can measure and control its supported process boundary without
-intentionally endangering the Mac.
+## Safety boundary
 
-Repository work is governed by [AGENTS.md](AGENTS.md). The dated North Star and granular backlog
-are linked there and in the local `CLAUDE.md`.
+The v0.1 control domain is the process group created for one trusted same-user command. Sampling is
+periodic, tree totals are not atomic, and a descendant can leave the group. `mlx-guard` reduces risk;
+it cannot promise a hard memory boundary, immediate Metal-driver reclamation, or protection during a
+kernel or system-wide failure. It never chooses a destructive limit automatically.
+
+Interactive terminal job control, sandboxed execution, and Mac App Store distribution are outside
+the v0.1 scope. Direct CLI and Python-wheel distribution are the target.
+
+## Development
+
+Rust 1.93 is pinned in `rust-toolchain.toml`. The workspace currently contains the native command
+shell, the core platform boundary, and hard-bounded real-process fixtures.
+
+```bash
+./scripts/test-fast.sh          # formatting, Clippy, and all Rust tests
+./scripts/test-full.sh          # fast suite plus RustSec and dependency policy
+./scripts/test-metal-fixture.sh # 4 KiB Metal worker on macOS
+```
+
+The main suite runs on macOS and Linux. The Metal test compiles Objective-C with warnings denied and
+uses a 4 KiB shared buffer for no more than five seconds. Synthetic allocation fixtures reject more
+than 128 MiB or ten seconds before doing work.
 
 Independent community project; not affiliated with or endorsed by Apple.
 

@@ -1,0 +1,19 @@
+[package]
+name = "mlx-guard-cli"
+description = "Native command shell for mlx-guard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+default-run = "mlx-guard"
+
+[[bin]]
+name = "mlx-guard"
+path = "src/main.rs"
+
+[dependencies]
+mlx-guard-core = { path = "../mlx-guard-core", version = "=0.1.0" }
+
+[lints]
+workspace = true
