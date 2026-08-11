@@ -8,6 +8,8 @@ mod checkpoint;
 mod identity;
 mod intervention;
 mod outcome;
+#[cfg(unix)]
+mod persistence;
 mod platform;
 mod policy;
 #[cfg(unix)]
@@ -38,6 +40,13 @@ pub use intervention::{
 #[cfg(unix)]
 pub use intervention::{CheckpointBinding, CheckpointObservation, ProcessInterventionActuator};
 pub use outcome::{SignalNumber, SupervisorOutcome};
+#[cfg(unix)]
+pub use persistence::{
+    FinalizedArtifacts, JOURNAL_MAGIC, JOURNAL_RECORD_VERSION, JournalAppender, JournalDurability,
+    JournalEntry, JournalHeader, JournalRecord, JournalRecovery, JournalRecoveryStatus,
+    MAX_JOURNAL_RECORD_BYTES, PersistenceAttempt, ResilientJournal, SecureJournal, StorageError,
+    StorageErrorKind,
+};
 pub use platform::{PlatformSupport, platform_support};
 pub use policy::{
     Action, ActuationFailure, ActuationKind, CheckpointDisposition, Event, POLICY_CONTRACT_VERSION,

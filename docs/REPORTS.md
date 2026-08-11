@@ -42,10 +42,32 @@ other low-entropy secret because a digest does not make such input safely anonym
 
 ## Persistence and ownership
 
-The native writer must create report and journal files with mode `0600` and must not weaken an
-existing file's permissions. The chosen parent directory must be owned by the invoking user, must
-not be a symlink, and should use mode `0700`. Persistence work must reject unsafe ownership or link
-conditions before command launch.
+The native writer requires an invoking-user-owned `0700` directory. Before worker launch, it checks
+any existing report and exclusively creates `.<report-name>.journal` with mode `0600`. Directory and
+file lookups stay anchored to the validated directory descriptor. The writer rejects symlinks,
+unexpected file types, foreign ownership, and broader permissions without changing those targets.
+
+The journal starts with the version-1 magic header. Each record has a bounded length, sequence
+number, JSON payload, and CRC-32 checksum. Records contain only schema-v1 types, so redaction occurs
+before the first write. Headers, policy transitions, signal attempts, checkpoint states, and
+terminal outcomes require a file sync. This requirement makes the transition durable before the
+runtime can record its related signal. Initialization syncs the new journal before syncing its
+directory.
+
+Recovery returns the valid prefix and labels the stream `complete`, `truncated`, or `corrupt`.
+Only a complete stream with one first header, one final outcome, and the required report components
+can become a final report. Parsers treat all journal and JSON fields as data. They never pass content
+to a shell or executable.
+
+Finalization replays the journal into schema-v1 JSON, writes `.<report-name>.tmp` as `0600`, syncs
+it, renames it over a safe report target, then syncs the directory. A failed write or rename removes
+only the temporary file created by that attempt. The caller receives no success result until this
+sequence finishes.
+
+Secure journal initialization is mandatory. A later write or sync failure disables further
+persistence but does not stop TERM, KILL, cleanup, or observation work. The runtime prints a
+path-free error, suppresses any complete-report claim, and returns the contracted partial artifact
+failure status (exit `74`).
 
 Retention is user-managed. mlx-guard does not upload reports, contact a telemetry service, or delete
 old reports automatically. A future upload or retention feature requires a new explicit contract;
