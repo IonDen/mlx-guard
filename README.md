@@ -35,6 +35,8 @@ The [checkpoint protocol](docs/CHECKPOINT_PROTOCOL.md) defines FD-only readiness
 deadline handling, signal safety, and redacted worker acknowledgements.
 The [intervention execution contract](docs/INTERVENTION.md) defines action targets, policy-owned
 deadlines, typed failures, bounded evidence, and post-action observation.
+The [Python packaging contract](docs/PYTHON_PACKAGING.md) defines wheel support, native-binary
+discovery, editable installs, and source-distribution policy.
 
 ## Safety boundary
 
@@ -55,6 +57,7 @@ platform and policy library, and hard-bounded real-process fixtures.
 ./scripts/test-fast.sh          # formatting, Clippy, and all Rust tests
 ./scripts/test-full.sh          # fast suite plus RustSec and dependency policy
 ./scripts/test-metal-fixture.sh # 4 KiB Metal worker on macOS
+./scripts/test-wheel.sh         # macOS arm64 wheel across Python 3.10 through 3.14
 ```
 
 The main suite runs on macOS and Linux. The Metal test compiles Objective-C with warnings denied and

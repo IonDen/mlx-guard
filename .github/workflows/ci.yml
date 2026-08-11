@@ -40,24 +40,15 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-  python-future:
-    name: Python quality (activates with client sources)
+  python:
+    name: Python package and wheel
     runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Detect Python sources
-        id: python
-        run: |
-          if [[ -d python ]] && compgen -G 'python/**/*.py' >/dev/null; then
-            echo 'present=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'present=false' >> "$GITHUB_OUTPUT"
-          fi
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
-        if: steps.python.outputs.present == 'true'
-      - run: uv run ruff check python
-        if: steps.python.outputs.present == 'true'
-      - run: uv run mypy --strict python
-        if: steps.python.outputs.present == 'true'
-      - run: uv run pytest python
-        if: steps.python.outputs.present == 'true'
+      - uses: dtolnay/rust-toolchain@d8dfd7155fea72af4ad34a8fe97364d210e2d020 # 1.93.0
+      - run: uv lock --check
+      - run: uv run --locked ruff check python
+      - run: uv run --locked mypy --strict python
+      - run: uv run --locked pytest python
+      - run: ./scripts/test-wheel.sh
