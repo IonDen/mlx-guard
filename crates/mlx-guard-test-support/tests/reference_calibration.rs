@@ -30,6 +30,7 @@ struct ReferenceCalibration {
     proc_pid_rusage: LatencyMeasurements,
     anonymous_mapping: MappingMeasurements,
     live_shared_mapping: MappingMeasurements,
+    metal_mapping: MappingMeasurements,
     sixteen_member_sample_window: LatencyMeasurements,
     bounds: Vec<BoundResult>,
 }
@@ -113,6 +114,23 @@ fn fixture(mode: &str, bytes: u64, wall_ms: u64) -> LaunchOptions {
             OsString::from(bytes.to_string()),
             OsString::from(wall_ms.to_string()),
         ],
+        cwd: None,
+        clear_env: false,
+        env: BTreeMap::new(),
+        stdin: StdioMode::Piped,
+        stdout: StdioMode::Piped,
+        stderr: StdioMode::Piped,
+    }
+}
+
+fn metal_fixture() -> LaunchOptions {
+    let executable = std::env::var_os("MLX_GUARD_METAL_FIXTURE")
+        .map(PathBuf::from)
+        .expect("MLX_GUARD_METAL_FIXTURE must name the built calibration fixture")
+        .canonicalize()
+        .unwrap();
+    LaunchOptions {
+        command: vec![executable.into_os_string()],
         cwd: None,
         clear_env: false,
         env: BTreeMap::new(),
@@ -288,6 +306,65 @@ fn measure_group_windows(inventory: NativeProcessInventory) -> LatencyMeasuremen
     latency_measurements(raw)
 }
 
+fn measure_metal(inventory: NativeProcessInventory) -> MappingMeasurements {
+    let mut raw = Vec::with_capacity(REPETITIONS);
+    for _ in 0..REPETITIONS {
+        let mut process = OwnedProcess::launch(&metal_fixture()).unwrap();
+        let mut input = process.take_stdin().unwrap();
+        let mut output = BufReader::new(process.take_stdout().unwrap());
+        read_phase(&mut output, "READY mode=metal-calibration bytes=67108864");
+        let mut sampler = sampler_for(&process, inventory);
+        let epoch = Instant::now();
+        let baseline = complete_bytes(sampler.sample_native(&inventory, epoch));
+
+        send(&mut input, "allocate");
+        read_phase(&mut output, "ALLOCATED");
+        let allocated = sampler.sample_native(&inventory, epoch).clone();
+        let allocated_bytes = complete_bytes(&allocated);
+        let allocated_delta = allocated_bytes.saturating_sub(baseline);
+
+        send(&mut input, "release");
+        read_phase(&mut output, "RELEASED");
+        let (released, release_outcomes) = sample_until_complete(&mut sampler, inventory, epoch);
+        let released_bytes = complete_bytes(&released);
+
+        send(&mut input, "exit");
+        read_phase(&mut output, "EXIT");
+        assert_eq!(process.wait_root().unwrap(), RootOutcome::Exited(0));
+        raw.push(MappingSample {
+            baseline_bytes: baseline,
+            allocated_bytes,
+            released_bytes,
+            allocated_delta_bytes: allocated_delta,
+            magnitude_error_bytes: allocated_delta.abs_diff(ALLOCATION_BYTES),
+            release_residual_bytes: released_bytes.saturating_sub(baseline),
+            allocated_member_count: allocated.members.len(),
+            release_observation_attempts: release_outcomes.len(),
+            release_outcomes,
+            allocation_window_nanoseconds: nanoseconds(
+                allocated.finished_at.saturating_sub(allocated.started_at),
+            ),
+            release_window_nanoseconds: nanoseconds(
+                released.finished_at.saturating_sub(released.started_at),
+            ),
+        });
+    }
+    MappingMeasurements {
+        requested_bytes: ALLOCATION_BYTES,
+        maximum_magnitude_error_bytes: raw
+            .iter()
+            .map(|sample| sample.magnitude_error_bytes)
+            .max()
+            .unwrap(),
+        maximum_release_residual_bytes: raw
+            .iter()
+            .map(|sample| sample.release_residual_bytes)
+            .max()
+            .unwrap(),
+        raw,
+    }
+}
+
 fn sanitized_hardware_details(raw: &str) -> String {
     const ALLOWED_FIELDS: [&str; 5] = [
         "Model Name:",
@@ -316,7 +393,7 @@ fn provenance() -> Provenance {
         rustc: command_output("rustc", &["--version", "--verbose"]),
         cargo: command_output("cargo", &["--version", "--verbose"]),
         clang: command_output("clang", &["--version"]),
-        command: "MLX_GUARD_CALIBRATION_OUTPUT=<path> cargo test -p mlx-guard-test-support --test reference_calibration reference_host_footprint_measurements_write_raw_and_derived_json -- --ignored --exact --nocapture".to_owned(),
+        command: "MLX_GUARD_METAL_FIXTURE=<path> MLX_GUARD_CALIBRATION_OUTPUT=<path> cargo test -p mlx-guard-test-support --test reference_calibration reference_host_footprint_measurements_write_raw_and_derived_json -- --ignored --exact --nocapture".to_owned(),
     }
 }
 
@@ -350,6 +427,7 @@ fn reference_host_footprint_measurements_write_raw_and_derived_json() {
     let proc_pid_rusage = measure_native_calls(inventory);
     let anonymous_mapping = measure_mapping(inventory, "allocate", 1);
     let live_shared_mapping = measure_mapping(inventory, "shared-live", 2);
+    let metal_mapping = measure_metal(inventory);
     let sixteen_member_sample_window = measure_group_windows(inventory);
     let one_percent = ALLOCATION_BYTES / 100;
     let bounds = vec![
@@ -375,6 +453,13 @@ fn reference_host_footprint_measurements_write_raw_and_derived_json() {
             passed: proc_pid_rusage.p95 <= 1_000_000,
         },
         BoundResult {
+            measure: "Metal 64 MiB maximum visible-delta error",
+            target: "<= 10%",
+            observed: metal_mapping.maximum_magnitude_error_bytes,
+            unit: "bytes",
+            passed: metal_mapping.maximum_magnitude_error_bytes <= ALLOCATION_BYTES / 10,
+        },
+        BoundResult {
             measure: "16-member group sample-window p95",
             target: "<= 10 ms",
             observed: sixteen_member_sample_window.p95,
@@ -393,6 +478,7 @@ fn reference_host_footprint_measurements_write_raw_and_derived_json() {
         proc_pid_rusage,
         anonymous_mapping,
         live_shared_mapping,
+        metal_mapping,
         sixteen_member_sample_window,
         bounds,
     };

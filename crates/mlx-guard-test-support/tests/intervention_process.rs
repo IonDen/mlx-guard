@@ -2,7 +2,9 @@
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::fs;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use mlx_guard_core::{
@@ -11,6 +13,7 @@ use mlx_guard_core::{
     PolicyMachine, PolicyState, ProcessInterventionActuator, RootOutcome, SampleEvent,
     SignalNumber, StdioMode,
 };
+use serde::Serialize;
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
 
@@ -63,6 +66,41 @@ fn sample(at_ms: u64, bytes: u64) -> Event {
 
 fn signal(value: i32) -> SignalNumber {
     SignalNumber::new(u8::try_from(value).unwrap()).unwrap()
+}
+
+#[derive(Serialize)]
+struct InterventionLatencyMeasurements {
+    schema_version: u16,
+    unit: &'static str,
+    raw: Vec<u64>,
+    p95: u64,
+    maximum: u64,
+    target_nanoseconds: u64,
+    passed: bool,
+}
+
+fn write_intervention_measurements(latencies: &[Duration], p95: Duration) {
+    let Some(path) = std::env::var_os("MLX_GUARD_INTERVENTION_OUTPUT") else {
+        return;
+    };
+    let raw = latencies
+        .iter()
+        .map(|latency| u64::try_from(latency.as_nanos()).unwrap())
+        .collect::<Vec<_>>();
+    let result = InterventionLatencyMeasurements {
+        schema_version: 1,
+        unit: "nanoseconds",
+        maximum: *raw.iter().max().unwrap(),
+        p95: u64::try_from(p95.as_nanos()).unwrap(),
+        raw,
+        target_nanoseconds: 10_000_000,
+        passed: p95 <= ms(10),
+    };
+    let path = PathBuf::from(path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).unwrap();
+    }
+    fs::write(path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
 }
 
 fn launch_checkpoint(mode: &str, value: u64) -> (OwnedProcess, CheckpointChannel) {
@@ -299,6 +337,7 @@ fn threshold_decision_to_first_signal_p95_stays_within_ten_milliseconds() {
     }
     latencies.sort_unstable();
     let p95 = latencies[(REPETITIONS * 95).div_ceil(100) - 1];
+    write_intervention_measurements(&latencies, p95);
     eprintln!("threshold decision to first signal p95: {p95:?}");
     assert!(p95 <= ms(10), "first-signal p95 {p95:?} exceeded 10ms");
 }
