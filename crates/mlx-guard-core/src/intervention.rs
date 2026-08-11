@@ -260,6 +260,7 @@ fn map_control_error(kind: ControlErrorKind) -> ActuationFailure {
         | ControlErrorKind::GroupQueryFailed
         | ControlErrorKind::TerminalSignalMonitorUnavailable
         | ControlErrorKind::TerminalSignalMonitorAlreadyInstalled
+        | ControlErrorKind::ClientReadyUnavailable
         | ControlErrorKind::SignalFailed => ActuationFailure::SignalFailed,
     }
 }

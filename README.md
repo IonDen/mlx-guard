@@ -7,10 +7,10 @@ samples macOS-accounted process footprint, requests an optional cooperative chec
 TERM and KILL against an explicit limit. The enforcement loop stays outside Python and the MLX
 process.
 
-The project is under active v0.1 development. The Rust CLI now supervises a directly launched
-command, samples its owned process group, applies memory and wall-time policy, handles terminal
-signals, and writes a crash-resilient local report. Python packaging and the external client are
-still in development.
+The project is under active v0.1 development. The Rust CLI supervises a directly launched command,
+samples its owned process group, applies memory and wall-time policy, handles terminal signals, and
+writes a crash-resilient local report. The Python package provides a typed external client and an
+optional dependency-free worker checkpoint helper.
 
 Every run requires a report path in an existing owner-only directory:
 
@@ -37,6 +37,8 @@ The [intervention execution contract](docs/INTERVENTION.md) defines action targe
 deadlines, typed failures, bounded evidence, and post-action observation.
 The [Python packaging contract](docs/PYTHON_PACKAGING.md) defines wheel support, native-binary
 discovery, editable installs, and source-distribution policy.
+The [Python API guide](docs/PYTHON_API.md) covers typed configuration, synchronous and incremental
+runs, cancellation, output capture, report loading, and cooperative worker checkpoints.
 
 ## Safety boundary
 

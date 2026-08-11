@@ -72,6 +72,9 @@ pub struct CommonOptions {
     pub clear_env: bool,
     /// Explicit UTF-8 child environment overrides. Duplicate keys are rejected.
     pub env: BTreeMap<String, String>,
+    /// Optional inherited descriptor closed when the native runtime is ready for client signals.
+    #[doc(hidden)]
+    pub client_ready_fd: Option<i32>,
     /// Literal executable and argument vector following the mandatory `--` separator.
     pub command: Vec<OsString>,
 }
@@ -207,6 +210,7 @@ fn normalize(raw: RawCommon) -> Result<CommonOptions, CliParseError> {
         cwd: raw.cwd,
         clear_env: raw.clear_env,
         env,
+        client_ready_fd: raw.client_ready_fd,
         command: raw.command,
     })
 }
@@ -297,9 +301,22 @@ struct RawCommon {
     /// Set one UTF-8 child environment value; duplicate keys are invalid.
     #[arg(long = "env", value_name = "KEY=VALUE")]
     env: Vec<String>,
+    /// Internal Python-client readiness descriptor. The invoking client transfers ownership.
+    #[arg(long, hide = true, value_parser = parse_client_ready_fd)]
+    client_ready_fd: Option<i32>,
     /// Literal executable and arguments. The `--` separator is mandatory.
     #[arg(last = true, required = true, num_args = 1.., value_name = "COMMAND")]
     command: Vec<OsString>,
+}
+
+fn parse_client_ready_fd(value: &str) -> Result<i32, String> {
+    let descriptor = value
+        .parse::<i32>()
+        .map_err(|_| "client readiness descriptor must be an integer".to_owned())?;
+    if descriptor < 3 {
+        return Err("client readiness descriptor must not replace standard I/O".to_owned());
+    }
+    Ok(descriptor)
 }
 
 fn parse_wall_time(value: &str) -> Result<Duration, String> {

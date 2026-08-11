@@ -47,5 +47,6 @@ requires Rust 1.93 and maturin 1.13.3. v0.1 release automation should publish th
 not the sdist, so installers on unsupported platforms do not attempt a local native build.
 
 Run `./scripts/test-wheel.sh` to rebuild the wheel, install it in fresh CPython 3.10 through 3.14
-environments, test shadow and tamper rejection, kill the Python launcher during a supervised run,
-exercise editable installation, and build/install the sdist.
+environments, run the complete client and worker-helper suite, test shadow and tamper rejection,
+kill the Python launcher during a supervised run, exercise editable installation, and build/install
+the sdist.

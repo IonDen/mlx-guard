@@ -18,6 +18,70 @@ use crate::{CHECKPOINT_FD_ENV, CheckpointWorkerEndpoint, SignalNumber, SignalRes
 const CHECKPOINT_CHILD_FD: libc::c_int = 198;
 static TERMINAL_SIGNAL_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
 
+/// Owned integration descriptor closed once the native runtime can accept client signals.
+#[derive(Debug)]
+pub struct ClientReady {
+    descriptor: Option<libc::c_int>,
+}
+
+impl ClientReady {
+    /// Take ownership of an optional descriptor supplied by the external Python client.
+    ///
+    /// The descriptor is marked close-on-exec before any worker is launched. Dropping this value
+    /// closes the descriptor, which wakes the client without a write or SIGPIPE risk.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted control error when the descriptor is not live or cannot be configured.
+    pub fn take(raw: Option<i32>) -> Result<Self, ControlError> {
+        let Some(raw) = raw else {
+            return Ok(Self { descriptor: None });
+        };
+        if raw < 3 {
+            return Err(ControlError::from_io(
+                ControlErrorKind::ClientReadyUnavailable,
+                io::Error::from_raw_os_error(libc::EBADF),
+            ));
+        }
+        // SAFETY: F_GETFD has no pointer arguments and reports invalid descriptors with EBADF.
+        let current = unsafe { libc::fcntl(raw, libc::F_GETFD) };
+        if current == -1
+            // SAFETY: the validated descriptor and FD_CLOEXEC are valid fcntl arguments.
+            || unsafe {
+                libc::fcntl(raw, libc::F_SETFD, current | libc::FD_CLOEXEC)
+            } == -1
+        {
+            return Err(ControlError::from_io(
+                ControlErrorKind::ClientReadyUnavailable,
+                io::Error::last_os_error(),
+            ));
+        }
+        Ok(Self {
+            descriptor: Some(raw),
+        })
+    }
+
+    /// Close the readiness descriptor without writing client-visible data.
+    pub fn notify(mut self) {
+        self.close();
+    }
+
+    fn close(&mut self) {
+        if let Some(descriptor) = self.descriptor.take() {
+            // SAFETY: validation succeeded and this integration contract transfers the descriptor.
+            unsafe {
+                libc::close(descriptor);
+            }
+        }
+    }
+}
+
+impl Drop for ClientReady {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
 /// Installed nonblocking capture of SIGINT and SIGTERM for one supervisor process.
 #[derive(Debug)]
 pub struct TerminalSignalMonitor {
@@ -354,6 +418,7 @@ pub enum ControlErrorKind {
     GroupQueryFailed,
     TerminalSignalMonitorUnavailable,
     TerminalSignalMonitorAlreadyInstalled,
+    ClientReadyUnavailable,
     SignalFailed,
 }
 
@@ -400,6 +465,9 @@ impl fmt::Display for ControlError {
             }
             ControlErrorKind::TerminalSignalMonitorAlreadyInstalled => {
                 "a terminal signal monitor is already installed"
+            }
+            ControlErrorKind::ClientReadyUnavailable => {
+                "client readiness descriptor configuration failed"
             }
             ControlErrorKind::SignalFailed => "signal delivery failed",
         };

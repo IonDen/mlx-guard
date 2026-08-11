@@ -27,6 +27,7 @@ fn run_golden_freezes_normalized_configuration_and_literal_argv() {
         PathBuf::from("/private/mlx-guard/report.json")
     );
     assert_eq!(run.common.cwd, Some(PathBuf::from("/work")));
+    assert_eq!(run.common.client_ready_fd, None);
     assert!(run.common.clear_env);
     assert_eq!(
         run.common.env,
@@ -47,6 +48,7 @@ fn observe_golden_has_no_memory_or_wall_enforcement() {
         panic!("expected observe mode");
     };
     assert_eq!(observe.common.sample_interval, Duration::from_millis(100));
+    assert_eq!(observe.common.client_ready_fd, None);
     assert_eq!(
         observe.common.report_path,
         PathBuf::from("/private/mlx-guard/report.json")
@@ -55,6 +57,41 @@ fn observe_golden_has_no_memory_or_wall_enforcement() {
         observe.common.command,
         ["python", "-c", "print('ok')"].map(OsString::from)
     );
+}
+
+#[test]
+fn internal_client_readiness_descriptor_is_validated_and_hidden() {
+    // Catches replacing standard I/O or exposing the Python integration control as public help.
+    let parsed = parse_cli([
+        "mlx-guard",
+        "observe",
+        "--client-ready-fd",
+        "9",
+        "--report",
+        "/private/mlx-guard/report.json",
+        "--",
+        "true",
+    ])
+    .unwrap();
+    let CommandMode::Observe(observe) = parsed.mode else {
+        panic!("expected observe mode");
+    };
+    assert_eq!(observe.common.client_ready_fd, Some(9));
+    assert!(
+        parse_cli([
+            "mlx-guard",
+            "observe",
+            "--client-ready-fd",
+            "2",
+            "--report",
+            "/private/mlx-guard/report.json",
+            "--",
+            "true",
+        ])
+        .is_err()
+    );
+    let help = parse_cli(["mlx-guard", "observe", "--help"]).unwrap_err();
+    assert!(!help.to_string().contains("client-ready"));
 }
 
 #[test]

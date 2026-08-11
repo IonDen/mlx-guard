@@ -68,10 +68,27 @@ fn parse_field(line: &str, name: &str) -> i32 {
 
 fn process_exists(pid: i32) -> bool {
     // SAFETY: signal zero only checks the fixture identity for bounded cleanup assertions.
-    unsafe {
+    let exists = unsafe {
         libc::kill(pid, 0) == 0
             || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-    }
+    };
+    exists && !process_is_zombie(pid)
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: i32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            stat.rsplit_once(") ")
+                .map(|(_, fields)| fields.starts_with("Z "))
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn process_is_zombie(_pid: i32) -> bool {
+    false
 }
 
 fn wait_until_gone(pid: i32) {

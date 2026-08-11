@@ -6,9 +6,9 @@ use std::time::{Duration, Instant};
 use mlx_guard_core::{
     Actuation, ActuationFailure, ActuationOutcome, Capabilities, CheckpointBinding,
     CheckpointChannel, CheckpointNonce, CheckpointRecord, CheckpointStatus,
-    CheckpointWorkerEndpoint, EscapeEvidence, Event, FootprintSampler, IdentityTracker,
-    InterventionEngine, JournalDurability, JournalEntry, JournalHeader, JournalRecord,
-    MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver, NativeProcessInventory,
+    CheckpointWorkerEndpoint, ClientReady, EscapeEvidence, Event, FootprintSampler,
+    IdentityTracker, InterventionEngine, JournalDurability, JournalEntry, JournalHeader,
+    JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver, NativeProcessInventory,
     ObserveCalibration, Observed, OwnedProcess, PersistenceAttempt, PlatformSupport, PolicyConfig,
     PolicyMachine, PrivacyDefaults, ProcessInterventionActuator, REPORT_SCHEMA_VERSION,
     ReportConfiguration, ReportMode, ResilientJournal, RootOutcome, RunIdentity, SamplingConfig,
@@ -58,6 +58,15 @@ pub fn execute(parsed: ParsedCli) -> RuntimeResult {
 }
 
 fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
+    let ready = match ClientReady::take(options.common.client_ready_fd) {
+        Ok(ready) => ready,
+        Err(error) => {
+            return RuntimeResult::failure(
+                SupervisorOutcome::InvalidConfiguration,
+                &error.to_string(),
+            );
+        }
+    };
     let (inventory, journal, sequence) = match initialize_observe(&options.common) {
         Ok(values) => values,
         Err(result) => return result,
@@ -116,7 +125,7 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
             );
         }
     };
-    ObserveRuntime {
+    let runtime = ObserveRuntime {
         inventory,
         process,
         journal: ResilientJournal::new(journal),
@@ -138,8 +147,9 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
         root_outcome: None,
         final_footprint: Observed::Unknown,
         escape_detected: false,
-    }
-    .run()
+    };
+    ready.notify();
+    runtime.run()
 }
 
 fn initialize_observe(
@@ -207,6 +217,15 @@ fn initialize(
 }
 
 fn execute_run(options: &RunOptions) -> RuntimeResult {
+    let ready = match ClientReady::take(options.common.client_ready_fd) {
+        Ok(ready) => ready,
+        Err(error) => {
+            return RuntimeResult::failure(
+                SupervisorOutcome::InvalidConfiguration,
+                &error.to_string(),
+            );
+        }
+    };
     let policy_config = run_policy_config(options);
     let policy = match PolicyMachine::enforce(policy_config) {
         Ok(policy) => policy,
@@ -263,7 +282,7 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
         checkpoint_signal,
     );
     let actuator = ProcessInterventionActuator::new(&prepared.process, Some(binding));
-    RunRuntime {
+    let runtime = RunRuntime {
         inventory,
         process: prepared.process,
         journal: ResilientJournal::new(journal),
@@ -283,8 +302,9 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
         final_footprint: Observed::Unknown,
         escape_detected: false,
         intervention_started: false,
-    }
-    .run()
+    };
+    ready.notify();
+    runtime.run()
 }
 
 struct PreparedRun {

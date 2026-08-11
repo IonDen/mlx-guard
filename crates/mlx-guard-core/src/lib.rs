@@ -54,7 +54,7 @@ pub use policy::{
 };
 #[cfg(unix)]
 pub use process_control::{
-    CheckpointEndpoint, ControlError, ControlErrorKind, LaunchError, LaunchErrorKind,
+    CheckpointEndpoint, ClientReady, ControlError, ControlErrorKind, LaunchError, LaunchErrorKind,
     LaunchOptions, OwnedProcess, ProcessControlHandle, RootOutcome, StdioMode,
     TerminalSignalMonitor, checkpoint_signal_usr1, validate_noninteractive_terminal,
 };

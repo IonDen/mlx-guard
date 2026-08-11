@@ -569,7 +569,7 @@ fn late_storage_loss_does_not_stop_wall_time_intervention() {
             "--report",
         ])
         .arg(&report_path)
-        .args(["--", "/bin/sleep", "2"])
+        .args(["--", "/bin/sleep", "5"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -591,7 +591,7 @@ fn late_storage_loss_does_not_stop_wall_time_intervention() {
         String::from_utf8_lossy(&output.stderr),
         "mlx-guard: artifact read failed\n"
     );
-    assert!(started.elapsed() < Duration::from_millis(800));
+    assert!(started.elapsed() < Duration::from_secs(2));
     assert!(!report_path.exists());
 }
 

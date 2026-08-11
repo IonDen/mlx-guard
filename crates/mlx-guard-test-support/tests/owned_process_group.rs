@@ -41,10 +41,27 @@ fn read_all(mut file: impl Read) -> String {
 
 fn process_exists(pid: i32) -> bool {
     // SAFETY: signal zero performs an identity/existence check and `pid` came from a live fixture.
-    unsafe {
+    let exists = unsafe {
         libc::kill(pid, 0) == 0
             || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-    }
+    };
+    exists && !process_is_zombie(pid)
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_zombie(pid: i32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            stat.rsplit_once(") ")
+                .map(|(_, fields)| fields.starts_with("Z "))
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn process_is_zombie(_pid: i32) -> bool {
+    false
 }
 
 fn signal_number(value: i32) -> SignalNumber {

@@ -36,6 +36,8 @@ wheel_listing=$(unzip -Z1 "$wheel")
 for required in \
     'mlx_guard/__init__.py' \
     'mlx_guard/_binary.py' \
+    'mlx_guard/_checkpoint.py' \
+    'mlx_guard/_client.py' \
     'mlx_guard/py.typed' \
     'mlx_guard-0.1.0.data/scripts/mlx-guard' \
     'mlx_guard-0.1.0.dist-info/licenses/LICENSE' \
@@ -59,8 +61,8 @@ for python_version in "${python_versions[@]}"; do
     uv pip install --python "$environment/bin/python" --no-deps "$wheel"
     (
         cd "$proof_root"
-        "$environment/bin/python" -W error \
-            "$repo_root/python/tests/test_installed_package.py" -v
+        "$environment/bin/python" -W error -m unittest discover \
+            -s "$repo_root/python/tests" -p 'test_*.py' -v
     )
 done
 
@@ -69,7 +71,8 @@ uv venv --python 3.12 "$editable"
 VIRTUAL_ENV="$editable" uvx --from maturin==1.13.3 maturin develop --release --locked
 (
     cd "$proof_root"
-    "$editable/bin/python" -W error "$repo_root/python/tests/test_installed_package.py" -v
+    "$editable/bin/python" -W error -m unittest discover \
+        -s "$repo_root/python/tests" -p 'test_*.py' -v
 )
 
 uvx --from maturin==1.13.3 maturin sdist --out "$sdist_dir"
@@ -84,7 +87,9 @@ for required in \
     'mlx_guard-0.1.0/LICENSE' \
     'mlx_guard-0.1.0/crates/mlx-guard-cli/src/runtime.rs' \
     'mlx_guard-0.1.0/crates/mlx-guard-core/src/lib.rs' \
-    'mlx_guard-0.1.0/python/mlx_guard/_binary.py'; do
+    'mlx_guard-0.1.0/python/mlx_guard/_binary.py' \
+    'mlx_guard-0.1.0/python/mlx_guard/_checkpoint.py' \
+    'mlx_guard-0.1.0/python/mlx_guard/_client.py'; do
     if ! rg -Fxq "$required" <<<"$sdist_listing"; then
         echo "source distribution is missing $required" >&2
         exit 1
@@ -96,6 +101,6 @@ uv venv --python 3.12 "$sdist_environment"
 uv pip install --python "$sdist_environment/bin/python" --no-deps "$sdist"
 (
     cd "$proof_root"
-    "$sdist_environment/bin/python" -W error \
-        "$repo_root/python/tests/test_installed_package.py" -v
+    "$sdist_environment/bin/python" -W error -m unittest discover \
+        -s "$repo_root/python/tests" -p 'test_*.py' -v
 )

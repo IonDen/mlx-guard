@@ -140,23 +140,13 @@ def _process_exists(pid: int) -> bool:
 
 
 def _run_crash_probe(report: str) -> None:
-    supervisor = subprocess.Popen(
-        [
-            mlx_guard.binary_path(),
-            "run",
-            "--max-footprint",
-            "1TiB",
-            "--sample-interval",
-            "10ms",
-            "--report",
-            report,
-            "--",
-            "/bin/sleep",
-            "0.25",
-        ],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+    supervisor = mlx_guard.start(
+        mlx_guard.RunConfig(
+            command=("/bin/sleep", "0.25"),
+            report=Path(report),
+            max_footprint_bytes=1024**4,
+            sample_interval_ms=10,
+        )
     )
     print(supervisor.pid, flush=True)
     time.sleep(30)
