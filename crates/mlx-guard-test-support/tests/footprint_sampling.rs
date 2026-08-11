@@ -123,6 +123,44 @@ fn anonymous_allocation_and_release_match_the_predeclared_reference_bounds() {
 }
 
 #[test]
+fn shared_mapping_calibration_keeps_both_mapping_owners_alive_while_sampling() {
+    // Catches measuring a shared mapping only after the forked helper has already exited.
+    let inventory = NativeProcessInventory::new();
+    let mut process =
+        OwnedProcess::launch(&fixture("shared-live", ALLOCATION_BYTES, 5_000)).unwrap();
+    let mut input = process.take_stdin().unwrap();
+    let mut output = BufReader::new(process.take_stdout().unwrap());
+    read_phase(&mut output, "READY mode=shared-live");
+    let mut sampler = sampler_for(&process, inventory);
+    let epoch = Instant::now();
+
+    send(&mut input, "allocate");
+    read_phase(&mut output, "ALLOCATED");
+    let allocated = sampler.sample_native(&inventory, epoch).clone();
+    assert_eq!(
+        allocated.members.len(),
+        2,
+        "shared aggregation requires two live owners: {allocated:#?}"
+    );
+    assert!(
+        allocated
+            .members
+            .iter()
+            .all(|member| member.footprint_bytes.is_some()),
+        "both live owners must have an OS-accounted footprint: {allocated:#?}"
+    );
+
+    send(&mut input, "release");
+    read_phase(&mut output, "RELEASED");
+    let released = sampler.sample_native(&inventory, epoch).clone();
+    assert_eq!(released.members.len(), 1, "helper must exit on release");
+
+    send(&mut input, "exit");
+    read_phase(&mut output, "EXIT");
+    assert_eq!(process.wait_root().unwrap(), RootOutcome::Exited(0));
+}
+
+#[test]
 fn sampling_continues_after_term_while_a_worker_is_still_alive() {
     // Catches stopping observation at signal delivery instead of at observed process exit.
     let inventory = NativeProcessInventory::new();

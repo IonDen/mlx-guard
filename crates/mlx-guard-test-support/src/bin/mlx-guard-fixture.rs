@@ -53,6 +53,7 @@ fn run() -> Result<(), RunError> {
     match mode.as_str() {
         "allocate" => run_allocate(limits),
         "shared" => run_shared(limits),
+        "shared-live" => run_shared_live(limits),
         "cpu-stall" => run_cpu_stall(limits),
         "fanout-stall" => run_fanout_stall(limits),
         "idle-stall" => run_idle_stall(),
@@ -132,6 +133,30 @@ fn run_shared(limits: FixtureLimits) -> Result<(), RunError> {
     write_phase("ALLOCATED")?;
 
     expect_command(&mut lines, "release")?;
+    drop(mapping);
+    write_phase("RELEASED")?;
+
+    expect_command(&mut lines, "exit")?;
+    write_phase("EXIT")
+}
+
+fn run_shared_live(limits: FixtureLimits) -> Result<(), RunError> {
+    write_phase(&format!(
+        "READY mode=shared-live bytes={}",
+        limits.allocation_bytes()
+    ))?;
+    let stdin = io::stdin();
+    let mut lines = stdin.lock().lines();
+
+    expect_command(&mut lines, "allocate")?;
+    let length = usize::try_from(limits.allocation_bytes())
+        .map_err(|_| RunError::fixture("allocation does not fit usize"))?;
+    let mapping = SharedMapping::new(length)?;
+    let mut child = mapping.spawn_live_child()?;
+    write_phase("ALLOCATED")?;
+
+    expect_command(&mut lines, "release")?;
+    child.finish()?;
     drop(mapping);
     write_phase("RELEASED")?;
 
@@ -591,6 +616,12 @@ struct SharedMapping {
     length: usize,
 }
 
+struct LiveSharedChild {
+    pid: libc::pid_t,
+    release_fd: libc::c_int,
+    finished: bool,
+}
+
 struct AnonymousMapping {
     address: *mut libc::c_void,
     length: usize,
@@ -686,6 +717,122 @@ impl SharedMapping {
         }
         Ok(())
     }
+
+    fn spawn_live_child(&self) -> Result<LiveSharedChild, RunError> {
+        let mut ready_pipe = [-1; 2];
+        let mut release_pipe = [-1; 2];
+        // SAFETY: both arrays provide storage for the two descriptors written by pipe.
+        if unsafe { libc::pipe(ready_pipe.as_mut_ptr()) } != 0 {
+            return Err(RunError::fixture(format!(
+                "ready pipe failed: {}",
+                io::Error::last_os_error()
+            )));
+        }
+        // SAFETY: both arrays provide storage for the two descriptors written by pipe.
+        if unsafe { libc::pipe(release_pipe.as_mut_ptr()) } != 0 {
+            close_fd(ready_pipe[0]);
+            close_fd(ready_pipe[1]);
+            return Err(RunError::fixture(format!(
+                "release pipe failed: {}",
+                io::Error::last_os_error()
+            )));
+        }
+
+        // SAFETY: the child uses only async-signal-safe libc calls before `_exit`.
+        let child = unsafe { libc::fork() };
+        if child == -1 {
+            for fd in ready_pipe.into_iter().chain(release_pipe) {
+                close_fd(fd);
+            }
+            return Err(RunError::fixture(format!(
+                "fork failed: {}",
+                io::Error::last_os_error()
+            )));
+        }
+        if child == 0 {
+            // SAFETY: these descriptors belong to this process, the mapping has at least one byte,
+            // and all operations below are async-signal-safe after fork.
+            unsafe {
+                libc::close(ready_pipe[0]);
+                libc::close(release_pipe[1]);
+                self.address.cast::<u8>().write(0x5A);
+                let ready = [1_u8];
+                if libc::write(ready_pipe[1], ready.as_ptr().cast(), 1) != 1 {
+                    libc::_exit(70);
+                }
+                libc::close(ready_pipe[1]);
+                let mut release = [0_u8];
+                let read = libc::read(release_pipe[0], release.as_mut_ptr().cast(), 1);
+                libc::close(release_pipe[0]);
+                libc::_exit(if read >= 0 { 0 } else { 70 });
+            }
+        }
+
+        close_fd(ready_pipe[1]);
+        close_fd(release_pipe[0]);
+        let mut ready = [0_u8];
+        // SAFETY: ready_pipe[0] is an open read descriptor and `ready` is writable.
+        let ready_bytes = unsafe { libc::read(ready_pipe[0], ready.as_mut_ptr().cast(), 1) };
+        close_fd(ready_pipe[0]);
+        // SAFETY: the mapping remains live and writable for its stored length.
+        let shared_byte = unsafe { self.address.cast::<u8>().read() };
+        if ready_bytes != 1 || ready[0] != 1 || shared_byte != 0x5A {
+            close_fd(release_pipe[1]);
+            wait_for_child(child);
+            return Err(RunError::fixture("live shared-mapping child failed"));
+        }
+        Ok(LiveSharedChild {
+            pid: child,
+            release_fd: release_pipe[1],
+            finished: false,
+        })
+    }
+}
+
+impl LiveSharedChild {
+    fn finish(&mut self) -> Result<(), RunError> {
+        if self.finished {
+            return Ok(());
+        }
+        let release = [1_u8];
+        // SAFETY: release_fd is the open write side retained by the parent.
+        let written = unsafe { libc::write(self.release_fd, release.as_ptr().cast(), 1) };
+        close_fd(self.release_fd);
+        self.release_fd = -1;
+        let exited_cleanly = wait_for_child(self.pid);
+        self.finished = true;
+        if written != 1 || !exited_cleanly {
+            return Err(RunError::fixture("live shared-mapping child failed"));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for LiveSharedChild {
+    fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
+        close_fd(self.release_fd);
+        self.release_fd = -1;
+        wait_for_child(self.pid);
+        self.finished = true;
+    }
+}
+
+fn close_fd(fd: libc::c_int) {
+    if fd >= 0 {
+        // SAFETY: callers pass a descriptor they own and close at most once.
+        unsafe {
+            libc::close(fd);
+        }
+    }
+}
+
+fn wait_for_child(pid: libc::pid_t) -> bool {
+    let mut status = 0;
+    // SAFETY: pid came from a successful fork and status is writable.
+    unsafe { libc::waitpid(pid, &raw mut status, 0) == pid && libc::WIFEXITED(status) }
 }
 
 impl Drop for SharedMapping {
