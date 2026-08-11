@@ -51,6 +51,8 @@ jobs:
         with:
           name: mlx-guard-v0.1.0
           path: dist
+      - name: Verify downloaded artifacts
+        run: (cd dist && sha256sum -c SHA256SUMS)
       - name: Publish distributions with attestations
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
         with:

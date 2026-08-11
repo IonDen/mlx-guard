@@ -5,7 +5,8 @@
 | Component | Supported in 0.1.x |
 |---|---|
 | Hardware | Apple Silicon (`arm64`) |
-| Operating system | macOS 11 or later |
+| Verified local runtime | macOS 26.6.1 |
+| Required release CI | GitHub `macos-15` arm64 |
 | Python | CPython 3.10–3.14 |
 | Installation | `py3-none-macosx_11_0_arm64` wheel |
 | Rust source build | Rust 1.93 and maturin 1.13.3 |
@@ -17,9 +18,10 @@ it does not make Linux a runtime target.
 
 ## Verified configurations
 
-Reference calibration used an Apple M1 Max with 32 GB unified memory on macOS 26.6.1. CI also runs
-the macOS suite on GitHub's `macos-15` arm64 runner. Other Apple Silicon generations should be
-treated as compatible but uncalibrated until their own evidence has been collected.
+Reference calibration used an Apple M1 Max with 32 GB unified memory on macOS 26.6.1. Publication is
+gated on the complete macOS suite passing on GitHub's `macos-15` arm64 runner. The wheel's
+`macosx_11_0_arm64` deployment tag does not establish runtime support on macOS 11–14. Other Apple
+Silicon generations are uncalibrated until their own evidence has been collected.
 
 ## Getting help
 

@@ -6,8 +6,10 @@ pure-Python `mlx_guard` package. There is no PyO3 module and no enforcement loop
 ## Supported wheel
 
 v0.1 publishes `py3-none-macosx_11_0_arm64`. The Python code supports CPython 3.10 through 3.14,
-while the native executable requires Apple Silicon and macOS 11 or later. The wheel includes the
-Apache license, a PEP 561 `py.typed` marker, and maturin's CycloneDX Rust SBOM.
+and the native executable requires Apple Silicon. The platform tag is the binary deployment target,
+not evidence that every macOS release from 11 onward has been tested. The verified local runtime is
+macOS 26.6.1, with publication also gated on the `macos-15` arm64 CI runner. The wheel includes the
+Apache license, third-party terms, a PEP 561 `py.typed` marker, and a CycloneDX Rust SBOM.
 
 `mlx_guard.__version__` comes from installed package metadata. `mlx_guard.binary_version()` runs the
 packaged executable with `--version` and requires an exact package-version match.

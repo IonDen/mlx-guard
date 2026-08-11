@@ -8,8 +8,10 @@ The release includes a native Rust supervisor and a typed Python client for CPyt
 worker may also opt into a nonce-bound cooperative checkpoint request before TERM/KILL escalation.
 Reports are local schema-v1 JSON with bounded evidence and path-free command identity by default.
 
-The release target is the `py3-none-macosx_11_0_arm64` wheel. macOS 11 or later and Apple Silicon
-are required. Intel Macs and other operating systems are not release targets.
+The release target is the `py3-none-macosx_11_0_arm64` wheel on Apple Silicon. The tag records the
+binary deployment target, not a tested operating-system range. Runtime evidence is from macOS
+26.6.1; the release workflow must also pass on GitHub's macOS 15 arm64 runner before publication.
+Intel Macs and other operating systems are not release targets.
 
 Important limits: sampling is periodic rather than atomic; descendants can escape the process
 group; same-user hostile workloads are outside the threat model; and Metal allocations may remain
