@@ -5,6 +5,7 @@ import signal
 import socket
 import struct
 import threading
+import traceback
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -68,9 +69,10 @@ class CheckpointWorkerTests(unittest.TestCase):
     def test_callback_exception_sends_failed_acknowledgement(self) -> None:
         supervisor, inherited_fd = _checkpoint_pair()
         supervisor.sendall(_hello())
+        callback_canary = "CALLBACK_SECRET_CANARY_9d83"
 
         def checkpoint(_request: mlx_guard.CheckpointRequest) -> mlx_guard.CheckpointResponse:
-            raise RuntimeError("secret callback details")
+            raise RuntimeError(callback_canary)
 
         with _worker_environment(inherited_fd):
             worker = mlx_guard.CheckpointWorker.connect(checkpoint)
@@ -82,12 +84,20 @@ class CheckpointWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 mlx_guard.CheckpointCallbackError,
                 "^checkpoint callback failed$",
-            ):
+            ) as raised:
                 worker.poll()
 
         acknowledgement = _read_frame(supervisor)
         supervisor.close()
         self.assertEqual(acknowledgement[50], 2)
+        rendered = "".join(
+            traceback.format_exception(
+                type(raised.exception), raised.exception, raised.exception.__traceback__
+            )
+        )
+        self.assertNotIn(callback_canary, rendered)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
 
     def test_callback_must_explicitly_declare_a_result(self) -> None:
         supervisor, inherited_fd = _checkpoint_pair()

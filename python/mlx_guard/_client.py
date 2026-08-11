@@ -339,12 +339,18 @@ def run(config: Config, *, capture_output: bool = False) -> RunResult:
 def load_report(path: Path) -> Report:
     """Load one bounded, regular schema-v1 report without following a symlink."""
     descriptor = -1
+    missing = False
+    unsafe = False
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
-    except FileNotFoundError as error:
-        raise MissingReportError("native supervisor did not produce a report") from error
-    except OSError as error:
-        raise InvalidReportError("native supervisor report could not be opened safely") from error
+    except FileNotFoundError:
+        missing = True
+    except OSError:
+        unsafe = True
+    if missing:
+        raise MissingReportError("native supervisor did not produce a report")
+    if unsafe:
+        raise InvalidReportError("native supervisor report could not be opened safely")
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):

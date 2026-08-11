@@ -195,6 +195,10 @@ fn native_inventory_binds_start_time_and_refuses_a_stale_direct_signal() {
         start_abstime: current.identity.start_abstime.saturating_add(1),
         ..current.identity
     };
+    assert_eq!(
+        inventory.inspect_expected(stale).unwrap_err(),
+        IdentityUnavailable::Stale
+    );
     let term = SignalNumber::new(u8::try_from(libc::SIGCONT).unwrap()).unwrap();
     assert_eq!(
         inventory.signal_identity(stale, term).unwrap_err(),

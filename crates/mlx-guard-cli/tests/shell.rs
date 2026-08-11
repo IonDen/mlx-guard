@@ -319,6 +319,41 @@ fn runtime_artifacts_and_guard_output_exclude_sensitive_launch_data() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn raw_child_output_is_not_control_data_or_a_persisted_guard_artifact() {
+    // Catches parsing inherited worker output as control data or copying it into guard artifacts.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let child_canary = "CHILD_OUTPUT_SECRET_CANARY_5e91";
+    let child_output = format!("\u{1b}[31m{child_canary}\u{1b}[0m");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args([
+            "run",
+            "--max-footprint",
+            "1TiB",
+            "--sample-interval",
+            "10ms",
+            "--report",
+        ])
+        .arg(&report_path)
+        .args(["--", "/usr/bin/printf", "%s", &child_output])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert!(output.stdout.starts_with(child_output.as_bytes()));
+    for entry in fs::read_dir(&directory.0).unwrap() {
+        let bytes = fs::read(entry.unwrap().path()).unwrap();
+        assert!(
+            !String::from_utf8_lossy(&bytes).contains(child_canary),
+            "guard artifact persisted inherited child output"
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn run_emergency_footprint_breach_kills_the_owned_group() {
     // Catches applying the explicit sampled threshold only to wall time or graceful TERM.
     let directory = TestDirectory::new();

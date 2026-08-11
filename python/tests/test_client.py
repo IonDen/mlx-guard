@@ -3,6 +3,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import traceback
 import unittest
 from collections.abc import Mapping
 from pathlib import Path
@@ -295,6 +296,23 @@ with worker:
                 "^native supervisor report could not be opened safely$",
             ):
                 mlx_guard.load_report(path)
+
+    def test_report_errors_do_not_render_sensitive_paths(self) -> None:
+        path_canary = "REPORT_PATH_SECRET_CANARY_4f21"
+        with tempfile.TemporaryDirectory() as temporary:
+            missing = Path(temporary, path_canary, "missing.json")
+            with self.assertRaisesRegex(
+                mlx_guard.MissingReportError,
+                "^native supervisor did not produce a report$",
+            ) as raised:
+                mlx_guard.load_report(missing)
+
+        rendered = "".join(
+            traceback.format_exception(
+                type(raised.exception), raised.exception, raised.exception.__traceback__
+            )
+        )
+        self.assertNotIn(path_canary, rendered)
 
 
 if __name__ == "__main__":
