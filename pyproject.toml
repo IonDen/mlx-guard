@@ -9,6 +9,7 @@ description = "External runtime safety supervision for MLX workloads on Apple Si
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
 license = "Apache-2.0"
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
 authors = [{ name = "IonDen" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -26,6 +27,9 @@ classifiers = [
 ]
 
 [project.urls]
+Changelog = "https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md"
+Documentation = "https://github.com/IonDen/mlx-guard#readme"
+Issues = "https://github.com/IonDen/mlx-guard/issues"
 Repository = "https://github.com/IonDen/mlx-guard"
 
 [dependency-groups]
@@ -38,7 +42,29 @@ dev = [
 
 [tool.maturin]
 bindings = "bin"
-include = [{ path = "LICENSE", format = "sdist" }]
+include = [
+    { path = "CHANGELOG.md", format = "sdist" },
+    { path = "LICENSE", format = "sdist" },
+    { path = "RELEASE_NOTES.md", format = "sdist" },
+    { path = "SECURITY.md", format = "sdist" },
+    { path = "THIRD_PARTY_LICENSES.md", format = "sdist" },
+    { path = "docs/CHECKPOINT_PROTOCOL.md", format = "sdist" },
+    { path = "docs/CLI.md", format = "sdist" },
+    { path = "docs/EXAMPLES.md", format = "sdist" },
+    { path = "docs/IDENTITY_AND_CONTAINMENT.md", format = "sdist" },
+    { path = "docs/INTERVENTION.md", format = "sdist" },
+    { path = "docs/OBSERVE_AND_CALIBRATION.md", format = "sdist" },
+    { path = "docs/POLICY.md", format = "sdist" },
+    { path = "docs/PROCESS_CONTROL.md", format = "sdist" },
+    { path = "docs/PYTHON_API.md", format = "sdist" },
+    { path = "docs/PYTHON_PACKAGING.md", format = "sdist" },
+    { path = "docs/RELEASE.md", format = "sdist" },
+    { path = "docs/REPORTS.md", format = "sdist" },
+    { path = "docs/SAMPLING.md", format = "sdist" },
+    { path = "docs/SUPPORT.md", format = "sdist" },
+    { path = "docs/THREAT_MODEL.md", format = "sdist" },
+    { path = "docs/integrations/MLX_TRAIN_PERF.md", format = "sdist" },
+]
 manifest-path = "crates/mlx-guard-cli/Cargo.toml"
 python-source = "python"
 module-name = "mlx_guard"

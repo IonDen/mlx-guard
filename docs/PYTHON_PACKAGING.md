@@ -37,8 +37,8 @@ Failures use stable, path-free messages. The public exception classes and exact 
 
 ## Development and source builds
 
-`uv run --locked maturin develop --release --locked` installs an editable Python package and a
-rebuilt release binary. The same RECORD and version checks apply. `uv run --locked ruff check
+`uv sync --locked` installs the project and its development tools from `uv.lock`; the project is
+editable and its native binary is rebuilt. The same RECORD and version checks apply. `uv run --locked ruff check
 python`, `uv run --locked mypy --strict python`, and `uv run --locked pytest python` are the local
 Python quality gates. Pytest treats warnings as errors.
 

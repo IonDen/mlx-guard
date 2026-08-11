@@ -4,21 +4,46 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "$0")/.." && pwd)
 proof_root=$(mktemp -d "${TMPDIR:-/tmp}/mlx-guard-wheel.XXXXXX")
 trap 'rm -rf -- "$proof_root"' EXIT
+artifact_dir=${1:-}
+
+if [[ -n ${MLX_GUARD_MATURIN_BIN:-} ]]; then
+    if [[ $("$MLX_GUARD_MATURIN_BIN" --version) != "maturin 1.13.3" ]]; then
+        echo "MLX_GUARD_MATURIN_BIN must select maturin 1.13.3" >&2
+        exit 1
+    fi
+    maturin=("$MLX_GUARD_MATURIN_BIN")
+else
+    maturin=(uvx --from maturin==1.13.3 maturin)
+fi
+if [[ -n ${MLX_GUARD_PYTHON_BIN:-} ]]; then
+    python=("$MLX_GUARD_PYTHON_BIN")
+else
+    python=(uv run --locked python)
+fi
 
 if [[ $(uname -s) != Darwin || $(uname -m) != arm64 ]]; then
     echo "wheel proof requires macOS arm64" >&2
     exit 1
 fi
 
-wheel_dir="$proof_root/wheel"
-sdist_dir="$proof_root/sdist"
-mkdir -p "$wheel_dir" "$sdist_dir"
+if [[ -n $artifact_dir ]]; then
+    artifact_dir=$(cd "$artifact_dir" && pwd)
+    wheel_dir="$artifact_dir/packages"
+    sdist_dir="$artifact_dir/source"
+else
+    wheel_dir="$proof_root/wheel"
+    sdist_dir="$proof_root/sdist"
+    mkdir -p "$wheel_dir" "$sdist_dir"
+fi
 
 cd "$repo_root"
-uvx --from maturin==1.13.3 maturin build \
-    --release \
-    --locked \
-    --out "$wheel_dir"
+if [[ -z $artifact_dir ]]; then
+    "${maturin[@]}" build \
+        --release \
+        --locked \
+        --out "$wheel_dir"
+    "${maturin[@]}" sdist --out "$sdist_dir"
+fi
 
 shopt -s nullglob
 wheels=("$wheel_dir"/*.whl)
@@ -32,6 +57,8 @@ if [[ ${wheel##*/} != mlx_guard-0.1.0-py3-none-macosx_11_0_arm64.whl ]]; then
     exit 1
 fi
 
+"${python[@]}" "$repo_root/scripts/sanitize_wheel_sbom.py" "$wheel"
+
 wheel_listing=$(unzip -Z1 "$wheel")
 for required in \
     'mlx_guard/__init__.py' \
@@ -41,12 +68,30 @@ for required in \
     'mlx_guard/py.typed' \
     'mlx_guard-0.1.0.data/scripts/mlx-guard' \
     'mlx_guard-0.1.0.dist-info/licenses/LICENSE' \
+    'mlx_guard-0.1.0.dist-info/licenses/THIRD_PARTY_LICENSES.md' \
     'mlx_guard-0.1.0.dist-info/sboms/mlx-guard-cli.cyclonedx.json'; do
     if ! rg -Fxq "$required" <<<"$wheel_listing"; then
         echo "wheel is missing $required" >&2
         exit 1
     fi
 done
+
+for forbidden in 'CLAUDE.md' 'AGENTS.md' '.git/' '.codex/' 'docs/backlog/' 'superpowers/'; do
+    if rg -Fq "$forbidden" <<<"$wheel_listing"; then
+        echo "wheel contains forbidden workspace path $forbidden" >&2
+        exit 1
+    fi
+done
+
+wheel_sbom=$(unzip -p "$wheel" 'mlx_guard-*.dist-info/sboms/*.json')
+if rg -q 'path\+file:|download_url=file:|/(Users|home|private|tmp)/' <<<"$wheel_sbom"; then
+    echo "wheel SBOM contains a local filesystem reference" >&2
+    exit 1
+fi
+if rg -a -q 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|pypi-[A-Za-z0-9_-]{20}|hf_[A-Za-z0-9]{20}' < <(unzip -p "$wheel"); then
+    echo "wheel contains secret-like material" >&2
+    exit 1
+fi
 
 wheel_metadata=$(unzip -p "$wheel" 'mlx_guard-*.dist-info/METADATA')
 if ! rg -Fxq 'Requires-Python: >=3.10, <3.15' <<<"$wheel_metadata"; then
@@ -67,15 +112,30 @@ for python_version in "${python_versions[@]}"; do
 done
 
 editable="$proof_root/editable"
-uv venv --python 3.12 "$editable"
-VIRTUAL_ENV="$editable" uvx --from maturin==1.13.3 maturin develop --release --locked
+if [[ -n ${MLX_GUARD_BUILD_BACKEND_PATH:-} ]]; then
+    if [[ -z ${MLX_GUARD_MATURIN_BIN:-} ]]; then
+        echo "MLX_GUARD_BUILD_BACKEND_PATH requires MLX_GUARD_MATURIN_BIN" >&2
+        exit 1
+    fi
+    if [[ ! -d "$MLX_GUARD_BUILD_BACKEND_PATH/maturin" ]]; then
+        echo "MLX_GUARD_BUILD_BACKEND_PATH must contain the maturin package" >&2
+        exit 1
+    fi
+    python_312=$(uv python find 3.12)
+    "$python_312" -m venv "$editable"
+    PYTHONPATH="$MLX_GUARD_BUILD_BACKEND_PATH" \
+        PATH="$(dirname "$MLX_GUARD_MATURIN_BIN"):$PATH" \
+        "$python_312" -m pip --python "$editable" install \
+        --no-deps --no-build-isolation --editable "$repo_root"
+else
+    UV_PROJECT_ENVIRONMENT="$editable" uv sync --locked --python 3.12
+fi
 (
     cd "$proof_root"
     "$editable/bin/python" -W error -m unittest discover \
         -s "$repo_root/python/tests" -p 'test_*.py' -v
 )
 
-uvx --from maturin==1.13.3 maturin sdist --out "$sdist_dir"
 sdists=("$sdist_dir"/*.tar.gz)
 if [[ ${#sdists[@]} -ne 1 ]]; then
     echo "expected exactly one source distribution" >&2
@@ -85,8 +145,16 @@ sdist=${sdists[0]}
 sdist_listing=$(tar -tzf "$sdist")
 for required in \
     'mlx_guard-0.1.0/LICENSE' \
+    'mlx_guard-0.1.0/CHANGELOG.md' \
+    'mlx_guard-0.1.0/RELEASE_NOTES.md' \
+    'mlx_guard-0.1.0/SECURITY.md' \
+    'mlx_guard-0.1.0/THIRD_PARTY_LICENSES.md' \
     'mlx_guard-0.1.0/crates/mlx-guard-cli/src/runtime.rs' \
     'mlx_guard-0.1.0/crates/mlx-guard-core/src/lib.rs' \
+    'mlx_guard-0.1.0/docs/EXAMPLES.md' \
+    'mlx_guard-0.1.0/docs/RELEASE.md' \
+    'mlx_guard-0.1.0/docs/SUPPORT.md' \
+    'mlx_guard-0.1.0/docs/THREAT_MODEL.md' \
     'mlx_guard-0.1.0/python/mlx_guard/_binary.py' \
     'mlx_guard-0.1.0/python/mlx_guard/_checkpoint.py' \
     'mlx_guard-0.1.0/python/mlx_guard/_client.py'; do
@@ -96,9 +164,33 @@ for required in \
     fi
 done
 
+for forbidden in 'CLAUDE.md' 'AGENTS.md' '.git/' '.codex/' 'docs/backlog/' 'superpowers/'; do
+    if rg -Fq "$forbidden" <<<"$sdist_listing"; then
+        echo "source distribution contains forbidden workspace path $forbidden" >&2
+        exit 1
+    fi
+done
+if rg -a -q '/Users/|/home/runner/|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|pypi-[A-Za-z0-9_-]{20}|hf_[A-Za-z0-9]{20}' < <(tar -xOzf "$sdist"); then
+    echo "source distribution contains a local path or secret-like material" >&2
+    exit 1
+fi
+
 sdist_environment="$proof_root/sdist-python-3.12"
 uv venv --python 3.12 "$sdist_environment"
-uv pip install --python "$sdist_environment/bin/python" --no-deps "$sdist"
+sdist_source="$proof_root/sdist-source"
+sdist_wheel_dir="$proof_root/sdist-wheel"
+mkdir -p "$sdist_source" "$sdist_wheel_dir"
+tar -xzf "$sdist" -C "$sdist_source"
+(
+    cd "$sdist_source/mlx_guard-0.1.0"
+    "${maturin[@]}" build --release --locked --out "$sdist_wheel_dir"
+)
+sdist_wheels=("$sdist_wheel_dir"/*.whl)
+if [[ ${#sdist_wheels[@]} -ne 1 ]]; then
+    echo "source distribution build expected exactly one wheel" >&2
+    exit 1
+fi
+uv pip install --python "$sdist_environment/bin/python" --no-deps "${sdist_wheels[0]}"
 (
     cd "$proof_root"
     "$sdist_environment/bin/python" -W error -m unittest discover \
