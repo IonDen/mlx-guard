@@ -141,6 +141,10 @@ fn run_shared(limits: FixtureLimits) -> Result<(), RunError> {
 }
 
 fn run_shared_live(limits: FixtureLimits) -> Result<(), RunError> {
+    let length = usize::try_from(limits.allocation_bytes())
+        .map_err(|_| RunError::fixture("allocation does not fit usize"))?;
+    let mapping = SharedMapping::new_uninitialized(length)?;
+    let mut child = mapping.spawn_live_child()?;
     write_phase(&format!(
         "READY mode=shared-live bytes={}",
         limits.allocation_bytes()
@@ -149,10 +153,7 @@ fn run_shared_live(limits: FixtureLimits) -> Result<(), RunError> {
     let mut lines = stdin.lock().lines();
 
     expect_command(&mut lines, "allocate")?;
-    let length = usize::try_from(limits.allocation_bytes())
-        .map_err(|_| RunError::fixture("allocation does not fit usize"))?;
-    let mapping = SharedMapping::new(length)?;
-    let mut child = mapping.spawn_live_child()?;
+    mapping.fill(0xA5);
     write_phase("ALLOCATED")?;
 
     expect_command(&mut lines, "release")?;
@@ -664,6 +665,12 @@ impl Drop for AnonymousMapping {
 
 impl SharedMapping {
     fn new(length: usize) -> Result<Self, RunError> {
+        let mapping = Self::new_uninitialized(length)?;
+        mapping.fill(0xA5);
+        Ok(mapping)
+    }
+
+    fn new_uninitialized(length: usize) -> Result<Self, RunError> {
         // SAFETY: arguments describe a new anonymous mapping; MAP_FAILED is checked before writes.
         let address = unsafe {
             libc::mmap(
@@ -681,9 +688,12 @@ impl SharedMapping {
                 io::Error::last_os_error()
             )));
         }
-        // SAFETY: mmap returned a writable region of exactly `length` bytes.
-        unsafe { ptr::write_bytes(address.cast::<u8>(), 0xA5, length) };
         Ok(Self { address, length })
+    }
+
+    fn fill(&self, value: u8) {
+        // SAFETY: mmap returned a writable region of exactly `length` bytes.
+        unsafe { ptr::write_bytes(self.address.cast::<u8>(), value, self.length) };
     }
 
     fn verify_shared_after_fork(&self) -> Result<(), RunError> {

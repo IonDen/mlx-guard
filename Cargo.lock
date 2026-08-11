@@ -94,6 +94,8 @@ dependencies = [
  "libc",
  "mlx-guard-cli",
  "mlx-guard-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
