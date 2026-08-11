@@ -22,6 +22,10 @@ fn run_golden_freezes_normalized_configuration_and_literal_argv() {
     assert_eq!(run.max_footprint_bytes, 26 * 1024 * 1024 * 1024);
     assert_eq!(run.wall_time, Some(Duration::from_secs(2 * 60 * 60)));
     assert_eq!(run.common.sample_interval, Duration::from_millis(50));
+    assert_eq!(
+        run.common.report_path,
+        PathBuf::from("/private/mlx-guard/report.json")
+    );
     assert_eq!(run.common.cwd, Some(PathBuf::from("/work")));
     assert!(run.common.clear_env);
     assert_eq!(
@@ -43,6 +47,10 @@ fn observe_golden_has_no_memory_or_wall_enforcement() {
         panic!("expected observe mode");
     };
     assert_eq!(observe.common.sample_interval, Duration::from_millis(100));
+    assert_eq!(
+        observe.common.report_path,
+        PathBuf::from("/private/mlx-guard/report.json")
+    );
     assert_eq!(
         observe.common.command,
         ["python", "-c", "print('ok')"].map(OsString::from)
@@ -68,6 +76,36 @@ fn enforcement_requires_an_explicit_limit_and_mandatory_separator() {
 }
 
 #[test]
+fn enforcement_rejects_a_limit_too_small_for_ordered_policy_bands() {
+    // Catches accepting a value that cannot satisfy recovery < warning < limit < emergency.
+    let error = parse_cli([
+        "mlx-guard",
+        "run",
+        "--max-footprint",
+        "1B",
+        "--report",
+        "/private/mlx-guard/report.json",
+        "--",
+        "true",
+    ])
+    .unwrap_err();
+    assert!(error.to_string().contains("at least 2B"));
+
+    let error = parse_cli([
+        "mlx-guard",
+        "run",
+        "--max-footprint",
+        "18446744073709551615B",
+        "--report",
+        "/private/mlx-guard/report.json",
+        "--",
+        "true",
+    ])
+    .unwrap_err();
+    assert!(error.to_string().contains("emergency policy band"));
+}
+
+#[test]
 fn command_metacharacters_remain_literal_tokens() {
     // Catches introducing a shell or joining argv into one command string.
     let parsed = parse_cli([
@@ -75,6 +113,8 @@ fn command_metacharacters_remain_literal_tokens() {
         "run",
         "--max-footprint",
         "1GiB",
+        "--report",
+        "/private/mlx-guard/report.json",
         "--",
         "printf",
         "$(touch /tmp/must-not-exist);*",
@@ -192,6 +232,8 @@ fn command_argv_preserves_non_utf8_os_strings() {
     let parsed = parse_cli([
         OsString::from("mlx-guard"),
         OsString::from("observe"),
+        OsString::from("--report"),
+        OsString::from("/private/mlx-guard/report.json"),
         OsString::from("--"),
         raw.clone(),
     ])

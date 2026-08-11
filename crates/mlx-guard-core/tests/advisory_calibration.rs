@@ -103,6 +103,29 @@ fn observe_path_uses_sampler_windows_and_advisory_metrics_without_policy_actions
 }
 
 #[test]
+fn sub_millisecond_native_window_remains_positive_in_the_millisecond_schema() {
+    // Catches truncating a real nonzero native sample window into schema-invalid zero milliseconds.
+    let sample = FootprintSample {
+        sequence: 0,
+        started_at: Duration::from_micros(10_000),
+        finished_at: Duration::from_micros(10_125),
+        members: Vec::new(),
+        outcome: SampleOutcome::Complete { total_bytes: 100 },
+        events: Vec::new(),
+        escaped_identities: Vec::new(),
+    };
+    let mut calibration = ObserveCalibration::new();
+
+    let projected = calibration.record_sample(
+        &sample,
+        Duration::from_micros(10_250),
+        &system_snapshot(10, Observed::Unknown),
+    );
+
+    assert_eq!(projected.window_ms, 1);
+}
+
+#[test]
 fn initial_and_missing_observations_never_become_normal_or_zero() {
     // Catches unknown pressure or a failed system query being serialized as reassuring zeroes.
     let snapshot = AdvisorySnapshot::new(

@@ -185,6 +185,30 @@ fn stale_wide_and_missing_samples_fail_closed_only_in_enforcement() {
 }
 
 #[test]
+fn runtime_supervisor_fault_stops_observe_and_fails_closed_in_enforcement() {
+    // Catches a post-launch platform fault returning before the owned command is made safe.
+    let mut observed = PolicyMachine::observe(ms(100), ms(10), 3);
+    assert_eq!(
+        observed.apply(Event::SupervisorFault { at: ms(5) }),
+        [Action::StopObserving]
+    );
+    assert_eq!(observed.state(), PolicyState::SupervisorError);
+
+    let mut enforced = PolicyMachine::enforce(config(false)).unwrap();
+    assert_eq!(
+        enforced.apply(Event::SupervisorFault { at: ms(5) }),
+        [Action::SendTerm {
+            checkpoint: CheckpointDisposition::SkippedSupervisorFailure,
+        }]
+    );
+    assert_eq!(enforced.state(), PolicyState::SupervisorError);
+    assert_eq!(
+        enforced.apply(Event::Tick { at: ms(105) }),
+        [Action::SendKill]
+    );
+}
+
+#[test]
 fn wall_time_and_repeated_terminal_signal_have_deterministic_actions() {
     // Catches an ignored wall limit or repeated signal that waits through the grace period.
     let mut settings = config(false);

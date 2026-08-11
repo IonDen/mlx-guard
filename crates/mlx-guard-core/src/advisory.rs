@@ -312,7 +312,7 @@ impl ObserveCalibration {
         SampleWindow {
             captured_at_ms: duration_ms(sample.finished_at),
             processed_at_ms: duration_ms(processed_at),
-            window_ms: duration_ms(sample.finished_at.saturating_sub(sample.started_at)),
+            window_ms: positive_duration_ms(sample.finished_at.saturating_sub(sample.started_at)),
             aggregate_footprint_bytes: sample_observation(&sample.outcome),
             advisory: advisory.with_growth(&growth, growth_at),
         }
@@ -347,6 +347,15 @@ impl ObserveCalibration {
             automatic_limit_bytes: None,
             guidance: CalibrationGuidance::ChooseExplicitLimitFromRepeatedRepresentativeRuns,
         }
+    }
+}
+
+fn positive_duration_ms(value: Duration) -> u64 {
+    let milliseconds = duration_ms(value);
+    if milliseconds == 0 && !value.is_zero() {
+        1
+    } else {
+        milliseconds
     }
 }
 

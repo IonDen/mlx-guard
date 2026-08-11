@@ -1,13 +1,12 @@
 # Command-line contract
 
-This document defines the v0.1 command syntax and process status rules. The supervision runtime is
-still under development, but these parsing and compatibility rules are covered by golden tests.
+This document defines the v0.1 command syntax, runtime behavior, and process status rules.
 
 ## Commands
 
 ```text
-mlx-guard observe [OPTIONS] -- COMMAND [ARG...]
-mlx-guard run --max-footprint SIZE [OPTIONS] -- COMMAND [ARG...]
+mlx-guard observe --report PATH [OPTIONS] -- COMMAND [ARG...]
+mlx-guard run --max-footprint SIZE --report PATH [OPTIONS] -- COMMAND [ARG...]
 ```
 
 `run` requires `--max-footprint`. There is no automatic memory limit. `observe` has no memory or
@@ -18,6 +17,8 @@ the operating system without a shell. At least one command token is required.
 
 Common options:
 
+- `--report PATH` writes schema-v1 JSON. The parent directory must already exist, belong to the
+  invoking user, and have mode `0700`.
 - `--sample-interval DURATION`, default `50ms`, accepts `10ms..=10s`.
 - `--cwd PATH` selects the child's working directory. A missing, inaccessible, or non-directory path
   is invalid before launch.
@@ -31,8 +32,10 @@ limit independent of memory.
 ## Value grammar
 
 Byte values are positive base-10 integers followed by one case-sensitive binary suffix: `B`, `KiB`,
-`MiB`, `GiB`, or `TiB`. For example, `26GiB` means `27,917,287,424` bytes. SI aliases such as `GB`,
-bare numbers, fractions, zero, negative values, and overflow are invalid.
+`MiB`, `GiB`, or `TiB`. For example, `26GiB` means `27,917,287,424` bytes. The enforcement limit must
+be at least `2B`, the smallest value that permits ordered recovery, warning, limit, and emergency
+bands. SI aliases such as `GB`, bare numbers, fractions, zero, negative values, and overflow are
+invalid. A value too close to the `u64` maximum to add the emergency band is also invalid.
 
 Durations are positive base-10 integers followed by `ms`, `s`, `m`, or `h`. Fractions, implicit
 units, zero, negative values, other casing, and overflow are invalid.
@@ -66,18 +69,25 @@ grace and requests immediate KILL. The parent continues sampling and writes the 
 it exits when storage and scheduling remain available.
 
 stdin, stdout, and stderr are inherited by default. Redirected bytes stay separate and are not
-parsed as control messages. Guard diagnostics use stderr. If stdin is an interactive terminal, the
-command is rejected with exit 64 before worker launch. Foreground transfer, Ctrl-Z, SIGTSTP,
-SIGCONT, and shell-style job control are not supported in v0.1.
+parsed as control messages. Child output remains application output and may contain arbitrary bytes;
+it is never copied into the guard report or diagnostics. Guard diagnostics use stderr. If stdin is
+an interactive terminal, the command is rejected with exit 64 before worker launch. Foreground
+transfer, Ctrl-Z, SIGTSTP, SIGCONT, and shell-style job control are not supported in v0.1.
 
 ## Examples
 
 ```bash
-mlx-guard observe --sample-interval 100ms -- python inspect_model.py
+mkdir -m 700 reports
+
+mlx-guard observe \
+  --sample-interval 100ms \
+  --report reports/observe.json \
+  -- python inspect_model.py
 
 mlx-guard run \
   --max-footprint 26GiB \
   --wall-time 2h \
+  --report reports/train.json \
   --clear-env \
   --env MODEL_ID=mlx-community/model \
   -- python train.py --epochs 2

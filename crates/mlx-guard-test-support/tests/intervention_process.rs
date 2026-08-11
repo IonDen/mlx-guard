@@ -102,7 +102,9 @@ fn authenticated_checkpoint_acknowledgement_drives_term_against_the_group() {
         .unwrap();
     let checkpoint_signal = CheckpointSignalConfig::new(signal(libc::SIGUSR1), ms(50)).unwrap();
     let binding = CheckpointBinding::new(&mut channel, endpoint, checkpoint_signal.signal());
-    let actuator = ProcessInterventionActuator::new(&process, Some(binding));
+    let mut actuator = ProcessInterventionActuator::new(&process, Some(binding));
+    // Catches runtime composition assuming readiness without polling the authenticated channel.
+    assert!(actuator.poll_checkpoint_ready().unwrap());
     let mut engine = InterventionEngine::new(policy(true), actuator);
     let _ = engine.handle(sample(0, 100));
     let decisions = engine.handle(sample(10, 101));
@@ -221,6 +223,8 @@ fn ignored_term_reaches_policy_deadline_then_kill_without_blocking_group_checks(
 
     let actuator = ProcessInterventionActuator::new(&process, None);
     let mut engine = InterventionEngine::new(policy(false), actuator);
+    // Catches an actuator retaining a borrow that prevents the supervisor from polling root status.
+    assert_eq!(process.try_wait_root().unwrap(), None);
     let _ = engine.handle(sample(0, 100));
     assert!(matches!(
         engine.handle(sample(10, 101)).as_slice(),

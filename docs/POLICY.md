@@ -30,6 +30,18 @@ resets the count. A sample at or above the emergency threshold skips checkpoint 
 Overshoot is recorded as aggregate footprint minus the configured limit. Each checkpoint action
 includes its state-machine deadline, so the runtime does not reconstruct or extend it.
 
+## v0.1 runtime defaults
+
+The CLI derives a band step as the larger of one byte and one tenth of `--max-footprint`, rounded
+down. Warning is `limit - step`, recovery is `limit - 2 * step`, and emergency is `limit + step`.
+The limit must be at least `2B` so these bands remain strictly ordered. Two consecutive samples at or
+above the limit start the checkpoint or TERM path. Three consecutive unusable samples trigger the
+mode-specific observation failure policy.
+
+The checkpoint acknowledgement timeout is 100ms and TERM grace is one second. Maximum sample age is
+twice `--sample-interval`; maximum collection-window width equals the interval. These values are not
+configurable in v0.1 and are recorded in each report.
+
 ## Measurement quality and clocks
 
 A sample is usable only when it contains an aggregate, was captured no later than it was processed,

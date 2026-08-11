@@ -1,6 +1,8 @@
 observe
 --sample-interval
 100ms
+--report
+/private/mlx-guard/report.json
 --
 python
 -c

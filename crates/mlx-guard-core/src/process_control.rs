@@ -8,12 +8,221 @@ use std::io::{self, IsTerminal};
 use std::num::NonZeroI32;
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicI32, Ordering};
 
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use crate::{CHECKPOINT_FD_ENV, CheckpointWorkerEndpoint, SignalNumber, SignalResult};
 
 const CHECKPOINT_CHILD_FD: libc::c_int = 198;
+static TERMINAL_SIGNAL_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
+
+/// Installed nonblocking capture of SIGINT and SIGTERM for one supervisor process.
+#[derive(Debug)]
+pub struct TerminalSignalMonitor {
+    read: OwnedFd,
+    _write: OwnedFd,
+    previous_interrupt: libc::sigaction,
+    previous_terminate: libc::sigaction,
+}
+
+impl TerminalSignalMonitor {
+    /// Install process-wide handlers that enqueue terminal signals without performing policy work.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted process-control error if another monitor is active or setup fails.
+    pub fn install() -> Result<Self, ControlError> {
+        let mut descriptors = [-1; 2];
+        // SAFETY: `descriptors` points to two writable integers as required by `pipe`.
+        if unsafe { libc::pipe(descriptors.as_mut_ptr()) } == -1 {
+            return Err(ControlError::from_io(
+                ControlErrorKind::TerminalSignalMonitorUnavailable,
+                io::Error::last_os_error(),
+            ));
+        }
+        // SAFETY: successful `pipe` returned two new owned descriptors.
+        let read = unsafe { OwnedFd::from_raw_fd(descriptors[0]) };
+        // SAFETY: successful `pipe` returned two new owned descriptors.
+        let write = unsafe { OwnedFd::from_raw_fd(descriptors[1]) };
+        configure_signal_pipe(read.as_raw_fd(), true)?;
+        configure_signal_pipe(write.as_raw_fd(), true)?;
+        TERMINAL_SIGNAL_WRITE_FD
+            .compare_exchange(-1, write.as_raw_fd(), Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| {
+                ControlError::new(ControlErrorKind::TerminalSignalMonitorAlreadyInstalled)
+            })?;
+
+        // SAFETY: zero is a valid starting representation for `sigaction`; all relevant fields are
+        // initialized below before the value is passed to the kernel.
+        let mut action = unsafe { std::mem::zeroed::<libc::sigaction>() };
+        action.sa_sigaction = terminal_signal_handler as *const () as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        // SAFETY: `sa_mask` is a live signal set and `sigemptyset` initializes it.
+        if unsafe { libc::sigemptyset(&raw mut action.sa_mask) } == -1 {
+            TERMINAL_SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+            return Err(ControlError::from_io(
+                ControlErrorKind::TerminalSignalMonitorUnavailable,
+                io::Error::last_os_error(),
+            ));
+        }
+        // SAFETY: output values are fully initialized by successful `sigaction` calls.
+        let mut previous_interrupt = unsafe { std::mem::zeroed::<libc::sigaction>() };
+        // SAFETY: the action and output pointers are valid for the duration of the call.
+        if unsafe { libc::sigaction(libc::SIGINT, &raw const action, &raw mut previous_interrupt) }
+            == -1
+        {
+            TERMINAL_SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+            return Err(ControlError::from_io(
+                ControlErrorKind::TerminalSignalMonitorUnavailable,
+                io::Error::last_os_error(),
+            ));
+        }
+        // SAFETY: output is initialized by the successful call below.
+        let mut previous_terminate = unsafe { std::mem::zeroed::<libc::sigaction>() };
+        // SAFETY: the action and output pointers are valid for the duration of the call.
+        if unsafe {
+            libc::sigaction(
+                libc::SIGTERM,
+                &raw const action,
+                &raw mut previous_terminate,
+            )
+        } == -1
+        {
+            // SAFETY: `previous_interrupt` came from the successful installation above.
+            unsafe {
+                libc::sigaction(
+                    libc::SIGINT,
+                    &raw const previous_interrupt,
+                    std::ptr::null_mut(),
+                );
+            }
+            TERMINAL_SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+            return Err(ControlError::from_io(
+                ControlErrorKind::TerminalSignalMonitorUnavailable,
+                io::Error::last_os_error(),
+            ));
+        }
+
+        Ok(Self {
+            read,
+            _write: write,
+            previous_interrupt,
+            previous_terminate,
+        })
+    }
+
+    /// Drain all currently queued terminal signals in arrival order without blocking.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted process-control error for an unexpected descriptor read failure.
+    pub fn poll(&self) -> Result<Vec<SignalNumber>, ControlError> {
+        let mut signals = Vec::new();
+        let mut buffer = [0_u8; 32];
+        loop {
+            // SAFETY: the descriptor is live and `buffer` is writable for its full length.
+            let count = unsafe {
+                libc::read(
+                    self.read.as_raw_fd(),
+                    buffer.as_mut_ptr().cast(),
+                    buffer.len(),
+                )
+            };
+            if count > 0 {
+                let count = usize::try_from(count).map_err(|_| {
+                    ControlError::new(ControlErrorKind::TerminalSignalMonitorUnavailable)
+                })?;
+                signals.extend(buffer[..count].iter().filter_map(|value| {
+                    matches!(*value, 2 | 15)
+                        .then(|| SignalNumber::new(*value))
+                        .flatten()
+                }));
+                continue;
+            }
+            if count == 0 {
+                break;
+            }
+            let error = io::Error::last_os_error();
+            match error.raw_os_error() {
+                Some(libc::EAGAIN) => break,
+                Some(libc::EINTR) => {}
+                _ => {
+                    return Err(ControlError::from_io(
+                        ControlErrorKind::TerminalSignalMonitorUnavailable,
+                        error,
+                    ));
+                }
+            }
+        }
+        Ok(signals)
+    }
+}
+
+impl Drop for TerminalSignalMonitor {
+    fn drop(&mut self) {
+        // SAFETY: both values were returned by successful `sigaction` installations for these
+        // exact signals. Restoration is best effort during teardown.
+        unsafe {
+            libc::sigaction(
+                libc::SIGINT,
+                &raw const self.previous_interrupt,
+                std::ptr::null_mut(),
+            );
+            libc::sigaction(
+                libc::SIGTERM,
+                &raw const self.previous_terminate,
+                std::ptr::null_mut(),
+            );
+        }
+        TERMINAL_SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+    }
+}
+
+extern "C" fn terminal_signal_handler(signal: libc::c_int) {
+    let descriptor = TERMINAL_SIGNAL_WRITE_FD.load(Ordering::Relaxed);
+    let Ok(value) = u8::try_from(signal) else {
+        return;
+    };
+    if descriptor >= 0 {
+        // SAFETY: `descriptor` remains open until after handler restoration; `write` is
+        // async-signal-safe and the nonblocking pipe makes this bounded.
+        unsafe {
+            libc::write(descriptor, (&raw const value).cast(), 1);
+        }
+    }
+}
+
+fn configure_signal_pipe(descriptor: libc::c_int, nonblocking: bool) -> Result<(), ControlError> {
+    // SAFETY: `descriptor` is a live pipe descriptor and `F_GETFD` has no pointer arguments.
+    let descriptor_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+    if descriptor_flags == -1
+        // SAFETY: the descriptor is live and the requested flags are valid.
+        || unsafe { libc::fcntl(descriptor, libc::F_SETFD, descriptor_flags | libc::FD_CLOEXEC) }
+            == -1
+    {
+        return Err(ControlError::from_io(
+            ControlErrorKind::TerminalSignalMonitorUnavailable,
+            io::Error::last_os_error(),
+        ));
+    }
+    if nonblocking {
+        // SAFETY: `descriptor` is live and `F_GETFL` has no pointer arguments.
+        let status_flags = unsafe { libc::fcntl(descriptor, libc::F_GETFL) };
+        if status_flags == -1
+            // SAFETY: the descriptor is live and O_NONBLOCK is a valid status flag.
+            || unsafe { libc::fcntl(descriptor, libc::F_SETFL, status_flags | libc::O_NONBLOCK) }
+                == -1
+        {
+            return Err(ControlError::from_io(
+                ControlErrorKind::TerminalSignalMonitorUnavailable,
+                io::Error::last_os_error(),
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// How one child standard stream is connected.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -143,6 +352,8 @@ pub enum ControlErrorKind {
     UnsupportedExternalSignal,
     InvalidCheckpointEndpoint,
     GroupQueryFailed,
+    TerminalSignalMonitorUnavailable,
+    TerminalSignalMonitorAlreadyInstalled,
     SignalFailed,
 }
 
@@ -184,6 +395,12 @@ impl fmt::Display for ControlError {
                 "checkpoint endpoint is not a live member of the owned process group"
             }
             ControlErrorKind::GroupQueryFailed => "owned process-group query failed",
+            ControlErrorKind::TerminalSignalMonitorUnavailable => {
+                "terminal signal monitoring failed"
+            }
+            ControlErrorKind::TerminalSignalMonitorAlreadyInstalled => {
+                "a terminal signal monitor is already installed"
+            }
             ControlErrorKind::SignalFailed => "signal delivery failed",
         };
         formatter.write_str(message)
@@ -204,6 +421,109 @@ pub struct CheckpointEndpoint {
     process_group: NonZeroI32,
 }
 
+/// Copyable authority for signalling and querying one validated owned process group.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProcessControlHandle {
+    process_group: NonZeroI32,
+}
+
+impl ProcessControlHandle {
+    /// Check whether the validated owned process group still has a live member without waiting.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControlError`] when the zero-signal process-group query fails unexpectedly.
+    pub fn owned_group_exists(self) -> Result<bool, ControlError> {
+        let target = self
+            .process_group
+            .get()
+            .checked_neg()
+            .ok_or_else(|| ControlError::new(ControlErrorKind::GroupQueryFailed))?;
+        // SAFETY: the process group is positive and validated, so its negation cannot target zero.
+        if unsafe { libc::kill(target, 0) } == 0 {
+            return Ok(true);
+        }
+        let error = io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(false),
+            Some(libc::EPERM) => Ok(true),
+            _ => Err(ControlError::from_io(
+                ControlErrorKind::GroupQueryFailed,
+                error,
+            )),
+        }
+    }
+
+    /// Forward one supported terminal signal unchanged to the owned group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControlError`] for unsupported job-control signals or a failed system call.
+    pub fn forward_terminal_signal(
+        self,
+        signal: SignalNumber,
+    ) -> Result<SignalResult, ControlError> {
+        if !matches!(signal.get(), 2 | 15) {
+            return Err(ControlError::new(
+                ControlErrorKind::UnsupportedExternalSignal,
+            ));
+        }
+        self.signal_group(signal)
+    }
+
+    /// Send SIGTERM to the validated owned process group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControlError`] when signal delivery fails unexpectedly.
+    pub fn terminate_group(self) -> Result<SignalResult, ControlError> {
+        self.signal_group(signal_number(libc::SIGTERM))
+    }
+
+    /// Send SIGKILL to the validated owned process group.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControlError`] when signal delivery fails unexpectedly.
+    pub fn kill_group(self) -> Result<SignalResult, ControlError> {
+        self.signal_group(signal_number(libc::SIGKILL))
+    }
+
+    /// Send a checkpoint request only to its validated cooperative endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ControlError`] if the endpoint no longer belongs to this group or delivery fails.
+    pub fn signal_checkpoint(
+        self,
+        endpoint: &CheckpointEndpoint,
+        signal: SignalNumber,
+    ) -> Result<SignalResult, ControlError> {
+        if endpoint.process_group != self.process_group {
+            return Err(ControlError::new(
+                ControlErrorKind::InvalidCheckpointEndpoint,
+            ));
+        }
+        // SAFETY: the endpoint PID is positive and validated; this recheck narrows PID-reuse risk.
+        let observed_group = unsafe { libc::getpgid(endpoint.pid.get()) };
+        if observed_group != self.process_group.get() {
+            return Err(ControlError::new(
+                ControlErrorKind::InvalidCheckpointEndpoint,
+            ));
+        }
+        signal_raw(endpoint.pid.get(), signal)
+    }
+
+    fn signal_group(self, signal: SignalNumber) -> Result<SignalResult, ControlError> {
+        let target = self
+            .process_group
+            .get()
+            .checked_neg()
+            .ok_or_else(|| ControlError::new(ControlErrorKind::SignalFailed))?;
+        signal_raw(target, signal)
+    }
+}
+
 /// A directly launched root plus its validated owned Unix process group.
 #[derive(Debug)]
 pub struct OwnedProcess {
@@ -211,6 +531,7 @@ pub struct OwnedProcess {
     root_pid: NonZeroI32,
     process_group: NonZeroI32,
     root_outcome: Option<RootOutcome>,
+    cleanup_on_drop: bool,
 }
 
 impl OwnedProcess {
@@ -338,6 +659,7 @@ impl OwnedProcess {
             root_pid,
             process_group: root_pid,
             root_outcome,
+            cleanup_on_drop: true,
         })
     }
 
@@ -353,30 +675,30 @@ impl OwnedProcess {
         self.process_group.get()
     }
 
+    /// Return copyable authority for this validated process group without transferring child wait
+    /// ownership.
+    #[must_use]
+    pub const fn control_handle(&self) -> ProcessControlHandle {
+        ProcessControlHandle {
+            process_group: self.process_group,
+        }
+    }
+
+    /// Relinquish cleanup ownership without signaling or waiting for the process group.
+    ///
+    /// This is reserved for observe-only supervision failures, where the supervisor must stop but
+    /// is not authorized to intervene in the command.
+    pub fn relinquish(mut self) {
+        self.cleanup_on_drop = false;
+    }
+
     /// Check whether the validated owned process group still has a live member without waiting.
     ///
     /// # Errors
     ///
     /// Returns [`ControlError`] when the zero-signal process-group query fails unexpectedly.
     pub fn owned_group_exists(&self) -> Result<bool, ControlError> {
-        let target = self
-            .process_group
-            .get()
-            .checked_neg()
-            .ok_or_else(|| ControlError::new(ControlErrorKind::GroupQueryFailed))?;
-        // SAFETY: the process group is positive and validated, so its negation cannot target zero.
-        if unsafe { libc::kill(target, 0) } == 0 {
-            return Ok(true);
-        }
-        let error = io::Error::last_os_error();
-        match error.raw_os_error() {
-            Some(libc::ESRCH) => Ok(false),
-            Some(libc::EPERM) => Ok(true),
-            _ => Err(ControlError::from_io(
-                ControlErrorKind::GroupQueryFailed,
-                error,
-            )),
-        }
+        self.control_handle().owned_group_exists()
     }
 
     /// Take the piped child stdin, if configured.
@@ -444,12 +766,7 @@ impl OwnedProcess {
         &self,
         signal: SignalNumber,
     ) -> Result<SignalResult, ControlError> {
-        if !matches!(signal.get(), 2 | 15) {
-            return Err(ControlError::new(
-                ControlErrorKind::UnsupportedExternalSignal,
-            ));
-        }
-        self.signal_group(signal)
+        self.control_handle().forward_terminal_signal(signal)
     }
 
     /// Send SIGTERM to the validated owned process group.
@@ -458,7 +775,7 @@ impl OwnedProcess {
     ///
     /// Returns [`ControlError`] when signal delivery fails unexpectedly.
     pub fn terminate_group(&self) -> Result<SignalResult, ControlError> {
-        self.signal_group(signal_number(libc::SIGTERM))
+        self.control_handle().terminate_group()
     }
 
     /// Send SIGKILL to the validated owned process group.
@@ -467,7 +784,7 @@ impl OwnedProcess {
     ///
     /// Returns [`ControlError`] when signal delivery fails unexpectedly.
     pub fn kill_group(&self) -> Result<SignalResult, ControlError> {
-        self.signal_group(signal_number(libc::SIGKILL))
+        self.control_handle().kill_group()
     }
 
     /// Validate a negotiated checkpoint endpoint as a live member of this group.
@@ -506,33 +823,15 @@ impl OwnedProcess {
         endpoint: &CheckpointEndpoint,
         signal: SignalNumber,
     ) -> Result<SignalResult, ControlError> {
-        if endpoint.process_group != self.process_group {
-            return Err(ControlError::new(
-                ControlErrorKind::InvalidCheckpointEndpoint,
-            ));
-        }
-        // SAFETY: the endpoint PID is positive and validated; this recheck narrows PID-reuse risk.
-        let observed_group = unsafe { libc::getpgid(endpoint.pid.get()) };
-        if observed_group != self.process_group.get() {
-            return Err(ControlError::new(
-                ControlErrorKind::InvalidCheckpointEndpoint,
-            ));
-        }
-        signal_raw(endpoint.pid.get(), signal)
-    }
-
-    fn signal_group(&self, signal: SignalNumber) -> Result<SignalResult, ControlError> {
-        let target = self
-            .process_group
-            .get()
-            .checked_neg()
-            .ok_or_else(|| ControlError::new(ControlErrorKind::SignalFailed))?;
-        signal_raw(target, signal)
+        self.control_handle().signal_checkpoint(endpoint, signal)
     }
 }
 
 impl Drop for OwnedProcess {
     fn drop(&mut self) {
+        if !self.cleanup_on_drop {
+            return;
+        }
         self.kill_group().ok();
         self.child.wait().ok();
     }
@@ -562,6 +861,12 @@ fn root_outcome_from_status(status: ExitStatus) -> Result<RootOutcome, ()> {
 fn signal_number(value: i32) -> SignalNumber {
     let value = u8::try_from(value).expect("POSIX signal constants fit u8");
     SignalNumber::new(value).expect("POSIX signal constants are nonzero")
+}
+
+/// Return the platform's validated SIGUSR1 value for checkpoint configuration.
+#[must_use]
+pub fn checkpoint_signal_usr1() -> SignalNumber {
+    signal_number(libc::SIGUSR1)
 }
 
 fn signal_raw(target: i32, signal: SignalNumber) -> Result<SignalResult, ControlError> {

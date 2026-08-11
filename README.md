@@ -2,20 +2,21 @@
 
 External runtime safety supervision for MLX workloads on Apple Silicon.
 
-`mlx-guard` is an application-neutral circuit breaker for MLX commands. A small native parent will
-sample macOS-accounted process footprint, request an optional cooperative checkpoint, and escalate
+`mlx-guard` is an application-neutral circuit breaker for MLX commands. A small native parent
+samples macOS-accounted process footprint, requests an optional cooperative checkpoint, and escalates
 TERM and KILL against an explicit limit. The enforcement loop stays outside Python and the MLX
 process.
 
-The project is under active v0.1 development. The Darwin footprint API, process identity checks,
-owned process-group cleanup, signal forwarding, noninteractive terminal behavior, and bounded Metal
-response have working feasibility tests. The checked-in CLI now validates the frozen command
-contract, but the supervision runtime is not wired yet.
+The project is under active v0.1 development. The Rust CLI now supervises a directly launched
+command, samples its owned process group, applies memory and wall-time policy, handles terminal
+signals, and writes a crash-resilient local report. Python packaging and the external client are
+still in development.
 
-The intended command shape is:
+Every run requires a report path in an existing owner-only directory:
 
 ```bash
-mlx-guard run --max-footprint 26GiB -- python train.py
+mkdir -m 700 reports
+mlx-guard run --max-footprint 26GiB --report reports/train.json -- python train.py
 ```
 
 See [the command-line contract](docs/CLI.md) for the exact unit grammar, exit codes, signal rules,
@@ -47,8 +48,8 @@ the v0.1 scope. Direct CLI and Python-wheel distribution are the target.
 
 ## Development
 
-Rust 1.93 is pinned in `rust-toolchain.toml`. The workspace currently contains the native command
-shell, the core platform boundary, and hard-bounded real-process fixtures.
+Rust 1.93 is pinned in `rust-toolchain.toml`. The workspace contains the native supervisor, the core
+platform and policy library, and hard-bounded real-process fixtures.
 
 ```bash
 ./scripts/test-fast.sh          # formatting, Clippy, and all Rust tests

@@ -5,6 +5,8 @@ run
 50ms
 --wall-time
 2h
+--report
+/private/mlx-guard/report.json
 --cwd
 /work
 --clear-env

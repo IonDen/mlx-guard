@@ -92,6 +92,7 @@ name = "mlx-guard-test-support"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "mlx-guard-cli",
  "mlx-guard-core",
 ]
 

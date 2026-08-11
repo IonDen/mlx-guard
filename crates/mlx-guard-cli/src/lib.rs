@@ -10,9 +10,20 @@ use std::time::Duration;
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
+#[cfg(unix)]
+mod runtime;
+
+#[cfg(unix)]
+pub use runtime::{RuntimeResult, execute};
+
 const MIN_SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_SAMPLE_INTERVAL: Duration = Duration::from_secs(10);
 const MAX_WALL_TIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+const fn policy_band_step(limit: u64) -> u64 {
+    let tenth = limit / 10;
+    if tenth == 0 { 1 } else { tenth }
+}
 
 /// Fully normalized CLI configuration.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,6 +64,8 @@ pub struct RunOptions {
 pub struct CommonOptions {
     /// Requested interval between sampling-loop starts.
     pub sample_interval: Duration,
+    /// Explicit destination for the owner-only final JSON report.
+    pub report_path: PathBuf,
     /// Optional child working directory.
     pub cwd: Option<PathBuf>,
     /// Whether the child starts without the inherited environment.
@@ -85,11 +98,26 @@ where
             max_footprint_bytes,
             wall_time,
             common,
-        } => CommandMode::Run(RunOptions {
-            max_footprint_bytes,
-            wall_time,
-            common: normalize(common)?,
-        }),
+        } => {
+            if max_footprint_bytes < 2 {
+                return Err(CliParseError::contract(
+                    "--max-footprint must be at least 2B",
+                ));
+            }
+            if max_footprint_bytes
+                .checked_add(policy_band_step(max_footprint_bytes))
+                .is_none()
+            {
+                return Err(CliParseError::contract(
+                    "--max-footprint is too large for the emergency policy band",
+                ));
+            }
+            CommandMode::Run(RunOptions {
+                max_footprint_bytes,
+                wall_time,
+                common: normalize(common)?,
+            })
+        }
     };
     Ok(ParsedCli { mode })
 }
@@ -175,6 +203,7 @@ fn normalize(raw: RawCommon) -> Result<CommonOptions, CliParseError> {
     }
     Ok(CommonOptions {
         sample_interval: raw.sample_interval,
+        report_path: raw.report_path,
         cwd: raw.cwd,
         clear_env: raw.clear_env,
         env,
@@ -256,6 +285,9 @@ struct RawCommon {
     /// Interval between sampling-loop starts (10ms..=10s).
     #[arg(long, default_value = "50ms", value_parser = parse_duration)]
     sample_interval: Duration,
+    /// Final JSON report path in an existing owner-only directory.
+    #[arg(long = "report", value_name = "PATH")]
+    report_path: PathBuf,
     /// Child working directory, validated before launch.
     #[arg(long)]
     cwd: Option<PathBuf>,

@@ -9,7 +9,8 @@ use crate::{
 #[cfg(unix)]
 use crate::{
     CheckpointChannel, CheckpointChannelRequestError, CheckpointEndpoint, CheckpointRejection,
-    CheckpointWorkerStatus, ControlError, ControlErrorKind, OwnedProcess, SignalResult,
+    CheckpointWorkerStatus, ControlError, ControlErrorKind, OwnedProcess, ProcessControlHandle,
+    SignalResult,
 };
 
 /// Maximum number of recent intervention attempts retained per run.
@@ -101,18 +102,32 @@ pub struct CheckpointObservation {
 #[cfg(unix)]
 #[derive(Debug)]
 pub struct ProcessInterventionActuator<'a> {
-    process: &'a OwnedProcess,
+    process: ProcessControlHandle,
     checkpoint: Option<CheckpointBinding<'a>>,
 }
 
 #[cfg(unix)]
 impl<'a> ProcessInterventionActuator<'a> {
     #[must_use]
-    pub const fn new(process: &'a OwnedProcess, checkpoint: Option<CheckpointBinding<'a>>) -> Self {
+    pub fn new(process: &OwnedProcess, checkpoint: Option<CheckpointBinding<'a>>) -> Self {
         Self {
-            process,
+            process: process.control_handle(),
             checkpoint,
         }
+    }
+
+    /// Poll the inherited checkpoint descriptor once for authenticated worker readiness.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed failure when no channel was configured or negotiation fails.
+    pub fn poll_checkpoint_ready(&mut self) -> Result<bool, ActuationFailure> {
+        self.checkpoint
+            .as_mut()
+            .ok_or(ActuationFailure::CheckpointUnavailable)?
+            .channel
+            .poll_ready()
+            .map_err(|_| ActuationFailure::CheckpointUnavailable)
     }
 
     /// Poll the inherited checkpoint descriptor once without waiting for worker progress.
@@ -243,6 +258,8 @@ fn map_control_error(kind: ControlErrorKind) -> ActuationFailure {
         ControlErrorKind::WaitFailed
         | ControlErrorKind::InvalidRootStatus
         | ControlErrorKind::GroupQueryFailed
+        | ControlErrorKind::TerminalSignalMonitorUnavailable
+        | ControlErrorKind::TerminalSignalMonitorAlreadyInstalled
         | ControlErrorKind::SignalFailed => ActuationFailure::SignalFailed,
     }
 }
@@ -425,12 +442,32 @@ impl<A: InterventionActuator> InterventionEngine<A> {
 
     /// Apply one ordered event, execute its policy-selected effects, and return all decisions.
     pub fn handle(&mut self, event: Event) -> Vec<Action> {
+        self.handle_with_transition_observer(event, |_, _, _| {})
+    }
+
+    /// Apply one ordered event while exposing every state change before its selected actuation.
+    ///
+    /// The observer is called after the pure policy decision and before any corresponding platform
+    /// side effect. Runtimes use this boundary to persist decisive transitions before signalling.
+    pub fn handle_with_transition_observer<F>(
+        &mut self,
+        event: Event,
+        mut observe_transition: F,
+    ) -> Vec<Action>
+    where
+        F: FnMut(Duration, PolicyState, PolicyState),
+    {
         let at = event.at();
         let sample_footprint = match &event {
             Event::Sample(sample) => Some(sample.aggregate_bytes),
             _ => None,
         };
+        let previous_state = self.policy.state();
         let initial = self.policy.apply(event);
+        let current_state = self.policy.state();
+        if previous_state != current_state {
+            observe_transition(at, previous_state, current_state);
+        }
         if initial.contains(&Action::RecordObservation)
             && let Some(footprint_bytes) = sample_footprint
         {
@@ -458,11 +495,17 @@ impl<A: InterventionActuator> InterventionEngine<A> {
             self.evidence
                 .record_attempt(at, actuation, result, self.last_observed_footprint_bytes);
             if let Err(failure) = result {
-                pending.extend(self.policy.apply(Event::ActuationFailed {
+                let previous_state = self.policy.state();
+                let after_failure = self.policy.apply(Event::ActuationFailed {
                     at,
                     action: kind,
                     failure,
-                }));
+                });
+                let current_state = self.policy.state();
+                if previous_state != current_state {
+                    observe_transition(at, previous_state, current_state);
+                }
+                pending.extend(after_failure);
             }
         }
         decisions

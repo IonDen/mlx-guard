@@ -257,6 +257,17 @@ fn root_status_is_preserved_while_drop_cleans_a_remaining_group() {
 }
 
 #[test]
+fn relinquishing_ownership_does_not_signal_the_process_group() {
+    let process = OwnedProcess::launch(&fixture("cpu-stall", 2_000)).unwrap();
+    let control = process.control_handle();
+
+    process.relinquish();
+
+    assert!(control.owned_group_exists().unwrap());
+    assert_eq!(control.kill_group().unwrap(), SignalResult::Delivered);
+}
+
+#[test]
 fn repeated_terminal_signal_routes_through_policy_to_group_kill() {
     // Catches signalling PID zero, signalling only the root, or ignoring repeated interruption.
     let mut process = OwnedProcess::launch(&fixture("ignore-term", 2_000)).unwrap();

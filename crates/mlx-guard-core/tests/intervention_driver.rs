@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::time::Duration;
 
 use mlx_guard_core::{
@@ -53,6 +55,46 @@ impl InterventionActuator for FakeActuator {
             .pop_front()
             .unwrap_or(Ok(ActuationOutcome::Delivered))
     }
+}
+
+struct OrderingActuator {
+    events: Rc<RefCell<Vec<&'static str>>>,
+}
+
+impl InterventionActuator for OrderingActuator {
+    fn execute(
+        &mut self,
+        _requested_at: Duration,
+        _action: Actuation,
+    ) -> Result<ActuationOutcome, ActuationFailure> {
+        self.events.borrow_mut().push("actuation");
+        Ok(ActuationOutcome::Delivered)
+    }
+}
+
+#[test]
+fn transition_observer_runs_before_the_policy_actuation() {
+    // Catches delivering a destructive signal before the decisive transition can be persisted.
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let actuator = OrderingActuator {
+        events: Rc::clone(&events),
+    };
+    let mut settings = config(false);
+    settings.wall_time = Some(ms(10));
+    let policy = PolicyMachine::enforce(settings).unwrap();
+    let mut engine = InterventionEngine::new(policy, actuator);
+    let observer_events = Rc::clone(&events);
+
+    let actions =
+        engine.handle_with_transition_observer(Event::Tick { at: ms(10) }, move |at, from, to| {
+            assert_eq!(at, ms(10));
+            assert_eq!(from, PolicyState::Normal);
+            assert_eq!(to, PolicyState::Terminating);
+            observer_events.borrow_mut().push("transition");
+        });
+
+    assert!(matches!(actions.as_slice(), [Action::SendTerm { .. }]));
+    assert_eq!(*events.borrow(), ["transition", "actuation"]);
 }
 
 #[test]

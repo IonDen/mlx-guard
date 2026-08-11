@@ -2,8 +2,8 @@
 
 Use `mlx-guard observe` to measure a workload without enforcing a limit. It reads from the same
 bounded process and footprint sampler as enforcement. It never builds a memory or wall-time policy,
-requests a checkpoint, or sends TERM/KILL. The core path and real-process fixtures work today. The
-command-line runtime is still under development.
+requests a checkpoint, or sends TERM/KILL because of footprint. If three consecutive samples are
+unusable, observe writes a supervisor-error report and stops without signalling the command.
 
 ## Advisory measurements
 

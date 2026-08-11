@@ -58,6 +58,7 @@ pub enum CheckpointDisposition {
     TimedOut,
     SkippedCheckpointFailure,
     SkippedObservationFailure,
+    SkippedSupervisorFailure,
     SkippedNotNegotiated,
 }
 
@@ -111,6 +112,9 @@ pub enum Event {
         action: ActuationKind,
         failure: ActuationFailure,
     },
+    SupervisorFault {
+        at: Duration,
+    },
     ProcessExited {
         at: Duration,
         final_footprint_bytes: Option<u64>,
@@ -125,6 +129,7 @@ impl Event {
             | Self::CheckpointAck { at, .. }
             | Self::ExternalSignal { at, .. }
             | Self::ActuationFailed { at, .. }
+            | Self::SupervisorFault { at }
             | Self::ProcessExited { at, .. } => *at,
         }
     }
@@ -319,6 +324,7 @@ impl PolicyMachine {
                 action,
                 failure,
             } => self.apply_actuation_failed(at, action, failure),
+            Event::SupervisorFault { at } => self.apply_supervisor_fault(at),
             Event::ProcessExited { .. } => unreachable!("process exit handled before dispatch"),
         }
     }
@@ -561,6 +567,24 @@ impl PolicyMachine {
                 self.state = PolicyState::SupervisorError;
                 self.intervention_started = true;
                 vec![Action::ReportSupervisorError { action, failure }]
+            }
+        }
+    }
+
+    fn apply_supervisor_fault(&mut self, at: Duration) -> Vec<Action> {
+        let signal_already_requested = self.intervention_started;
+        self.active_request_id = None;
+        self.checkpoint_deadline = None;
+        self.state = PolicyState::SupervisorError;
+        match self.mode {
+            PolicyMode::Observe => vec![Action::StopObserving],
+            PolicyMode::Enforce if signal_already_requested => Vec::new(),
+            PolicyMode::Enforce => {
+                self.intervention_started = true;
+                self.term_deadline = Some(at.saturating_add(self.config.term_grace));
+                vec![Action::SendTerm {
+                    checkpoint: CheckpointDisposition::SkippedSupervisorFailure,
+                }]
             }
         }
     }
