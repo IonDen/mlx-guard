@@ -13,9 +13,14 @@ use mlx_guard_core::{
     FootprintSample, FootprintSampler, IdentityTracker, LaunchOptions, NativeProcessInventory,
     OwnedProcess, RootOutcome, SampleOutcome, SamplingConfig, StdioMode,
 };
+use serde::Serialize;
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
 const ALLOCATION_BYTES: u64 = 64 * 1024 * 1024;
+const ENDURANCE_MEMBER_COUNT: usize = 16;
+const ENDURANCE_HISTORY_CAPACITY: usize = 256;
+const MAX_RSS_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_FOOTPRINT_GROWTH_BYTES: u64 = 2 * 1024 * 1024;
 
 fn fixture(mode: &str, bytes: u64, wall_ms: u64) -> LaunchOptions {
     LaunchOptions {
@@ -158,6 +163,32 @@ fn shared_mapping_calibration_keeps_both_mapping_owners_alive_while_sampling() {
     send(&mut input, "exit");
     read_phase(&mut output, "EXIT");
     assert_eq!(process.wait_root().unwrap(), RootOutcome::Exited(0));
+}
+
+#[test]
+fn bounded_ramp_exposes_incremental_growth_instead_of_one_immediate_allocation() {
+    // Catches a ramp fixture that allocates its full ceiling before the supervisor can sample it.
+    let inventory = NativeProcessInventory::new();
+    let mut process = OwnedProcess::launch(&fixture("ramp", 128 * 1024 * 1024, 3_000)).unwrap();
+    let mut output = BufReader::new(process.take_stdout().unwrap());
+    read_phase(
+        &mut output,
+        "READY mode=ramp rate_bytes_per_second=134217728",
+    );
+    let mut sampler = sampler_for(&process, inventory);
+    let epoch = Instant::now();
+    let baseline = complete_bytes(sampler.sample_native(&inventory, epoch));
+
+    thread::sleep(Duration::from_millis(180));
+    let observed = complete_bytes(sampler.sample_native(&inventory, epoch));
+    let growth = observed.saturating_sub(baseline);
+    assert!(
+        (4 * 1024 * 1024..=32 * 1024 * 1024).contains(&growth),
+        "expected bounded incremental growth after 80ms of ramping, got {growth} bytes"
+    );
+
+    process.kill_group().unwrap();
+    let _ = process.wait_root().unwrap();
 }
 
 #[test]
@@ -307,7 +338,7 @@ fn cpu_seconds() -> f64 {
     .as_secs_f64()
 }
 
-fn current_footprint(inventory: NativeProcessInventory) -> u64 {
+fn current_footprint_bytes(inventory: NativeProcessInventory) -> u64 {
     inventory
         .inspect(std::process::id().cast_signed())
         .unwrap()
@@ -315,24 +346,125 @@ fn current_footprint(inventory: NativeProcessInventory) -> u64 {
         .unwrap()
 }
 
-#[test]
-#[ignore = "30-minute reference-host endurance acceptance"]
-fn thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds() {
-    const MEMBER_COUNT: usize = 16;
-    const HISTORY_CAPACITY: usize = 256;
-    const MAX_RSS_BYTES: u64 = 20 * 1024 * 1024;
-    const MAX_RSS_GROWTH_BYTES: u64 = 2 * 1024 * 1024;
+fn maximum_resident_bytes() -> u64 {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    // SAFETY: getrusage writes the complete rusage value for this process on success.
+    assert_eq!(
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) },
+        0
+    );
+    // SAFETY: the successful getrusage call initialized the output structure.
+    let usage = unsafe { usage.assume_init() };
+    u64::try_from(usage.ru_maxrss).unwrap()
+}
 
-    let run_seconds = std::env::var("MLX_GUARD_ENDURANCE_SECONDS")
-        .map_or(1_800, |value| value.parse::<u64>().unwrap());
-    assert!((1..=1_800).contains(&run_seconds));
-    let warmup = if run_seconds >= 60 {
+#[derive(Serialize)]
+struct EnduranceObservation {
+    elapsed_milliseconds: u64,
+    current_footprint_bytes: u64,
+    maximum_resident_bytes: u64,
+    history_length: usize,
+}
+
+#[derive(Serialize)]
+struct EnduranceResult {
+    schema_version: u16,
+    requested_duration_seconds: u64,
+    actual_duration_nanoseconds: u64,
+    sample_interval_milliseconds: u64,
+    member_count: usize,
+    history_capacity: usize,
+    cpu_seconds: f64,
+    cpu_percent_of_one_core: f64,
+    starting_footprint_bytes: u64,
+    final_footprint_bytes: u64,
+    footprint_growth_bytes: u64,
+    maximum_resident_bytes: u64,
+    final_history_length: usize,
+    raw_observations: Vec<EnduranceObservation>,
+    full_bounds_applied: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_endurance_output(
+    run_seconds: u64,
+    elapsed: Duration,
+    cpu_used: f64,
+    cpu_percent: f64,
+    footprint_started: u64,
+    final_footprint: u64,
+    max_resident: u64,
+    history_length: usize,
+    observations: Vec<EnduranceObservation>,
+) {
+    let Some(path) = std::env::var_os("MLX_GUARD_ENDURANCE_OUTPUT") else {
+        return;
+    };
+    let result = EnduranceResult {
+        schema_version: 1,
+        requested_duration_seconds: run_seconds,
+        actual_duration_nanoseconds: u64::try_from(elapsed.as_nanos()).unwrap(),
+        sample_interval_milliseconds: 50,
+        member_count: ENDURANCE_MEMBER_COUNT,
+        history_capacity: ENDURANCE_HISTORY_CAPACITY,
+        cpu_seconds: cpu_used,
+        cpu_percent_of_one_core: cpu_percent,
+        starting_footprint_bytes: footprint_started,
+        final_footprint_bytes: final_footprint,
+        footprint_growth_bytes: final_footprint.saturating_sub(footprint_started),
+        maximum_resident_bytes: max_resident,
+        final_history_length: history_length,
+        raw_observations: observations,
+        full_bounds_applied: run_seconds == 1_800,
+    };
+    let path = std::path::PathBuf::from(path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+}
+
+fn assert_full_endurance_bounds(
+    run_seconds: u64,
+    history_length: usize,
+    cpu_percent: f64,
+    max_resident: u64,
+    footprint_started: u64,
+    final_footprint: u64,
+) {
+    if run_seconds != 1_800 {
+        assert!(history_length <= ENDURANCE_HISTORY_CAPACITY);
+        return;
+    }
+    assert_eq!(history_length, ENDURANCE_HISTORY_CAPACITY);
+    assert!(cpu_percent <= 2.0, "cpu_percent={cpu_percent:.4}");
+    assert!(max_resident <= MAX_RSS_BYTES, "max_resident={max_resident}");
+    assert!(
+        final_footprint <= footprint_started.saturating_add(MAX_FOOTPRINT_GROWTH_BYTES),
+        "start_footprint={footprint_started} final_footprint={final_footprint}"
+    );
+}
+
+fn endurance_warmup(run_seconds: u64) -> Duration {
+    if run_seconds >= 60 {
         Duration::from_secs(10)
     } else {
         Duration::from_millis(100)
-    };
+    }
+}
+
+#[test]
+#[ignore = "30-minute reference-host endurance acceptance"]
+fn thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds() {
+    let run_seconds = std::env::var("MLX_GUARD_ENDURANCE_SECONDS")
+        .map_or(1_800, |value| value.parse::<u64>().unwrap());
+    assert!((1..=1_800).contains(&run_seconds));
+    let warmup = endurance_warmup(run_seconds);
     let duration = Duration::from_secs(run_seconds);
-    let group = IdleProcessGroup::spawn(MEMBER_COUNT, warmup + duration + Duration::from_secs(30));
+    let group = IdleProcessGroup::spawn(
+        ENDURANCE_MEMBER_COUNT,
+        warmup + duration + Duration::from_secs(30),
+    );
     let inventory = NativeProcessInventory::new();
     let root = inventory.inspect(group.root_pid()).unwrap().identity;
     let tracker = IdentityTracker::new(root, group.process_group_id).unwrap();
@@ -340,7 +472,7 @@ fn thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds() {
         Duration::from_millis(50),
         Duration::from_millis(100),
         Duration::from_millis(10),
-        HISTORY_CAPACITY,
+        ENDURANCE_HISTORY_CAPACITY,
     )
     .unwrap();
     let mut sampler = FootprintSampler::new(config, tracker);
@@ -348,26 +480,39 @@ fn thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds() {
     let warmup_deadline = Instant::now() + warmup;
     while Instant::now() < warmup_deadline {
         let sample = sampler.sample_native(&inventory, epoch);
-        assert_eq!(sample.members.len(), MEMBER_COUNT);
+        assert_eq!(sample.members.len(), ENDURANCE_MEMBER_COUNT);
         thread::sleep(sampler.delay_until_next(epoch.elapsed()).unwrap());
     }
 
     let started = Instant::now();
     let cpu_started = cpu_seconds();
-    let rss_started = current_footprint(inventory);
-    let mut max_rss = rss_started;
+    let footprint_started = current_footprint_bytes(inventory);
+    let mut max_resident = maximum_resident_bytes();
+    let mut observations = vec![EnduranceObservation {
+        elapsed_milliseconds: 0,
+        current_footprint_bytes: footprint_started,
+        maximum_resident_bytes: max_resident,
+        history_length: sampler.history_len(),
+    }];
     let mut next_progress = Duration::from_secs(60);
     while started.elapsed() < duration {
         let sample = sampler.sample_native(&inventory, epoch);
-        assert_eq!(sample.members.len(), MEMBER_COUNT);
+        assert_eq!(sample.members.len(), ENDURANCE_MEMBER_COUNT);
         assert!(matches!(sample.outcome, SampleOutcome::Complete { .. }));
         if started.elapsed() >= next_progress {
-            let rss = current_footprint(inventory);
-            max_rss = max_rss.max(rss);
+            let footprint = current_footprint_bytes(inventory);
+            max_resident = max_resident.max(maximum_resident_bytes());
+            observations.push(EnduranceObservation {
+                elapsed_milliseconds: u64::try_from(started.elapsed().as_millis()).unwrap(),
+                current_footprint_bytes: footprint,
+                maximum_resident_bytes: max_resident,
+                history_length: sampler.history_len(),
+            });
             eprintln!(
-                "endurance elapsed_s={} rss_bytes={} history_len={}",
+                "endurance elapsed_s={} footprint_bytes={} max_resident_bytes={} history_len={}",
                 started.elapsed().as_secs(),
-                rss,
+                footprint,
+                max_resident,
                 sampler.history_len()
             );
             next_progress += Duration::from_secs(60);
@@ -376,24 +521,39 @@ fn thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds() {
     }
     let elapsed = started.elapsed();
     let cpu_used = cpu_seconds() - cpu_started;
-    let final_rss = current_footprint(inventory);
-    max_rss = max_rss.max(final_rss);
+    let final_footprint = current_footprint_bytes(inventory);
+    max_resident = max_resident.max(maximum_resident_bytes());
     let cpu_percent = cpu_used / elapsed.as_secs_f64() * 100.0;
+    observations.push(EnduranceObservation {
+        elapsed_milliseconds: u64::try_from(elapsed.as_millis()).unwrap(),
+        current_footprint_bytes: final_footprint,
+        maximum_resident_bytes: max_resident,
+        history_length: sampler.history_len(),
+    });
     eprintln!(
-        "endurance complete elapsed_s={} cpu_percent={cpu_percent:.4} start_rss_bytes={rss_started} final_rss_bytes={final_rss} max_rss_bytes={max_rss} history_len={}",
+        "endurance complete elapsed_s={} cpu_percent={cpu_percent:.4} start_footprint_bytes={footprint_started} final_footprint_bytes={final_footprint} max_resident_bytes={max_resident} history_len={}",
         elapsed.as_secs(),
         sampler.history_len()
     );
 
-    if run_seconds == 1_800 {
-        assert_eq!(sampler.history_len(), HISTORY_CAPACITY);
-        assert!(cpu_percent <= 2.0, "cpu_percent={cpu_percent:.4}");
-        assert!(max_rss <= MAX_RSS_BYTES, "max_rss={max_rss}");
-        assert!(
-            final_rss <= rss_started.saturating_add(MAX_RSS_GROWTH_BYTES),
-            "start_rss={rss_started} final_rss={final_rss}"
-        );
-    } else {
-        assert!(sampler.history_len() <= HISTORY_CAPACITY);
-    }
+    write_endurance_output(
+        run_seconds,
+        elapsed,
+        cpu_used,
+        cpu_percent,
+        footprint_started,
+        final_footprint,
+        max_resident,
+        sampler.history_len(),
+        observations,
+    );
+
+    assert_full_endurance_bounds(
+        run_seconds,
+        sampler.history_len(),
+        cpu_percent,
+        max_resident,
+        footprint_started,
+        final_footprint,
+    );
 }

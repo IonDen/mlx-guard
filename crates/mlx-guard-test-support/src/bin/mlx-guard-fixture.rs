@@ -54,6 +54,7 @@ fn run() -> Result<(), RunError> {
         "allocate" => run_allocate(limits),
         "shared" => run_shared(limits),
         "shared-live" => run_shared_live(limits),
+        "ramp" => run_ramp(limits),
         "cpu-stall" => run_cpu_stall(limits),
         "fanout-stall" => run_fanout_stall(limits),
         "idle-stall" => run_idle_stall(),
@@ -163,6 +164,37 @@ fn run_shared_live(limits: FixtureLimits) -> Result<(), RunError> {
 
     expect_command(&mut lines, "exit")?;
     write_phase("EXIT")
+}
+
+fn run_ramp(limits: FixtureLimits) -> Result<(), RunError> {
+    const RATE_BYTES_PER_SECOND: u64 = 128 * 1024 * 1024;
+    const BASELINE_DELAY: Duration = Duration::from_millis(100);
+
+    let length = usize::try_from(limits.allocation_bytes())
+        .map_err(|_| RunError::fixture("allocation does not fit usize"))?;
+    let allocation = AnonymousMapping::new_uninitialized(length)?;
+    write_phase(&format!(
+        "READY mode=ramp rate_bytes_per_second={RATE_BYTES_PER_SECOND} ceiling_bytes={length}"
+    ))?;
+    thread::sleep(BASELINE_DELAY);
+    let started = Instant::now();
+    let mut touched = 0_usize;
+    while touched < length {
+        let target = usize::try_from(
+            (started.elapsed().as_nanos() * u128::from(RATE_BYTES_PER_SECOND) / 1_000_000_000)
+                .min(length as u128),
+        )
+        .unwrap();
+        if target > touched {
+            allocation.fill_range(touched, target, 0xA5);
+            touched = target;
+            black_box(&allocation);
+        }
+        thread::sleep(Duration::from_millis(1));
+    }
+    loop {
+        thread::park();
+    }
 }
 
 fn run_cpu_stall(limits: FixtureLimits) -> Result<(), RunError> {
@@ -630,6 +662,12 @@ struct AnonymousMapping {
 
 impl AnonymousMapping {
     fn new(length: usize) -> Result<Self, RunError> {
+        let mapping = Self::new_uninitialized(length)?;
+        mapping.fill_range(0, length, 0xA5);
+        Ok(mapping)
+    }
+
+    fn new_uninitialized(length: usize) -> Result<Self, RunError> {
         // SAFETY: arguments describe a new private anonymous mapping; failure is checked.
         let address = unsafe {
             libc::mmap(
@@ -647,9 +685,19 @@ impl AnonymousMapping {
                 io::Error::last_os_error()
             )));
         }
-        // SAFETY: mmap returned a writable region of exactly `length` bytes.
-        unsafe { ptr::write_bytes(address.cast::<u8>(), 0xA5, length) };
         Ok(Self { address, length })
+    }
+
+    fn fill_range(&self, start: usize, end: usize, value: u8) {
+        assert!(start <= end && end <= self.length);
+        // SAFETY: the asserted range lies within the writable mapping.
+        unsafe {
+            ptr::write_bytes(
+                self.address.cast::<u8>().add(start),
+                value,
+                end.saturating_sub(start),
+            );
+        }
     }
 }
 
