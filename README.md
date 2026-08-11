@@ -41,6 +41,8 @@ The [Python packaging contract](docs/PYTHON_PACKAGING.md) defines wheel support,
 discovery, editable installs, and source-distribution policy.
 The [Python API guide](docs/PYTHON_API.md) covers typed configuration, synchronous and incremental
 runs, cancellation, output capture, report loading, and cooperative worker checkpoints.
+The [mlx-train-perf integration guide](docs/integrations/MLX_TRAIN_PERF.md) maps its existing worker
+guardrails and artifacts to optional external supervision without removing the direct-launch fallback.
 
 ## Safety boundary
 
