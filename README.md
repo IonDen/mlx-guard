@@ -31,6 +31,8 @@ The [footprint sampling contract](docs/SAMPLING.md) defines measurement windows,
 partial results, bounded history, and sleep/wake behavior.
 The [observe and calibration guide](docs/OBSERVE_AND_CALIBRATION.md) explains advisory system
 metrics, pre-launch warnings, and how to choose an explicit limit from repeated safe runs.
+The [M1 Max 32 GB reference bundle](evidence/v0.1.0/m1-max-32gb/README.md) contains the raw v0.1
+accuracy, timing, endurance, lifecycle, and false-intervention measurements.
 The [checkpoint protocol](docs/CHECKPOINT_PROTOCOL.md) defines FD-only readiness, nonce-bound frames,
 deadline handling, signal safety, and redacted worker acknowledgements.
 The [intervention execution contract](docs/INTERVENTION.md) defines action targets, policy-owned
