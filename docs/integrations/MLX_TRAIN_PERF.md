@@ -49,3 +49,6 @@ the supervisor failure remains a separate typed result.
 
 This integration adds no `mlx-train-perf` condition kind, status, or policy rule to `mlx-guard` core.
 The native report and the benchmark artifact keep separate schemas and responsibilities.
+
+The bounded M1 Max acceptance run and failure-path results are published in the
+[`mlx-train-perf` evidence bundle](../../evidence/v0.1.0/mlx-train-perf/README.md).
