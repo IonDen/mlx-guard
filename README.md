@@ -82,7 +82,8 @@ the v0.1 scope. Direct CLI and Python-wheel distribution are the target.
 
 Rust 1.93 is pinned in `rust-toolchain.toml`. The workspace contains the native supervisor, the core
 platform and policy library, and hard-bounded real-process fixtures. Full local verification needs
-`cargo-audit`; wheel and Metal scripts also need `rg` (ripgrep). The release workflow installs both.
+`cargo-audit`; artifact and Metal scripts use the baseline macOS command-line tools. The release
+workflow installs its locked `cargo-audit` version.
 
 ```bash
 ./scripts/test-fast.sh          # formatting, Clippy, and all Rust tests

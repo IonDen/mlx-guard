@@ -21,12 +21,18 @@ def _load_sanitizer() -> ModuleType:
 
 
 class ReleaseArtifactTests(unittest.TestCase):
-    def test_release_runner_installs_every_non_toolchain_command(self) -> None:
-        # Catches tag-only verification depending on cargo-audit or rg from a mutable runner image.
+    def test_release_runner_installs_locked_cargo_audit(self) -> None:
+        # Catches tag-only verification depending on cargo-audit from a mutable runner image.
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn("cargo install cargo-audit --locked", workflow)
-        self.assertIn("brew install ripgrep", workflow)
+
+    def test_release_scripts_only_use_baseline_text_search(self) -> None:
+        # Catches reintroducing a ripgrep dependency that clean macOS runners do not provide.
+        root = Path(__file__).resolve().parents[2]
+        for script in sorted((root / "scripts").glob("*.sh")):
+            with self.subTest(script=script.name):
+                self.assertNotRegex(script.read_text(encoding="utf-8"), r"\brg\b")
 
     def test_small_metal_fixture_has_a_process_level_alarm(self) -> None:
         # Catches a wedged device initialization or command wait outliving the fixture's loop bound.

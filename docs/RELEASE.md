@@ -5,7 +5,8 @@ manifests, `Cargo.lock`, and the changelog must agree before tagging.
 
 For each new release, update every literal version pin in `release.yml` and `test-wheel.sh`, including
 tag filters, artifact names, expected package metadata, and test filenames. The tag workflow installs
-its own `cargo-audit` and ripgrep dependencies instead of relying on the mutable runner image.
+its own locked `cargo-audit` version instead of relying on the mutable runner image; artifact checks
+otherwise use baseline macOS command-line tools.
 
 ## Repository setup
 
@@ -25,7 +26,7 @@ On an Apple Silicon Mac, run:
 (cd dist && shasum -a 256 -c SHA256SUMS)
 ```
 
-Local preflight requires `cargo-audit`; artifact and Metal scripts require `rg` (ripgrep).
+Local preflight requires `cargo-audit`; artifact and Metal scripts use baseline macOS tools.
 
 Review `RELEASE_NOTES.md`, the generated wheel, source distribution, external CycloneDX SBOM, and
 `SHA256SUMS`. Confirm that archive scans report no checkout paths, workspace-only files, or

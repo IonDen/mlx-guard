@@ -20,8 +20,8 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 hardware=$(system_profiler SPHardwareDataType)
-if ! rg -q '^ *Chip: Apple M1 Max$' <<<"$hardware" \
-    || ! rg -q '^ *Memory: 32 GB$' <<<"$hardware"; then
+if ! grep -Eq '^ *Chip: Apple M1 Max$' <<<"$hardware" \
+    || ! grep -Eq '^ *Memory: 32 GB$' <<<"$hardware"; then
     echo "reference calibration requires an Apple M1 Max with 32 GB memory" >&2
     exit 69
 fi

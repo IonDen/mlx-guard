@@ -70,31 +70,31 @@ for required in \
     'mlx_guard-0.1.0.dist-info/licenses/LICENSE' \
     'mlx_guard-0.1.0.dist-info/licenses/THIRD_PARTY_LICENSES.md' \
     'mlx_guard-0.1.0.dist-info/sboms/mlx-guard-cli.cyclonedx.json'; do
-    if ! rg -Fxq "$required" <<<"$wheel_listing"; then
+    if ! grep -Fqx "$required" <<<"$wheel_listing"; then
         echo "wheel is missing $required" >&2
         exit 1
     fi
 done
 
 for forbidden in 'CLAUDE.md' 'AGENTS.md' '.git/' '.codex/' 'docs/backlog/' 'superpowers/'; do
-    if rg -Fq "$forbidden" <<<"$wheel_listing"; then
+    if grep -Fq "$forbidden" <<<"$wheel_listing"; then
         echo "wheel contains forbidden workspace path $forbidden" >&2
         exit 1
     fi
 done
 
 wheel_sbom=$(unzip -p "$wheel" 'mlx_guard-*.dist-info/sboms/*.json')
-if rg -q 'path\+file:|download_url=file:|/(Users|home|private|tmp)/' <<<"$wheel_sbom"; then
+if grep -Eq 'path\+file:|download_url=file:|/(Users|home|private|tmp)/' <<<"$wheel_sbom"; then
     echo "wheel SBOM contains a local filesystem reference" >&2
     exit 1
 fi
-if rg -a -q 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|pypi-[A-Za-z0-9_-]{20}|hf_[A-Za-z0-9]{20}' < <(unzip -p "$wheel"); then
+if grep -aEq 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|pypi-[A-Za-z0-9_-]{20}|hf_[A-Za-z0-9]{20}' < <(unzip -p "$wheel"); then
     echo "wheel contains secret-like material" >&2
     exit 1
 fi
 
 wheel_metadata=$(unzip -p "$wheel" 'mlx_guard-*.dist-info/METADATA')
-if ! rg -Fxq 'Requires-Python: >=3.10, <3.15' <<<"$wheel_metadata"; then
+if ! grep -Fqx 'Requires-Python: >=3.10, <3.15' <<<"$wheel_metadata"; then
     echo "wheel has an unexpected Python compatibility range" >&2
     exit 1
 fi
@@ -158,19 +158,19 @@ for required in \
     'mlx_guard-0.1.0/python/mlx_guard/_binary.py' \
     'mlx_guard-0.1.0/python/mlx_guard/_checkpoint.py' \
     'mlx_guard-0.1.0/python/mlx_guard/_client.py'; do
-    if ! rg -Fxq "$required" <<<"$sdist_listing"; then
+    if ! grep -Fqx "$required" <<<"$sdist_listing"; then
         echo "source distribution is missing $required" >&2
         exit 1
     fi
 done
 
 for forbidden in 'CLAUDE.md' 'AGENTS.md' '.git/' '.codex/' 'docs/backlog/' 'superpowers/'; do
-    if rg -Fq "$forbidden" <<<"$sdist_listing"; then
+    if grep -Fq "$forbidden" <<<"$sdist_listing"; then
         echo "source distribution contains forbidden workspace path $forbidden" >&2
         exit 1
     fi
 done
-if rg -a -q '/Users/|/home/runner/|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|pypi-[A-Za-z0-9_-]{20}|hf_[A-Za-z0-9]{20}' < <(tar -xOzf "$sdist"); then
+if grep -aEq '/Users/|/home/runner/|BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|pypi-[A-Za-z0-9_-]{20}|hf_[A-Za-z0-9]{20}' < <(tar -xOzf "$sdist"); then
     echo "source distribution contains a local path or secret-like material" >&2
     exit 1
 fi

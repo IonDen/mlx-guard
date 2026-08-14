@@ -20,7 +20,7 @@ if [[ $invalid_status -ne 64 ]]; then
 fi
 
 "$fixture_build_dir/small_metal" 25 >"$fixture_build_dir/metal.out"
-if ! rg -q '^WORKER_READY kind=metal$' "$fixture_build_dir/metal.out"; then
+if ! grep -Eq '^WORKER_READY kind=metal$' "$fixture_build_dir/metal.out"; then
     echo "bounded Metal fixture did not acknowledge real work" >&2
     exit 1
 fi

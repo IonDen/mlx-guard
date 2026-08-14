@@ -21,9 +21,7 @@ jobs:
         with:
           components: clippy,rustfmt
       - name: Install release verification tools
-        run: |
-          cargo install cargo-audit --locked --version 0.22.1
-          brew install ripgrep
+        run: cargo install cargo-audit --locked --version 0.22.1
       - name: Verify tag and version
         run: |
           test "${GITHUB_REF_NAME}" = "v0.1.0"
