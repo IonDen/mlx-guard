@@ -34,8 +34,10 @@ exits entirely between snapshots.
 
 Only live observations with validated identities and the owned PGID enter the aggregate. If any
 owned member lacks footprint data, the result is `incomplete` with known bytes and the missing
-identities. Arithmetic overflow is a separate result. Missing root evidence also makes the aggregate
-incomplete until root exit was actually observed.
+identities. A newly listed relevant PID may fail inspection before its start token is known; every
+such failure except confirmed disappearance also makes the result incomplete, with the PID and typed
+failure retained rather than an invented identity. Arithmetic overflow is a separate result. Missing
+root evidence also makes the aggregate incomplete until root exit was actually observed.
 
 Summing per-process physical footprint can double count pages shared by related processes. The
 aggregate is a repeatable intervention input for the observed tree, not a unique-page total or a

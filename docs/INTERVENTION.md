@@ -21,9 +21,10 @@ either deadline. A checkpoint setup or delivery failure returns to policy, which
 TERM or forwarded-signal failure returns to policy and selects KILL. If KILL fails, the machine enters
 a terminal supervisor-error state instead of retrying forever.
 
-An authenticated acknowledgement must carry the active request ID and per-run nonce. Wrong,
-spoofed, late, duplicate, and malformed frames remain diagnostic rejections and cannot suppress
-termination.
+A matching acknowledgement must carry the unpredictable active request ID and per-run nonce. Wrong,
+spoofed, late, duplicate, post-cancel, and malformed frames remain diagnostic rejections and cannot
+suppress termination. This is possession-bound cooperation within the documented trusted-workload
+model, not authentication against malicious descendants.
 
 ## Observation evidence
 

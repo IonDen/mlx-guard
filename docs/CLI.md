@@ -18,7 +18,8 @@ the operating system without a shell. At least one command token is required.
 Common options:
 
 - `--report PATH` writes schema-v1 JSON. The parent directory must already exist, belong to the
-  invoking user, and have mode `0700`.
+  invoking user, and have mode `0700`. Successful journals are retained; choose a unique path per
+  run, or archive/remove both the report and `.<report-name>.journal` before reusing it.
 - `--sample-interval DURATION`, default `50ms`, accepts `10ms..=10s`.
 - `--cwd PATH` selects the child's working directory. A missing, inaccessible, or non-directory path
   is invalid before launch.
@@ -67,6 +68,11 @@ The native parent handles SIGINT and SIGTERM. The first terminal signal is forwa
 the validated owned process group. A second terminal signal skips any remaining checkpoint or TERM
 grace and requests immediate KILL. The parent continues sampling and writes the final result before
 it exits when storage and scheduling remain available.
+
+Terminal signals are checked at sampler/policy wake-ups, so forwarding latency can approach the
+configured `--sample-interval`. If a child ignores the first SIGINT and remains alive through the
+one-second grace, mlx-guard escalates and the final result is exit 75 `policy_intervention`; a child
+that exits during the grace keeps its observed child outcome.
 
 stdin, stdout, and stderr are inherited by default. Redirected bytes stay separate and are not
 parsed as control messages. Child output remains application output and may contain arbitrary bytes;

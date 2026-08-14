@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::Read;
 use std::thread;
@@ -67,6 +68,10 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
             );
         }
     };
+    let sample_config = match sampling_config(&options.common) {
+        Ok(config) => config,
+        Err(result) => return result,
+    };
     let (inventory, journal, sequence) = match initialize_observe(&options.common) {
         Ok(values) => values,
         Err(result) => return result,
@@ -83,58 +88,28 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
         }
     };
 
-    let process = match OwnedProcess::launch(&launch_options(&options.common)) {
-        Ok(process) => process,
-        Err(error) => {
-            let outcome = launch_outcome(error.kind());
-            return finalize_without_worker(journal, sequence, outcome, &error.to_string());
-        }
-    };
-    let Ok(root_pid) = i32::try_from(process.root_pid()) else {
-        return RuntimeResult::failure(
-            SupervisorOutcome::SupervisorFailure,
-            "root process identity is invalid",
-        );
-    };
-    let root = match inventory.inspect(root_pid) {
-        Ok(observation) => observation.identity,
-        Err(_) => {
-            return RuntimeResult::failure(
-                SupervisorOutcome::SupervisorFailure,
-                "root process identity could not be established",
-            );
-        }
-    };
-    let Ok(tracker) = IdentityTracker::new(root, process.process_group_id()) else {
-        return RuntimeResult::failure(
-            SupervisorOutcome::SupervisorFailure,
-            "owned process identity could not be established",
-        );
-    };
-    let sample_config = match SamplingConfig::new(
-        options.common.sample_interval,
-        options.common.sample_interval.saturating_mul(2),
-        options.common.sample_interval,
-        MAX_SAMPLE_HISTORY_CAPACITY,
-    ) {
-        Ok(config) => config,
-        Err(error) => {
-            return RuntimeResult::failure(
-                SupervisorOutcome::InvalidConfiguration,
-                &error.to_string(),
+    let prepared = match prepare_observe_worker(&options.common, inventory, sample_config) {
+        Ok(prepared) => prepared,
+        Err(failure) => {
+            return finalize_without_worker(
+                journal,
+                sequence,
+                failure.outcome,
+                &failure.diagnostic,
             );
         }
     };
     let runtime = ObserveRuntime {
         inventory,
-        process,
+        process: prepared.process,
         journal: ResilientJournal::new(journal),
         sequence,
-        sampler: FootprintSampler::new(sample_config, tracker),
-        sample_config,
+        sampler: FootprintSampler::new(prepared.sample_config, prepared.tracker),
+        sample_config: prepared.sample_config,
         sample_interval: options.common.sample_interval,
         advisory: NativeAdvisoryObserver::new(),
         calibration: ObserveCalibration::new(),
+        report_samples: VecDeque::with_capacity(MAX_SAMPLE_HISTORY_CAPACITY),
         policy: PolicyMachine::observe(
             sample_config.max_sample_age(),
             options.common.sample_interval,
@@ -226,20 +201,22 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
             );
         }
     };
+    let (mut checkpoint_channel, checkpoint_endpoint, initial_request_id) =
+        match checkpoint_channel() {
+            Ok(values) => values,
+            Err(result) => return result,
+        };
     let policy_config = run_policy_config(options);
-    let policy = match PolicyMachine::enforce(policy_config) {
-        Ok(policy) => policy,
-        Err(error) => {
-            return RuntimeResult::failure(
-                SupervisorOutcome::InvalidConfiguration,
-                &error.to_string(),
-            );
-        }
-    };
-    let (mut checkpoint_channel, checkpoint_endpoint) = match checkpoint_channel() {
-        Ok(values) => values,
-        Err(result) => return result,
-    };
+    let policy =
+        match PolicyMachine::enforce_with_initial_request_id(policy_config, initial_request_id) {
+            Ok(policy) => policy,
+            Err(error) => {
+                return RuntimeResult::failure(
+                    SupervisorOutcome::InvalidConfiguration,
+                    &error.to_string(),
+                );
+            }
+        };
     if let Err(error) = checkpoint_channel.begin_negotiation() {
         return RuntimeResult::failure(SupervisorOutcome::SupervisorFailure, &error.to_string());
     }
@@ -292,6 +269,7 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
         sample_interval: options.common.sample_interval,
         advisory: NativeAdvisoryObserver::new(),
         calibration: ObserveCalibration::new(),
+        report_samples: VecDeque::with_capacity(MAX_SAMPLE_HISTORY_CAPACITY),
         engine: InterventionEngine::new(policy, actuator),
         checkpoint_negotiation: CheckpointNegotiation::Pending,
         checkpoint_status: CheckpointStatus::NotNegotiated,
@@ -314,9 +292,48 @@ struct PreparedRun {
     checkpoint_endpoint: mlx_guard_core::CheckpointEndpoint,
 }
 
+struct PreparedObserve {
+    process: OwnedProcess,
+    tracker: IdentityTracker,
+    sample_config: SamplingConfig,
+}
+
 struct RunLaunchFailure {
     outcome: SupervisorOutcome,
     diagnostic: String,
+}
+
+fn prepare_observe_worker(
+    common: &CommonOptions,
+    inventory: NativeProcessInventory,
+    sample_config: SamplingConfig,
+) -> Result<PreparedObserve, RunLaunchFailure> {
+    let process =
+        OwnedProcess::launch(&launch_options(common)).map_err(|error| RunLaunchFailure {
+            outcome: launch_outcome(error.kind()),
+            diagnostic: error.to_string(),
+        })?;
+    let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
+        outcome: SupervisorOutcome::SupervisorFailure,
+        diagnostic: "root process identity is invalid".to_owned(),
+    })?;
+    let root = inventory
+        .inspect(root_pid)
+        .map_err(|_| RunLaunchFailure {
+            outcome: SupervisorOutcome::SupervisorFailure,
+            diagnostic: "root process identity could not be established".to_owned(),
+        })?
+        .identity;
+    let tracker =
+        IdentityTracker::new(root, process.process_group_id()).map_err(|_| RunLaunchFailure {
+            outcome: SupervisorOutcome::SupervisorFailure,
+            diagnostic: "owned process identity could not be established".to_owned(),
+        })?;
+    Ok(PreparedObserve {
+        process,
+        tracker,
+        sample_config,
+    })
 }
 
 fn prepare_run_worker(
@@ -380,6 +397,7 @@ struct RunRuntime<'a> {
     sample_interval: Duration,
     advisory: NativeAdvisoryObserver,
     calibration: ObserveCalibration,
+    report_samples: VecDeque<mlx_guard_core::SampleWindow>,
     engine: InterventionEngine<ProcessInterventionActuator<'a>>,
     checkpoint_negotiation: CheckpointNegotiation,
     checkpoint_status: CheckpointStatus,
@@ -564,6 +582,7 @@ impl RunRuntime<'_> {
         let window = self
             .calibration
             .record_sample(&sample, processed_at, &advisory);
+        retain_recent_sample(&mut self.report_samples, window.clone());
         self.final_footprint = window.aggregate_footprint_bytes.clone();
         self.escape_detected |= !sample.escaped_identities.is_empty();
         if sample.sequence < MAX_SAMPLE_HISTORY_CAPACITY as u64 {
@@ -662,6 +681,7 @@ impl RunRuntime<'_> {
     }
 
     fn record_terminal(&mut self, outcome: TerminalOutcome) {
+        self.record_recent_sample_history();
         self.record(
             JournalEntry::Checkpoint(CheckpointRecord {
                 status: self.checkpoint_status,
@@ -678,6 +698,25 @@ impl RunRuntime<'_> {
             JournalDurability::Buffered,
         );
         self.record(JournalEntry::Outcome(outcome), JournalDurability::Sync);
+    }
+
+    fn record_recent_sample_history(&mut self) {
+        if self
+            .sampler
+            .history()
+            .next()
+            .is_none_or(|sample| sample.sequence == 0)
+        {
+            return;
+        }
+        self.record(JournalEntry::SampleHistoryReset, JournalDurability::Sync);
+        let samples = self.report_samples.iter().cloned().collect::<Vec<_>>();
+        for sample in samples {
+            self.record(
+                JournalEntry::Sample(Box::new(sample)),
+                JournalDurability::Buffered,
+            );
+        }
     }
 
     fn record(&mut self, entry: JournalEntry, durability: JournalDurability) {
@@ -701,6 +740,7 @@ struct ObserveRuntime {
     sample_interval: Duration,
     advisory: NativeAdvisoryObserver,
     calibration: ObserveCalibration,
+    report_samples: VecDeque<mlx_guard_core::SampleWindow>,
     policy: PolicyMachine,
     observation_failed: bool,
     terminal_signals: TerminalSignalMonitor,
@@ -847,6 +887,7 @@ impl ObserveRuntime {
         let window = self
             .calibration
             .record_sample(&sample, processed_at, &advisory);
+        retain_recent_sample(&mut self.report_samples, window.clone());
         self.final_footprint = window.aggregate_footprint_bytes.clone();
         self.escape_detected |= !sample.escaped_identities.is_empty();
         if sample.sequence < MAX_SAMPLE_HISTORY_CAPACITY as u64 {
@@ -873,6 +914,7 @@ impl ObserveRuntime {
     }
 
     fn record_terminal(&mut self, outcome: TerminalOutcome) {
+        self.record_recent_sample_history();
         self.record(
             JournalEntry::Checkpoint(CheckpointRecord {
                 status: CheckpointStatus::NotNegotiated,
@@ -889,6 +931,25 @@ impl ObserveRuntime {
             JournalDurability::Buffered,
         );
         self.record(JournalEntry::Outcome(outcome), JournalDurability::Sync);
+    }
+
+    fn record_recent_sample_history(&mut self) {
+        if self
+            .sampler
+            .history()
+            .next()
+            .is_none_or(|sample| sample.sequence == 0)
+        {
+            return;
+        }
+        self.record(JournalEntry::SampleHistoryReset, JournalDurability::Sync);
+        let samples = self.report_samples.iter().cloned().collect::<Vec<_>>();
+        for sample in samples {
+            self.record(
+                JournalEntry::Sample(Box::new(sample)),
+                JournalDurability::Buffered,
+            );
+        }
     }
 
     fn record(&mut self, entry: JournalEntry, durability: JournalDurability) {
@@ -1155,19 +1216,50 @@ fn record_resilient(
     }
 }
 
-fn checkpoint_channel() -> Result<(CheckpointChannel, CheckpointWorkerEndpoint), RuntimeResult> {
-    let mut bytes = [0_u8; 32];
-    File::open("/dev/urandom")
-        .and_then(|mut file| file.read_exact(&mut bytes))
-        .map_err(|_| {
+fn checkpoint_channel() -> Result<(CheckpointChannel, CheckpointWorkerEndpoint, u64), RuntimeResult>
+{
+    let mut random = File::open("/dev/urandom").map_err(|_| {
+        RuntimeResult::failure(
+            SupervisorOutcome::SupervisorFailure,
+            "secure checkpoint nonce generation failed",
+        )
+    })?;
+    let mut nonce_bytes = [0_u8; 32];
+    random.read_exact(&mut nonce_bytes).map_err(|_| {
+        RuntimeResult::failure(
+            SupervisorOutcome::SupervisorFailure,
+            "secure checkpoint nonce generation failed",
+        )
+    })?;
+    let initial_request_id = loop {
+        let mut request_id_bytes = [0_u8; 8];
+        random.read_exact(&mut request_id_bytes).map_err(|_| {
             RuntimeResult::failure(
                 SupervisorOutcome::SupervisorFailure,
-                "secure checkpoint nonce generation failed",
+                "secure checkpoint request-id generation failed",
             )
         })?;
-    CheckpointChannel::pair(CheckpointNonce::from_bytes(bytes)).map_err(|error| {
-        RuntimeResult::failure(SupervisorOutcome::SupervisorFailure, &error.to_string())
-    })
+        let request_id = u64::from_be_bytes(request_id_bytes);
+        if request_id != 0 {
+            break request_id;
+        }
+    };
+    let nonce = CheckpointNonce::from_bytes(nonce_bytes);
+    CheckpointChannel::pair(nonce)
+        .map(|(channel, endpoint)| (channel, endpoint, initial_request_id))
+        .map_err(|error| {
+            RuntimeResult::failure(SupervisorOutcome::SupervisorFailure, &error.to_string())
+        })
+}
+
+fn retain_recent_sample(
+    samples: &mut VecDeque<mlx_guard_core::SampleWindow>,
+    sample: mlx_guard_core::SampleWindow,
+) {
+    if samples.len() == MAX_SAMPLE_HISTORY_CAPACITY {
+        samples.pop_front();
+    }
+    samples.push_back(sample);
 }
 
 fn run_identity(common: &CommonOptions) -> Result<RunIdentity, ()> {

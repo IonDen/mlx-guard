@@ -21,6 +21,19 @@ def _load_sanitizer() -> ModuleType:
 
 
 class ReleaseArtifactTests(unittest.TestCase):
+    def test_release_runner_installs_every_non_toolchain_command(self) -> None:
+        # Catches tag-only verification depending on cargo-audit or rg from a mutable runner image.
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        self.assertIn("cargo install cargo-audit --locked", workflow)
+        self.assertIn("brew install ripgrep", workflow)
+
+    def test_small_metal_fixture_has_a_process_level_alarm(self) -> None:
+        # Catches a wedged device initialization or command wait outliving the fixture's loop bound.
+        root = Path(__file__).resolve().parents[2]
+        source = (root / "fixtures/small_metal.m").read_text(encoding="utf-8")
+        self.assertIn("alarm(MAX_PROCESS_RUNTIME_SECONDS);", source)
+
     def test_wheel_sbom_is_path_free_and_record_is_repaired(self) -> None:
         sanitizer = _load_sanitizer()
         with tempfile.TemporaryDirectory() as temporary:

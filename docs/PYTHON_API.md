@@ -40,10 +40,12 @@ capture pipes, so crash-independent workloads should keep the inherited-stream d
 ## Reports and errors
 
 `load_report()` accepts a bounded regular schema-v1 file, rejects symlinks and unsupported schemas,
-and checks the package version. `Report.outcome` is typed; `Report.payload` exposes the complete JSON
-as recursively immutable mappings and tuples. Child failures and policy interventions are normal
-`RunResult` values. Discovery, process startup, missing reports, malformed reports, and exit/report
-contradictions use distinct `GuardError` subclasses.
+requires invoking-user ownership and mode `0600`, and checks the package version. `Report.outcome`
+is typed; `Report.payload` exposes the complete JSON as recursively immutable mappings and tuples.
+Child failures and policy interventions are normal `RunResult` values. Discovery, process startup,
+occupied report targets, missing reports, malformed reports, and exit/report contradictions use
+distinct `GuardError` subclasses. Successful journals are retained, so use a unique report path per
+run or archive/remove both the report and its `.<name>.journal` deliberately.
 
 ## Cooperative checkpoints
 
@@ -67,9 +69,23 @@ if worker is not None:
             worker.poll()
 ```
 
-`poll()` invokes the callback on the caller's thread after SIGUSR1 announces an authenticated
-request. The helper sends `completed` only when the callback explicitly returns
+`poll()` invokes the callback on the caller's thread after SIGUSR1 announces a nonce- and
+request-bound request. The v0.1 supervisor allows **100 ms total** from request creation to receipt
+of the acknowledgement; `request.supervisor_deadline_ns` carries that monotonic deadline. The
+timeout is fixed and cannot be extended by callback progress. Python signal handlers run on the main
+thread and may not run while it is blocked in a long native `mx.eval()` call. Poll at short safe
+boundaries and make the callback finish within the remaining budget—for example, finalize an
+incrementally written checkpoint. Do not put an unbounded full-model save in the callback. An
+application that safely runs compute elsewhere may keep the main thread polling, but this is an
+application-level threading choice, not an mlx-guard guarantee.
+
+The helper sends `completed` only when the callback explicitly returns
 `CheckpointResponse.completed()`. The callback, not the helper, decides whether its bytes are
 durable. Exceptions and invalid returns send a failed acknowledgement. Artifact metadata contains
 only a kind and optional byte count; paths and names never enter the checkpoint frame. The helper
 has no MLX dependency.
+
+If native readiness does not arrive within five seconds, the client first sends SIGINT and gives the
+supervisor one bounded second to run its process-group cleanup before using SIGKILL. A failure in the
+narrow interval after worker launch but before readiness can still prevent a final report; startup
+readiness is not an arbitrary-daemon containment guarantee.

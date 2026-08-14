@@ -189,6 +189,12 @@ fn partial_late_and_post_exit_messages_cannot_extend_the_deadline() {
     let post_exit = exited_protocol.ingest(ms(21), &acknowledgement);
     assert_eq!(post_exit.rejections, [CheckpointRejection::PostExit]);
     assert!(post_exit.acknowledgement.is_none());
+
+    let (mut cancelled_protocol, _) = started_protocol();
+    let _ = cancelled_protocol.cancel(ms(20));
+    let post_cancel = cancelled_protocol.ingest(ms(21), &acknowledgement);
+    assert_eq!(post_cancel.rejections, [CheckpointRejection::PostCancel]);
+    assert!(post_cancel.acknowledgement.is_none());
 }
 
 #[test]

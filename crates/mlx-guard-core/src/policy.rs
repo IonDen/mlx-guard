@@ -241,7 +241,23 @@ impl PolicyMachine {
     /// Returns [`PolicyConfigError`] when thresholds are unordered, counts are zero, or a
     /// configured duration is zero.
     pub fn enforce(config: PolicyConfig) -> Result<Self, PolicyConfigError> {
-        if !Self::valid_config(&config) {
+        Self::enforce_with_initial_request_id(config, 1)
+    }
+
+    /// Create an enforcing machine with a nonzero, per-run checkpoint request seed.
+    ///
+    /// Runtime callers should use an unpredictable seed so an endpoint cannot queue a valid
+    /// acknowledgement before the corresponding request exists. [`Self::enforce`] remains
+    /// deterministic for pure policy users and tests.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PolicyConfigError`] when the policy is invalid or `initial_request_id` is zero.
+    pub fn enforce_with_initial_request_id(
+        config: PolicyConfig,
+        initial_request_id: u64,
+    ) -> Result<Self, PolicyConfigError> {
+        if !Self::valid_config(&config) || initial_request_id == 0 {
             return Err(PolicyConfigError);
         }
         Ok(Self {
@@ -250,7 +266,7 @@ impl PolicyMachine {
             config,
             breach_streak: 0,
             missing_streak: 0,
-            next_request_id: 1,
+            next_request_id: initial_request_id,
             active_request_id: None,
             checkpoint_deadline: None,
             term_deadline: None,

@@ -21,7 +21,8 @@ No user-visible changes yet.
 ### Security
 
 - Owner-only report storage, descriptor-anchored artifact operations, package RECORD verification,
-  locked dependencies, CycloneDX SBOM, release checksums, and Trusted Publishing workflow.
+  strict Python report permissions, unpredictable checkpoint request IDs, locked dependencies,
+  CycloneDX SBOM, release checksums, and a self-contained Trusted Publishing workflow.
 
 [Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/IonDen/mlx-guard/releases/tag/v0.1.0

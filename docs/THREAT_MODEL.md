@@ -14,6 +14,11 @@ are trusted. The supervised program may fail, leak memory, hang, fork, or ignore
 assumed to be actively hostile. Report paths point into an existing invoking-user-owned `0700`
 directory on a trusted local filesystem.
 
+Checkpoint acknowledgement trusts possession of the inherited descriptor plus the plaintext
+per-run nonce. A pre-connect descendant or a fork-without-exec can retain that capability. The
+protocol prevents accidental cross-run/replay confusion; it does not prove which trusted descendant
+performed the callback.
+
 ## Out of scope
 
 v0.1 does not defend against:

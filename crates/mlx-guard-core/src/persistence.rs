@@ -208,6 +208,7 @@ impl<J: JournalAppender> ResilientJournal<J> {
 pub enum JournalEntry {
     Header(Box<JournalHeader>),
     Sample(Box<SampleWindow>),
+    SampleHistoryReset,
     Transition(TransitionRecord),
     Signal(SignalRecord),
     Checkpoint(CheckpointRecord),
@@ -648,6 +649,7 @@ impl JournalRecovery {
         }
         let mut header = None;
         let mut samples = Vec::new();
+        let mut sample_history_reset = false;
         let mut transitions = Vec::new();
         let mut signals = Vec::new();
         let mut checkpoint = None;
@@ -660,6 +662,10 @@ impl JournalRecovery {
                     header = Some((**value).clone());
                 }
                 JournalEntry::Sample(value) => samples.push((**value).clone()),
+                JournalEntry::SampleHistoryReset if !sample_history_reset => {
+                    samples.clear();
+                    sample_history_reset = true;
+                }
                 JournalEntry::Transition(value) => transitions.push(value.clone()),
                 JournalEntry::Signal(value) => signals.push(value.clone()),
                 JournalEntry::Checkpoint(value) if checkpoint.is_none() => {
@@ -673,6 +679,7 @@ impl JournalRecovery {
                     outcome = Some(value.clone());
                 }
                 JournalEntry::Header(_)
+                | JournalEntry::SampleHistoryReset
                 | JournalEntry::Checkpoint(_)
                 | JournalEntry::Escape(_)
                 | JournalEntry::Outcome(_) => {
@@ -708,6 +715,7 @@ const fn requires_sync(entry: &JournalEntry) -> bool {
     matches!(
         entry,
         JournalEntry::Header(_)
+            | JournalEntry::SampleHistoryReset
             | JournalEntry::Transition(_)
             | JournalEntry::Signal(_)
             | JournalEntry::Checkpoint(_)

@@ -19,7 +19,7 @@ The top-level report contains:
 Observed values use one of five tagged states: `available`, `unknown`, `unavailable`, `stale`, or
 `error`. Missing or failed observations are never encoded as zero. Artifact errors use fixed codes;
 they do not include a path or raw operating-system message. Checkpoint request delivery is
-`requested_unverified`. An authenticated worker response is
+`requested_unverified`. A nonce- and request-matching worker response is
 `acknowledged_unverified_durability`, which still does not prove durable bytes.
 
 Advisory values retain their original schema-v1 fields. New writers may also add `pressure_level`
@@ -64,13 +64,21 @@ it, renames it over a safe report target, then syncs the directory. A failed wri
 only the temporary file created by that attempt. The caller receives no success result until this
 sequence finishes.
 
+The successful journal is retained as durable recovery evidence. A report path is therefore
+single-use while `.<report-name>.journal` exists. Choose a unique report name for each run, or
+explicitly archive/remove both files after reviewing them. The Python client raises
+`ReportPathInUseError` before launch when it sees the retained journal; the native CLI rejects the
+same target during exclusive journal creation. Neither path interprets an older report as the new
+run's result.
+
 Secure journal initialization is mandatory. A later write or sync failure disables further
 persistence but does not stop TERM, KILL, cleanup, or observation work. The runtime prints a
 path-free error, suppresses any complete-report claim, and returns the contracted partial artifact
 failure status (exit `74`).
 
 Retention is user-managed. mlx-guard does not upload reports, contact a telemetry service, or delete
-old reports automatically. A future upload or retention feature requires a new explicit contract;
+old reports or journals automatically. A future upload or retention feature requires a new explicit
+contract;
 schema-v1 defaults always record `upload: disabled` and `retention: user_managed`.
 
 ## Validation

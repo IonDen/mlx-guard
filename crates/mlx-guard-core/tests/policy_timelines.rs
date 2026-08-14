@@ -109,6 +109,28 @@ fn two_fresh_breaches_request_checkpoint_and_false_ack_is_ignored() {
 }
 
 #[test]
+fn runtime_can_seed_an_unpredictable_first_checkpoint_request_id() {
+    // Catches reverting the wire-visible first request ID to the precomputable constant one.
+    assert!(PolicyMachine::enforce_with_initial_request_id(config(true), 0).is_err());
+    let mut machine =
+        PolicyMachine::enforce_with_initial_request_id(config(true), 0x8ad4_32f1_905e_771b)
+            .unwrap();
+    machine.apply(sample(0, Some(100)));
+
+    assert_eq!(
+        machine.apply(sample(10, Some(101))),
+        [
+            Action::RecordObservation,
+            Action::RequestCheckpoint {
+                request_id: 0x8ad4_32f1_905e_771b,
+                overshoot_bytes: 1,
+                deadline_at: ms(60),
+            },
+        ]
+    );
+}
+
+#[test]
 fn checkpoint_timeout_and_term_grace_always_escalate() {
     // Catches a never-escalate mutant or a timeout treated as checkpoint success.
     let mut machine = PolicyMachine::enforce(config(true)).unwrap();

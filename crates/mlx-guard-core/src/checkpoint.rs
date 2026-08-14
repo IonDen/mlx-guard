@@ -245,6 +245,7 @@ pub enum CheckpointRejection {
     Late,
     EndpointExited,
     PostExit,
+    PostCancel,
 }
 
 /// Bounded result of one nonblocking receive attempt.
@@ -364,6 +365,9 @@ impl CheckpointProtocol {
         }
         if self.state == CheckpointProtocolState::TimedOut {
             return CheckpointPoll::rejected(CheckpointRejection::Late);
+        }
+        if self.state == CheckpointProtocolState::Cancelled {
+            return CheckpointPoll::rejected(CheckpointRejection::PostCancel);
         }
         if self
             .deadline_at

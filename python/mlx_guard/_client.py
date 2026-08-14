@@ -59,6 +59,10 @@ class ResultMismatchError(ReportError):
     """The process status and typed final report contradict each other."""
 
 
+class ReportPathInUseError(ReportError):
+    """The report target is occupied by retained journal evidence."""
+
+
 @dataclass(frozen=True, slots=True)
 class ObserveConfig:
     """Immutable configuration for an observe-only run."""
@@ -304,6 +308,7 @@ def supervisor_argv(config: Config) -> tuple[str, ...]:
 
 def start(config: Config, *, capture_output: bool = False) -> GuardProcess:
     """Start the native supervisor and return an incremental process handle."""
+    _ensure_report_target_available(config.report)
     try:
         binary_version()
         executable = binary_path()
@@ -355,6 +360,8 @@ def load_report(path: Path) -> Report:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode):
             raise InvalidReportError("native supervisor report is not a regular file")
+        if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise InvalidReportError("native supervisor report has unsafe ownership or permissions")
         if metadata.st_size > _MAX_REPORT_BYTES:
             raise InvalidReportError("native supervisor report exceeds the reader limit")
         with os.fdopen(descriptor, "rb", closefd=True) as report_file:
@@ -460,15 +467,39 @@ def _await_native_ready(descriptor: int, process: subprocess.Popen[bytes]) -> No
         selector.register(descriptor, selectors.EVENT_READ)
         events = selector.select(timeout=5.0)
         if not events:
-            process.kill()
-            process.wait()
+            _stop_unready_supervisor(process)
             raise SupervisorStartError("native supervisor readiness timed out")
         if os.read(descriptor, 1):
-            process.kill()
-            process.wait()
+            _stop_unready_supervisor(process)
             raise SupervisorStartError("native supervisor readiness protocol failed")
     finally:
         selector.close()
+
+
+def _stop_unready_supervisor(process: subprocess.Popen[bytes]) -> None:
+    """Give native process-group cleanup a bounded opportunity before forced termination."""
+    if process.poll() is not None:
+        return
+    try:
+        process.send_signal(signal.SIGINT)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def _ensure_report_target_available(path: Path) -> None:
+    journal = path.with_name(f".{path.name}.journal")
+    try:
+        os.lstat(journal)
+    except FileNotFoundError:
+        return
+    except OSError:
+        raise ReportPathInUseError("report target availability could not be verified") from None
+    raise ReportPathInUseError("report target has a retained journal")
 
 
 def _argv_for(

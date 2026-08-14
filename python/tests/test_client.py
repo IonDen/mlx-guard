@@ -257,22 +257,47 @@ with worker:
             command=("/bin/true",),
             report=Path("report.json"),
         )
-        with mock.patch(
-            "mlx_guard._client.binary_version",
-            side_effect=mlx_guard.BinaryVersionError("version mismatch"),
-        ), self.assertRaisesRegex(
-            mlx_guard.SupervisorDiscoveryError,
-            "^native supervisor validation failed$",
+        with (
+            mock.patch(
+                "mlx_guard._client.binary_version",
+                side_effect=mlx_guard.BinaryVersionError("version mismatch"),
+            ),
+            self.assertRaisesRegex(
+                mlx_guard.SupervisorDiscoveryError,
+                "^native supervisor validation failed$",
+            ),
         ):
             mlx_guard.start(config)
+
+    def test_retained_journal_rejects_report_path_before_start(self) -> None:
+        # Catches loading a stale prior report after native O_EXCL rejects the retained journal.
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary, "report.json")
+            report.write_text("stale", encoding="utf-8")
+            report.chmod(0o600)
+            journal = report.with_name(f".{report.name}.journal")
+            journal.write_bytes(b"prior evidence")
+            journal.chmod(0o600)
+            config = mlx_guard.ObserveConfig(command=("/bin/true",), report=report)
+
+            with self.assertRaisesRegex(
+                mlx_guard.ReportPathInUseError,
+                "^report target has a retained journal$",
+            ):
+                mlx_guard.start(config)
+
+            self.assertEqual(report.read_text(encoding="utf-8"), "stale")
+            self.assertEqual(journal.read_bytes(), b"prior evidence")
 
     def test_report_loader_rejects_invalid_json_and_schema(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary, "report.json")
             path.write_text("not json", encoding="utf-8")
+            path.chmod(0o600)
             with self.assertRaises(mlx_guard.InvalidReportError):
                 mlx_guard.load_report(path)
             path.write_text('{"schema_version": 2}', encoding="utf-8")
+            path.chmod(0o600)
             with self.assertRaisesRegex(
                 mlx_guard.InvalidReportError,
                 "^unsupported report schema$",
@@ -282,6 +307,7 @@ with worker:
                 '{"schema_version": 1, "schema_version": 1}',
                 encoding="utf-8",
             )
+            path.chmod(0o600)
             with self.assertRaisesRegex(
                 mlx_guard.InvalidReportError,
                 "^native supervisor report is not valid JSON$",
@@ -289,11 +315,25 @@ with worker:
                 mlx_guard.load_report(path)
             target = Path(temporary, "target.json")
             target.write_text('{"schema_version": 1}', encoding="utf-8")
+            target.chmod(0o600)
             path.unlink()
             path.symlink_to(target)
             with self.assertRaisesRegex(
                 mlx_guard.InvalidReportError,
                 "^native supervisor report could not be opened safely$",
+            ):
+                mlx_guard.load_report(path)
+
+    def test_report_loader_rejects_group_or_world_accessible_file(self) -> None:
+        # Catches Python accepting a report that the native recovery contract rejects as unsafe.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary, "report.json")
+            path.write_text("{}", encoding="utf-8")
+            path.chmod(0o644)
+
+            with self.assertRaisesRegex(
+                mlx_guard.InvalidReportError,
+                "^native supervisor report has unsafe ownership or permissions$",
             ):
                 mlx_guard.load_report(path)
 

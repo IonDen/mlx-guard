@@ -19,6 +19,9 @@ mkdir -m 700 reports
 mlx-guard run --max-footprint 26GiB --report reports/train.json -- python train.py
 ```
 
+Use a unique report name for each run. The owner-only journal is retained as recovery evidence and
+must be archived or removed deliberately before reusing its report path.
+
 See [the command-line contract](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md) for the
 exact unit grammar, exit codes, signal rules, and noninteractive terminal boundary. See the
 [policy contract](https://github.com/IonDen/mlx-guard/blob/main/docs/POLICY.md) for thresholds,
@@ -78,7 +81,8 @@ the v0.1 scope. Direct CLI and Python-wheel distribution are the target.
 ## Development
 
 Rust 1.93 is pinned in `rust-toolchain.toml`. The workspace contains the native supervisor, the core
-platform and policy library, and hard-bounded real-process fixtures.
+platform and policy library, and hard-bounded real-process fixtures. Full local verification needs
+`cargo-audit`; wheel and Metal scripts also need `rg` (ripgrep). The release workflow installs both.
 
 ```bash
 ./scripts/test-fast.sh          # formatting, Clippy, and all Rust tests
@@ -90,7 +94,8 @@ platform and policy library, and hard-bounded real-process fixtures.
 
 The main suite runs on macOS and Linux. The Metal test compiles Objective-C with warnings denied and
 uses a 4 KiB shared buffer for no more than five seconds. Synthetic allocation fixtures reject more
-than 128 MiB or ten seconds before doing work.
+than 128 MiB or ten seconds before doing work. The Metal fixture also arms a six-second process alarm
+so device setup or a wedged command wait cannot hang the test indefinitely.
 
 Independent community project; not affiliated with or endorsed by Apple.
 

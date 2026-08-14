@@ -45,7 +45,8 @@ durable journals. Four safe workloads completed with zero false interventions.
 
 Synthetic fixtures were capped at 128 MiB aggregate and 10 seconds. The Metal calibration used a
 fixed 64 MiB buffer and a 5-second watchdog. No real MLX allocation was requested. The separate
-opt-in real MLX ceiling remains 512 MiB requested growth and 60 seconds.
+real-MLX integration used the bounded configuration recorded in its own evidence bundle; this
+calibration script does not define a real-MLX allocation ceiling.
 
 From a clean checkout of the recorded commit, run:
 

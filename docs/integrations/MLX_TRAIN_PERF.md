@@ -10,6 +10,11 @@ The worker already has three local protections:
 - an advisory MLX memory limit;
 - an active-memory and wall-time watchdog.
 
+The fallback samples `mx.get_active_memory()` only. MLX cache memory is a separate retained pool, so
+this active-memory ceiling can miss cache still resident in the process. The external supervisor's
+OS-accounted footprint covers that broader process charge; the fallback remains useful but is not an
+active-plus-cache or OS-footprint limit.
+
 When the watchdog fires, it atomically writes an honest `aborted_memory_ceiling` or
 `aborted_wall_budget` result and hard-exits with code 70. This remains the v0.1 fallback. External
 supervision supplements it with process-group ownership and OS-accounted footprint; it does not

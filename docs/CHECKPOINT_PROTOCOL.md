@@ -20,8 +20,10 @@ live root or cooperative endpoint; TERM and KILL continue to target the validate
 
 Every frame starts with a four-byte big-endian body length. Bodies are at most 128 bytes and contain
 the `MGCP` magic, protocol version `1`, and a message kind. The hello/ready exchange binds a random
-32-byte per-run nonce. A request adds a nonzero request ID and monotonic deadline. An acknowledgement
-must repeat both values and carries one worker status: completed, failed, or cancelled.
+32-byte per-run nonce. A request adds an independently random nonzero initial request ID and monotonic
+deadline. An acknowledgement must repeat both values and carries one worker status: completed,
+failed, or cancelled. Randomizing the first ID prevents a worker from pre-queuing a valid request-1
+acknowledgement during negotiation.
 
 Optional artifact metadata is deliberately path-free: only `file`, `directory`, or `opaque`, plus an
 optional byte count. Names, paths, argv, environment values, model IDs, prompts, and worker output
@@ -33,8 +35,15 @@ The supervisor side is nonblocking and performs one bounded descriptor read per 
 remain bounded until another poll, endpoint exit, cancellation, or deadline. Wrong nonces, replayed
 request IDs, duplicates, malformed or oversized frames, partial EOF, acknowledgements at or after the
 deadline, and post-exit data never authenticate success.
+Data received after explicit cancellation is classified separately as `post_cancel` diagnostic
+input rather than malformed protocol data.
 
 Signal delivery records `requested_unverified`. Only a matching completed acknowledgement records
 `acknowledged_unverified_durability`; it is the worker's report, not independent proof that artifact
 bytes are complete or durable. Failed, cancelled, missing, or late responses cannot extend the
 checkpoint deadline.
+
+This is possession-bound cooperation, not authentication against hostile supervised code. The
+nonce is plaintext on the inherited channel. A descendant that inherits the descriptor before the
+worker connects can observe or answer the exchange; a fork without exec can retain a connected
+endpoint. Normal exec closes the descriptor after the Python helper re-arms close-on-exec.

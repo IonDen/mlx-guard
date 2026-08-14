@@ -154,6 +154,42 @@ fn partial_error_and_zero_are_three_different_observations() {
 }
 
 #[test]
+fn newly_listed_live_process_inspection_failure_keeps_sample_partial() {
+    // Catches dropping a non-ESRCH failure merely because the PID has not been tracked before.
+    let root = identity(100, 1);
+    let tracker = IdentityTracker::new(root, 100).unwrap();
+    let mut sampler = FootprintSampler::new(config(4), tracker);
+
+    let sample = sampler
+        .record_snapshot(
+            ms(10),
+            ms(11),
+            Ok(ProcessSnapshot {
+                observations: vec![observation(root, 1, 100, Some(10))],
+                failures: vec![ObservationFailure {
+                    pid: Some(101),
+                    kind: ObservationFailureKind::PermissionDenied,
+                }],
+            }),
+        )
+        .clone();
+
+    assert!(matches!(
+        sample.outcome,
+        SampleOutcome::Partial {
+            known_bytes: 10,
+            ref missing_identities,
+            ref observation_failures,
+        } if missing_identities.is_empty()
+            && observation_failures == &[ObservationFailure {
+                pid: Some(101),
+                kind: ObservationFailureKind::PermissionDenied,
+            }]
+    ));
+    assert_eq!(sampler.policy_event(&sample, ms(12)).aggregate_bytes, None);
+}
+
+#[test]
 fn aggregate_overflow_never_reaches_policy_as_a_numeric_sample() {
     // Catches saturating or wrapping a multi-process sum into an enforcement input.
     let root = identity(100, 1);

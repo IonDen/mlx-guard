@@ -2,8 +2,8 @@
 
 Policy contract version 1 is a pure state machine driven by ordered monotonic events. Only the sampled,
 OS-accounted aggregate footprint can trigger a memory intervention. An optional wall-time limit is
-the only other destructive input. Pressure, swap, compressor, wired-memory, MLX, and growth-rate
-metrics are advisory and cannot change state.
+the only other destructive input. Pressure, swap, compressor, wired-memory, and growth-rate metrics
+are advisory and cannot change state. MLX's own counters are not read at all in v0.1.
 
 ## States and transitions
 
@@ -15,7 +15,7 @@ metrics are advisory and cannot change state.
 | warning | valid sample | required consecutive limit breaches | checkpoint-requested or terminating | request checkpoint or send TERM |
 | normal or warning | valid sample | emergency threshold or higher | emergency | send KILL immediately |
 | normal or warning | tick | wall limit reached | checkpoint-requested or terminating | request checkpoint or send TERM |
-| checkpoint-requested | authenticated matching acknowledgement | before timeout | terminating | send TERM |
+| checkpoint-requested | nonce- and request-matching acknowledgement | before timeout | terminating | send TERM |
 | checkpoint-requested | tick | checkpoint deadline reached | terminating | send TERM |
 | checkpoint-requested | checkpoint setup or delivery failure | always | terminating | send TERM |
 | terminating | tick | TERM grace reached | emergency | send KILL |
@@ -62,10 +62,10 @@ unbounded grace extension.
 ## Checkpoint evidence
 
 Checkpoint support is negotiated before enforcement begins. Delivery of a request alone is
-`requested_unverified`; it is not success. Only a matching, authenticated worker acknowledgement
+`requested_unverified`; it is not success. Only a nonce- and request-matching worker acknowledgement
 allows the state machine to record `acknowledged_unverified_durability`. Even that acknowledgement
 does not prove that checkpoint bytes are complete or durable. A missing, late, mismatched, or
-unauthenticated acknowledgement cannot delay TERM beyond the checkpoint timeout.
+non-matching acknowledgement cannot delay TERM beyond the checkpoint timeout.
 
 Checkpoint setup, channel, endpoint, or worker failures are distinct from a command that never
 negotiated checkpoint support. Both paths proceed to TERM, but the recorded disposition remains
@@ -81,7 +81,7 @@ delivery itself never proves process exit, footprint reclamation, or Metal recla
 |---|---|
 | `95, 85, 80` with warning `90`, recovery `80` | warning, warning, normal |
 | `100, 101` with two required breaches | record, then request checkpoint with 1 byte overshoot |
-| wrong request ID, unauthenticated acknowledgement, matching authenticated acknowledgement | ignore, ignore, send TERM |
+| wrong request ID, wrong nonce, matching acknowledgement | ignore, ignore, send TERM |
 | checkpoint timeout, then TERM-grace timeout | send TERM, then send KILL |
 | checkpoint delivery failure | send TERM with checkpoint-failure disposition |
 | TERM failure, then KILL failure | send KILL, then report terminal supervisor error |

@@ -6,8 +6,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <unistd.h>
 
 static const unsigned long MAX_RUNTIME_MS = 5000UL;
+static const unsigned int MAX_PROCESS_RUNTIME_SECONDS = 6U;
 static const NSUInteger BUFFER_BYTES = 4096U;
 
 static int parse_runtime(const char *value, unsigned long *result) {
@@ -47,6 +49,7 @@ static int submit_small_command(
 }
 
 int main(int argc, char **argv) {
+    alarm(MAX_PROCESS_RUNTIME_SECONDS);
     @autoreleasepool {
         unsigned long runtime_ms = 0;
         if (argc != 2 || parse_runtime(argv[1], &runtime_ms) != 0) {

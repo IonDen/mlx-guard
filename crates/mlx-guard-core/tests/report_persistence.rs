@@ -7,7 +7,10 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mlx_guard_core::{JournalRecovery, ReportV1, RunIdentity, SecureJournal, StorageErrorKind};
+use mlx_guard_core::{
+    JournalEntry, JournalHeader, JournalRecord, JournalRecovery, JournalRecoveryStatus, ReportV1,
+    RunIdentity, SecureJournal, StorageErrorKind,
+};
 
 struct TestDirectory(PathBuf);
 
@@ -38,6 +41,44 @@ impl Drop for TestDirectory {
 
 fn report() -> ReportV1 {
     ReportV1::from_json(include_str!("fixtures/report-v1.json")).unwrap()
+}
+
+#[test]
+fn terminal_sample_history_reset_projects_the_recent_window() {
+    // Catches final reports remaining pinned to the first samples after the in-memory ring rotates.
+    let original = report();
+    let mut recent = original.samples[0].clone();
+    recent.captured_at_ms = 14;
+    recent.processed_at_ms = 14;
+    let header = JournalHeader {
+        schema_version: original.schema_version,
+        package_version: original.package_version.clone(),
+        run: original.run.clone(),
+        capabilities: original.capabilities.clone(),
+        configuration: original.configuration.clone(),
+        privacy: original.privacy.clone(),
+    };
+    let entries = vec![
+        JournalEntry::Header(Box::new(header)),
+        JournalEntry::Sample(Box::new(original.samples[0].clone())),
+        JournalEntry::SampleHistoryReset,
+        JournalEntry::Sample(Box::new(recent.clone())),
+        JournalEntry::Transition(original.transitions[0].clone()),
+        JournalEntry::Signal(original.signals[0].clone()),
+        JournalEntry::Checkpoint(original.checkpoint.clone()),
+        JournalEntry::Escape(original.escape.clone()),
+        JournalEntry::Outcome(original.outcome.clone()),
+    ];
+    let recovery = JournalRecovery {
+        records: entries
+            .into_iter()
+            .enumerate()
+            .map(|(sequence, entry)| JournalRecord::new(sequence as u64, entry))
+            .collect(),
+        status: JournalRecoveryStatus::Complete,
+    };
+
+    assert_eq!(recovery.to_report().unwrap().samples, [recent]);
 }
 
 #[test]

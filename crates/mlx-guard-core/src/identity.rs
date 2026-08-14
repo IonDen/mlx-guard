@@ -297,7 +297,8 @@ impl IdentityTracker {
             .failures
             .into_iter()
             .filter(|failure| {
-                failure.pid.is_none()
+                failure.kind != ObservationFailureKind::Disappeared
+                    || failure.pid.is_none()
                     || failure.pid == Some(self.root.pid)
                     || failure.pid.is_some_and(|pid| {
                         self.tracked
@@ -391,7 +392,7 @@ fn aggregate(
     }
     missing.sort_unstable();
     missing.dedup();
-    if missing.is_empty() {
+    if missing.is_empty() && failures.is_empty() {
         AggregateFootprint::Complete(known_bytes)
     } else {
         AggregateFootprint::Incomplete {
