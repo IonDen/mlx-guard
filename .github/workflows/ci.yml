@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@d8dfd7155fea72af4ad34a8fe97364d210e2d020 # 1.93.0
+        with:
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-targets --all-features
+      - if: runner.os == 'macOS'
+        run: ./scripts/test-metal-fixture.sh
+
+  dependencies:
+    name: Dependency policy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@d8dfd7155fea72af4ad34a8fe97364d210e2d020 # 1.93.0
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Install locked dependency tools
+        run: |
+          cargo install cargo-deny --locked --version 0.20.2
+          cargo install cargo-audit --locked --version 0.22.1
+      - run: cargo deny check
+      - run: cargo audit --deny warnings
+
+  python:
+    name: Python package and wheel
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.30"
+      - uses: dtolnay/rust-toolchain@d8dfd7155fea72af4ad34a8fe97364d210e2d020 # 1.93.0
+      - run: uv lock --check
+      - run: uv run --locked ruff check python
+      - run: uv run --locked mypy --strict python
+      - run: uv run --locked pytest python
+      - run: ./scripts/test-wheel.sh

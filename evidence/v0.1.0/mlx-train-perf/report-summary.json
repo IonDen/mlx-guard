@@ -1,0 +1,84 @@
+{
+  "source": {
+    "report_sha256": "715467a1295e120ed24b8250a36f6139d4f4db9bb4ec4eb3ebf39a7916f4ab35",
+    "partial_result_sha256": "9e1309e93c94fbf8a5e1592194cdf6555e8b82c4355902f5e2f484b4a8606f7a",
+    "sample_count": 37,
+    "max_aggregate_footprint_bytes": 48218736
+  },
+  "schema_version": 1,
+  "package_version": "0.1.0",
+  "configuration": {
+    "mode": "enforce",
+    "max_footprint_bytes": 536870912,
+    "warning_footprint_bytes": 483183821,
+    "recovery_footprint_bytes": 429496730,
+    "emergency_footprint_bytes": 590558003,
+    "required_breach_samples": 2,
+    "max_missing_samples": 3,
+    "wall_time_ms": 500,
+    "sample_interval_ms": 10,
+    "max_sample_age_ms": 20,
+    "max_sample_window_ms": 10,
+    "checkpoint_timeout_ms": 100,
+    "term_grace_ms": 1000
+  },
+  "checkpoint": {
+    "status": "acknowledged_unverified_durability",
+    "at_ms": 527
+  },
+  "outcome": {
+    "at_ms": 553,
+    "kind": "policy_intervention",
+    "final_footprint_bytes": {
+      "status": "available",
+      "value": 0
+    }
+  },
+  "signals": [
+    {
+      "at_ms": 505,
+      "signal": 30,
+      "target": "cooperative_endpoint",
+      "result": "delivered"
+    },
+    {
+      "at_ms": 527,
+      "signal": 15,
+      "target": "owned_process_group",
+      "result": "delivered"
+    }
+  ],
+  "transitions": [
+    {
+      "at_ms": 505,
+      "from": "normal",
+      "to": "checkpoint_requested",
+      "aggregate_footprint_bytes": 48218736
+    },
+    {
+      "at_ms": 527,
+      "from": "checkpoint_requested",
+      "to": "terminating",
+      "aggregate_footprint_bytes": 48218736
+    },
+    {
+      "at_ms": 553,
+      "from": "terminating",
+      "to": "exited",
+      "aggregate_footprint_bytes": 0
+    }
+  ],
+  "artifact_errors": [],
+  "capabilities": {
+    "darwin_footprint": {"status": "available", "value": true},
+    "owned_process_group": {"status": "available", "value": true},
+    "checkpoint_channel": {"status": "available", "value": true}
+  },
+  "privacy": {
+    "redacted_before_persistence": true,
+    "file_mode": "0600",
+    "upload": "disabled",
+    "retention": "user_managed",
+    "capture": "redacted_metadata_only"
+  }
+}

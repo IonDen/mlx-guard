@@ -1,0 +1,28 @@
+{
+  "identity": {
+    "schema_version": 1,
+    "mlx_version": "0.32.0",
+    "mlx_lm_version": "0.31.3",
+    "machine": "arm64",
+    "macos": "26.6.1",
+    "code_sha": "0fc53222675eac4c",
+    "package_version": "0.5.1.dev2+g5b6002879.d20260811",
+    "kind": "loss_layer",
+    "session_id": "mlx-guard-v0.1-runner-proof",
+    "n": 1024,
+    "d": 256,
+    "v": 2048,
+    "dtype": "float32",
+    "impl": "naive",
+    "reps": 1000,
+    "seed": 11
+  },
+  "status": "checkpointed_partial",
+  "checkpoint_request_id": 1,
+  "supervisor_deadline_ns": 605523917,
+  "progress": {
+    "stage": "loss_layer",
+    "completed": 336,
+    "total": 1000
+  }
+}

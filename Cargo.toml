@@ -1,0 +1,22 @@
+[workspace]
+members = [
+    "crates/mlx-guard-cli",
+    "crates/mlx-guard-core",
+    "crates/mlx-guard-test-support",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "Apache-2.0"
+repository = "https://github.com/IonDen/mlx-guard"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
