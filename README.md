@@ -1,72 +1,84 @@
 # mlx-guard
 
+[![CI](https://github.com/IonDen/mlx-guard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/IonDen/mlx-guard/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/mlx-guard)](https://pypi.org/project/mlx-guard/)
+[![Python](https://img.shields.io/pypi/pyversions/mlx-guard)](https://pypi.org/project/mlx-guard/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20arm64-lightgrey)](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/IonDen/mlx-guard/blob/main/LICENSE)
+
 External runtime safety supervision for MLX workloads on Apple Silicon.
 
-`mlx-guard` is an application-neutral circuit breaker for MLX commands. A small native parent
-samples macOS-accounted process footprint, requests an optional cooperative checkpoint, and escalates
-TERM and KILL against an explicit limit. The enforcement loop stays outside Python and the MLX
-process.
+A runaway MLX run does not fail politely. Unified memory lets one training or generation process
+push the whole machine into a paging storm, and a limit set inside the process shares the fate of
+the process it is supposed to stop. `mlx-guard` supervises from outside: a small native parent
+launches your command, samples the OS-accounted memory footprint of the process group it owns,
+optionally requests a cooperative checkpoint, escalates TERM and KILL against an explicit limit you
+chose, and writes a crash-resilient JSON report of what happened. The enforcement loop never runs
+inside Python or the MLX process.
 
-Version 0.1 is an alpha release. The Rust CLI supervises a directly launched command,
-samples its owned process group, applies memory and wall-time policy, handles terminal signals, and
-writes a crash-resilient local report. The Python package provides a typed external client and an
-optional dependency-free worker checkpoint helper.
+Version 0.1 is an alpha release.
 
-Every run requires a report path in an existing owner-only directory:
+## Installation
+
+```bash
+pip install mlx-guard
+```
+
+Wheels cover macOS 11 or newer on Apple Silicon with Python 3.10 through 3.14 and contain the
+precompiled supervisor, so installing needs no Rust toolchain. Building from source needs Rust 1.93
+and maturin.
+
+## Quick start
+
+Every run writes a report into an existing owner-only directory. Create one once:
 
 ```bash
 mkdir -m 700 reports
-mlx-guard run --max-footprint 26GiB --report reports/train.json -- python train.py
 ```
 
-Use a unique report name for each run. The owner-only journal is retained as recovery evidence and
-must be archived or removed deliberately before reusing its report path.
+Measure before enforcing. Observe mode samples footprint and never intervenes:
 
-See [the command-line contract](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md) for the
-exact unit grammar, exit codes, signal rules, and noninteractive terminal boundary. See the
-[policy contract](https://github.com/IonDen/mlx-guard/blob/main/docs/POLICY.md) for thresholds,
-measurement quality, checkpoint evidence, and escalation timelines. The
-[report and privacy contract](https://github.com/IonDen/mlx-guard/blob/main/docs/REPORTS.md) defines
-schema v1 and default redaction. The
-[process-control contract](https://github.com/IonDen/mlx-guard/blob/main/docs/PROCESS_CONTROL.md)
-defines the owned group, direct exec, signal targets, and noninteractive terminal boundary. The
-[identity and containment contract](https://github.com/IonDen/mlx-guard/blob/main/docs/IDENTITY_AND_CONTAINMENT.md)
-defines PID reuse, descendant discovery, escape evidence, aggregation, and cleanup limits. The
-[footprint sampling contract](https://github.com/IonDen/mlx-guard/blob/main/docs/SAMPLING.md) defines
-measurement windows, freshness, partial results, bounded history, and sleep/wake behavior. The
-[observe and calibration guide](https://github.com/IonDen/mlx-guard/blob/main/docs/OBSERVE_AND_CALIBRATION.md)
-explains advisory system metrics, pre-launch warnings, and how to choose an explicit limit from
-repeated safe runs. The
-[M1 Max 32 GB reference bundle](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.1.0/m1-max-32gb/README.md)
-contains the raw v0.1 accuracy, timing, endurance, lifecycle, and false-intervention measurements.
-The [checkpoint protocol](https://github.com/IonDen/mlx-guard/blob/main/docs/CHECKPOINT_PROTOCOL.md)
-defines FD-only readiness, nonce-bound frames, deadline handling, signal safety, and redacted worker
-acknowledgements. The
-[intervention execution contract](https://github.com/IonDen/mlx-guard/blob/main/docs/INTERVENTION.md)
-defines action targets, policy-owned deadlines, typed failures, bounded evidence, and post-action
-observation. The
-[Python packaging contract](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_PACKAGING.md)
-defines wheel support, native-binary discovery, editable installs, and source-distribution policy.
-The [Python API guide](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) covers typed
-configuration, synchronous and incremental runs, cancellation, output capture, report loading, and
-cooperative worker checkpoints. The
-[mlx-train-perf integration guide](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/MLX_TRAIN_PERF.md)
-maps its existing worker guardrails and artifacts to optional external supervision without removing
-the direct-launch fallback.
+```bash
+mlx-guard observe --report reports/observe-1.json -- python train.py --epochs 1
+```
 
-Start with the [examples](https://github.com/IonDen/mlx-guard/blob/main/docs/EXAMPLES.md). The
-[support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md),
-[threat model](https://github.com/IonDen/mlx-guard/blob/main/docs/THREAT_MODEL.md), and
-[security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) define the release and
-trust boundaries.
+Choose a limit from the observed peaks plus workload-specific headroom, not from total machine
+memory; the
+[calibration guide](https://github.com/IonDen/mlx-guard/blob/main/docs/OBSERVE_AND_CALIBRATION.md)
+explains the procedure. Then enforce it:
 
-## Relationship to MetalGuard
+```bash
+mlx-guard run --max-footprint 24GiB --wall-time 2h \
+  --report reports/train.json -- python train.py --epochs 10
+```
 
-[MetalGuard](https://github.com/Harperbot/metal-guard) provides MLX-aware in-application defenses:
-load and unload checks, allocator-aware recovery, a Python subprocess runner, and panic cooldowns.
-`mlx-guard` operates at a different boundary. It accepts a literal command, measures the
-OS-accounted footprint of its owned process group, applies external signal escalation, and writes a
-typed report without importing the workload. The projects are complementary and independent.
+When no intervention occurs the exit code is the child's own. A policy intervention exits `75`, and
+the typed report distinguishes the outcomes. Use a unique report name for each run: the owner-only
+journal is retained as recovery evidence and must be archived or removed deliberately before a
+report path is reused.
+
+The same run from Python:
+
+```python
+from pathlib import Path
+
+import mlx_guard
+
+result = mlx_guard.run(
+    mlx_guard.RunConfig(
+        command=("python", "train.py"),
+        report=Path("reports/train.json"),
+        max_footprint_bytes=24 * 1024**3,
+        wall_time_ms=2 * 60 * 60 * 1000,
+    )
+)
+print(result.returncode, result.report.outcome.kind)
+```
+
+Commands are literal argument tuples and never pass through a shell. The
+[Python API guide](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) covers
+incremental runs, cancellation, output capture, and the dependency-free `CheckpointWorker` helper
+that lets a worker save state when the supervisor asks.
 
 ## Safety boundary
 
@@ -77,6 +89,38 @@ kernel or system-wide failure. It never chooses a destructive limit automaticall
 
 Interactive terminal job control, sandboxed execution, and Mac App Store distribution are outside
 the v0.1 scope. Direct CLI and Python-wheel distribution are the target.
+
+## Relationship to MetalGuard
+
+[MetalGuard](https://github.com/Harperbot/metal-guard) provides MLX-aware in-application defenses:
+load and unload checks, allocator-aware recovery, a Python subprocess runner, and panic cooldowns.
+`mlx-guard` operates at a different boundary. It accepts a literal command, measures the
+OS-accounted footprint of its owned process group, applies external signal escalation, and writes a
+typed report without importing the workload. The projects are complementary and independent.
+
+## Documentation
+
+Start with the [examples](https://github.com/IonDen/mlx-guard/blob/main/docs/EXAMPLES.md). Each
+contract below defines one subsystem.
+
+| Guide | Defines |
+|---|---|
+| [CLI contract](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md) | Unit grammar, exit codes, signal rules, the noninteractive terminal boundary |
+| [Policy contract](https://github.com/IonDen/mlx-guard/blob/main/docs/POLICY.md) | Thresholds, measurement quality, checkpoint evidence, escalation timelines |
+| [Reports and privacy](https://github.com/IonDen/mlx-guard/blob/main/docs/REPORTS.md) | Schema v1 and default redaction |
+| [Process control](https://github.com/IonDen/mlx-guard/blob/main/docs/PROCESS_CONTROL.md) | The owned group, direct exec, signal targets |
+| [Identity and containment](https://github.com/IonDen/mlx-guard/blob/main/docs/IDENTITY_AND_CONTAINMENT.md) | PID reuse, descendant discovery, escape evidence, cleanup limits |
+| [Footprint sampling](https://github.com/IonDen/mlx-guard/blob/main/docs/SAMPLING.md) | Measurement windows, freshness, partial results, sleep/wake behavior |
+| [Observe and calibration](https://github.com/IonDen/mlx-guard/blob/main/docs/OBSERVE_AND_CALIBRATION.md) | Advisory system metrics, pre-launch warnings, choosing a limit |
+| [Checkpoint protocol](https://github.com/IonDen/mlx-guard/blob/main/docs/CHECKPOINT_PROTOCOL.md) | FD-only readiness, nonce-bound frames, deadlines, redacted acknowledgements |
+| [Intervention execution](https://github.com/IonDen/mlx-guard/blob/main/docs/INTERVENTION.md) | Action targets, policy-owned deadlines, typed failures, post-action observation |
+| [Python API](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) | Typed configuration, incremental runs, cancellation, report loading, worker checkpoints |
+| [Python packaging](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_PACKAGING.md) | Wheel support, native-binary discovery, editable installs, sdist policy |
+| [mlx-train-perf integration](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/MLX_TRAIN_PERF.md) | Optional external supervision for its runner, keeping the direct-launch fallback |
+| [Support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md) | Supported platforms and release boundaries |
+| [Threat model](https://github.com/IonDen/mlx-guard/blob/main/docs/THREAT_MODEL.md) | Trust boundaries and supported failures |
+| [Security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) | Vulnerability reporting |
+| [M1 Max 32 GB evidence](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.1.0/m1-max-32gb/README.md) | Raw v0.1 accuracy, timing, endurance, lifecycle, and false-intervention measurements |
 
 ## Development
 
@@ -98,10 +142,26 @@ uses a 4 KiB shared buffer for no more than five seconds. Synthetic allocation f
 than 128 MiB or ten seconds before doing work. The Metal fixture also arms a six-second process alarm
 so device setup or a wedged command wait cannot hang the test indefinitely.
 
-Independent community project; not affiliated with or endorsed by Apple.
-
 Release changes are recorded in the
 [changelog](https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md).
+
+## Related projects
+
+More MLX tooling for Apple Silicon by the same author:
+
+- [mlx-train-perf](https://github.com/IonDen/mlx-train-perf) — fused, logit-free
+  linear-cross-entropy loss, RAM-fit planner, and benchmark harness for MLX fine-tuning; the first
+  integration target for external supervision (guide above).
+- [mlx-model-doctor](https://github.com/IonDen/mlx-model-doctor) — validate an MLX / Hugging Face
+  model repository before you load it.
+- [mlx-quant-fidelity](https://github.com/IonDen/mlx-quant-fidelity) — measure what quantization
+  costs: KL divergence, perplexity, and top-token agreement for KV cache and weights.
+- [mlx-teacache](https://github.com/IonDen/mlx-teacache) — TeaCache step-skipping for FLUX,
+  Qwen-Image, and Z-Image diffusion in pure MLX.
+- [mlx-taef](https://github.com/IonDen/mlx-taef) — tiny autoencoders (TAESD family) for live
+  previews and low-memory latent decode for FLUX and SD models.
+
+Independent community project; not affiliated with or endorsed by Apple.
 
 ## Licence
 
