@@ -261,18 +261,21 @@ class ClientTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             process = mlx_guard.start(
                 mlx_guard.ObserveConfig(
-                    command=(sys.executable, "-c", "import time; time.sleep(0.5)"),
+                    command=(sys.executable, "-c", "import time; time.sleep(1.5)"),
                     report=Path(temporary, "poll.json"),
                     sample_interval_ms=10,
                 )
             )
-            self.assertIsNone(process.poll())
-            deadline = time.monotonic() + 10
-            while (result := process.poll()) is None:
-                self.assertLess(time.monotonic(), deadline, "supervised sleep never finished")
-                time.sleep(0.02)
-            self.assertIs(process.wait(), result)
-            self.assertIs(process.poll(), result)
+            try:
+                self.assertIsNone(process.poll())
+                deadline = time.monotonic() + 15
+                while (result := process.poll()) is None:
+                    self.assertLess(time.monotonic(), deadline, "supervised sleep never finished")
+                    time.sleep(0.02)
+                self.assertIs(process.wait(), result)
+                self.assertIs(process.poll(), result)
+            finally:
+                process.cancel()
 
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.report.outcome.kind, mlx_guard.OutcomeKind.CHILD_EXITED)
@@ -334,6 +337,8 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(
             _expected_exit_code(mlx_guard.Outcome(kind=signaled, at_ms=1, signal=15)), 143
         )
+        # load_report never yields these two shapes (its outcome parser rejects them first);
+        # they pin the helper's own guard so a bare Outcome can never map to a bogus status.
         with self.assertRaisesRegex(
             mlx_guard.ResultMismatchError, "^child exit report has no status code$"
         ):
