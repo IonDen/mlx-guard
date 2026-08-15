@@ -2,7 +2,8 @@
 
 [![CI](https://github.com/IonDen/mlx-guard/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/IonDen/mlx-guard/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mlx-guard)](https://pypi.org/project/mlx-guard/)
-[![Python](https://img.shields.io/pypi/pyversions/mlx-guard)](https://pypi.org/project/mlx-guard/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://pypi.org/project/mlx-guard/)
+[![Rust](https://img.shields.io/badge/rust-1.93-orange)](https://github.com/IonDen/mlx-guard/blob/main/rust-toolchain.toml)
 [![Platform](https://img.shields.io/badge/platform-macOS%20arm64-lightgrey)](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](https://github.com/IonDen/mlx-guard/blob/main/LICENSE)
 
