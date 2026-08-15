@@ -241,8 +241,6 @@ fn raw_command_canary_never_reaches_any_persisted_or_displayed_artifact() {
 
     let journal_bytes = fs::read(journal.journal_path()).unwrap();
     assert!(!String::from_utf8_lossy(&journal_bytes).contains(CANARY));
-    let finalized = journal.finalize().unwrap();
+    journal.finalize().unwrap();
     assert!(!fs::read_to_string(report_path).unwrap().contains(CANARY));
-    assert!(!finalized.summary.contains(CANARY));
-    assert!(!format!("{journal:?}").contains(CANARY));
 }

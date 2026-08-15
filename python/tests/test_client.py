@@ -3,6 +3,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 import unittest
 from collections.abc import Mapping
@@ -10,6 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 import mlx_guard
+from mlx_guard._client import _expected_exit_code
 
 
 class ClientTests(unittest.TestCase):
@@ -79,6 +81,55 @@ class ClientTests(unittest.TestCase):
                 report=Path("report.json"),
                 max_footprint_bytes=1,
             )
+
+    def test_run_config_boundaries_match_the_native_grammar(self) -> None:
+        # Catches an off-by-one in the emergency-band or wall-time bounds that would pass an
+        # unrepresentable limit to the native CLI or reject a limit the CLI accepts.
+        largest_representable_limit = 16_769_767_339_735_956_014
+        accepted = mlx_guard.RunConfig(
+            command=("/bin/true",),
+            report=Path("report.json"),
+            max_footprint_bytes=largest_representable_limit,
+            wall_time_ms=1,
+        )
+        self.assertEqual(accepted.max_footprint_bytes, largest_representable_limit)
+        thirty_days_ms = 30 * 24 * 60 * 60 * 1000
+        self.assertEqual(
+            mlx_guard.RunConfig(
+                command=("/bin/true",),
+                report=Path("report.json"),
+                max_footprint_bytes=2,
+                wall_time_ms=thirty_days_ms,
+            ).wall_time_ms,
+            thirty_days_ms,
+        )
+
+        for limit in (largest_representable_limit + 1, (1 << 64) - 1):
+            with (
+                self.subTest(max_footprint_bytes=limit),
+                self.assertRaisesRegex(
+                    mlx_guard.ConfigurationError,
+                    "^max_footprint_bytes cannot represent the emergency band$",
+                ),
+            ):
+                mlx_guard.RunConfig(
+                    command=("/bin/true",),
+                    report=Path("report.json"),
+                    max_footprint_bytes=limit,
+                )
+        for wall_time in (0, -1, thirty_days_ms + 1, True):
+            with (
+                self.subTest(wall_time_ms=wall_time),
+                self.assertRaisesRegex(
+                    mlx_guard.ConfigurationError, "^wall_time_ms must be within 1ms..=30d$"
+                ),
+            ):
+                mlx_guard.RunConfig(
+                    command=("/bin/true",),
+                    report=Path("report.json"),
+                    max_footprint_bytes=2,
+                    wall_time_ms=wall_time,
+                )
 
     def test_mutable_runtime_inputs_are_copied_into_frozen_config(self) -> None:
         command = ["/bin/echo", "first"]
@@ -203,6 +254,94 @@ class ClientTests(unittest.TestCase):
         assert isinstance(api_run, Mapping)
         assert isinstance(cli_run, Mapping)
         self.assertEqual(api_run["executable_basename"], cli_run["executable_basename"])
+
+    def test_poll_reports_none_while_running_and_then_the_finished_result(self) -> None:
+        # Catches poll() blocking like wait(), or re-finishing and re-reading the report on every
+        # call after completion instead of returning the one validated result.
+        with tempfile.TemporaryDirectory() as temporary:
+            process = mlx_guard.start(
+                mlx_guard.ObserveConfig(
+                    command=(sys.executable, "-c", "import time; time.sleep(0.5)"),
+                    report=Path(temporary, "poll.json"),
+                    sample_interval_ms=10,
+                )
+            )
+            self.assertIsNone(process.poll())
+            deadline = time.monotonic() + 10
+            while (result := process.poll()) is None:
+                self.assertLess(time.monotonic(), deadline, "supervised sleep never finished")
+                time.sleep(0.02)
+            self.assertIs(process.wait(), result)
+            self.assertIs(process.poll(), result)
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.report.outcome.kind, mlx_guard.OutcomeKind.CHILD_EXITED)
+        self.assertIsNone(result.stdout)
+
+    def test_non_executable_command_is_a_typed_launch_failure(self) -> None:
+        # Catches collapsing "exists but cannot be executed" into "not found" or into a generic
+        # supervisor failure; the native contract keeps them apart as 126 versus 127.
+        with tempfile.TemporaryDirectory() as temporary:
+            worker = Path(temporary, "worker.sh")
+            worker.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            worker.chmod(0o600)
+            result = mlx_guard.run(
+                mlx_guard.ObserveConfig(
+                    command=(str(worker),),
+                    report=Path(temporary, "not-executable.json"),
+                ),
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 126)
+        self.assertEqual(result.report.outcome.kind, mlx_guard.OutcomeKind.LAUNCH_NOT_EXECUTABLE)
+
+    def test_status_that_disagrees_with_the_report_is_a_result_mismatch(self) -> None:
+        # Catches trusting either the OS exit status or the typed report alone: a genuine
+        # child_exited(0) report paired with a supervisor status of 75 must not become a result.
+        with tempfile.TemporaryDirectory() as temporary:
+            config = mlx_guard.ObserveConfig(
+                command=("/usr/bin/true",),
+                report=Path(temporary, "genuine.json"),
+            )
+            self.assertEqual(mlx_guard.run(config).returncode, 0)
+            disagreeing = subprocess.Popen(["/bin/sh", "-c", "exit 75"])
+            self.assertEqual(disagreeing.wait(), 75)
+            handle = mlx_guard.GuardProcess(disagreeing, config, capture_output=False)
+            with self.assertRaisesRegex(
+                mlx_guard.ResultMismatchError,
+                "^native supervisor status does not match its report$",
+            ):
+                handle.wait()
+
+    def test_expected_exit_code_table_matches_the_cli_contract(self) -> None:
+        # Catches a swapped or drifted entry in the outcome-to-status table that the mismatch
+        # check depends on; the values are the frozen exit codes from the CLI contract.
+        table = {
+            mlx_guard.OutcomeKind.INVALID_CONFIGURATION: 64,
+            mlx_guard.OutcomeKind.SUPERVISOR_FAILURE: 70,
+            mlx_guard.OutcomeKind.PARTIAL_ARTIFACT_FAILURE: 74,
+            mlx_guard.OutcomeKind.POLICY_INTERVENTION: 75,
+            mlx_guard.OutcomeKind.LAUNCH_NOT_EXECUTABLE: 126,
+            mlx_guard.OutcomeKind.LAUNCH_NOT_FOUND: 127,
+        }
+        for kind, code in table.items():
+            with self.subTest(kind=kind):
+                self.assertEqual(_expected_exit_code(mlx_guard.Outcome(kind=kind, at_ms=1)), code)
+        exited = mlx_guard.OutcomeKind.CHILD_EXITED
+        signaled = mlx_guard.OutcomeKind.CHILD_SIGNALED
+        self.assertEqual(_expected_exit_code(mlx_guard.Outcome(kind=exited, at_ms=1, code=3)), 3)
+        self.assertEqual(
+            _expected_exit_code(mlx_guard.Outcome(kind=signaled, at_ms=1, signal=15)), 143
+        )
+        with self.assertRaisesRegex(
+            mlx_guard.ResultMismatchError, "^child exit report has no status code$"
+        ):
+            _expected_exit_code(mlx_guard.Outcome(kind=exited, at_ms=1))
+        with self.assertRaisesRegex(
+            mlx_guard.ResultMismatchError, "^child signal report has no signal number$"
+        ):
+            _expected_exit_code(mlx_guard.Outcome(kind=signaled, at_ms=1))
 
     def test_native_launch_failure_remains_a_typed_result(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

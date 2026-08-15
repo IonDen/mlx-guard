@@ -272,5 +272,4 @@ fn bounded_ramp_records_sampled_overshoot_instead_of_assuming_the_limit() {
     let decisions = engine.handle(sample(50, 71 * MIB));
     assert!(decisions.contains(&Action::RecordOvershoot { bytes: 7 * MIB }));
     assert_eq!(engine.evidence().maximum_overshoot_bytes, 7 * MIB);
-    assert!(engine.evidence().maximum_overshoot_bytes <= 16 * MIB);
 }

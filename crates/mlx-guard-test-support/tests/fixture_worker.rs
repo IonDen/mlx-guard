@@ -200,7 +200,9 @@ fn setsid_and_ignore_term_modes_expose_real_unix_state() {
     assert_eq!(parse_field(&fields, "pgid"), pid);
     assert_eq!(parse_field(&fields, "sid"), pid);
 
-    let mut ignored = Session::spawn("ignore-term", 1, 100);
+    // A 2 s wall budget (matching the other ignore-term fixtures) keeps the liveness check below
+    // from racing the watchdog on a slow shared CI runner; the final wait still proves exit 124.
+    let mut ignored = Session::spawn("ignore-term", 1, 2_000);
     ignored.expect_line(&format!(
         "READY mode=ignore-term pid={}",
         ignored.child.id()
