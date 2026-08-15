@@ -140,6 +140,28 @@ fn enforcement_rejects_a_limit_too_small_for_ordered_policy_bands() {
     ])
     .unwrap_err();
     assert!(error.to_string().contains("emergency policy band"));
+
+    // The largest limit whose emergency band still fits in u64 is accepted and one byte more is
+    // not; the Python client pins the same two literals so both grammars move together.
+    for (limit, accepted) in [
+        ("16769767339735956014B", true),
+        ("16769767339735956015B", false),
+    ] {
+        let parsed = parse_cli([
+            "mlx-guard",
+            "run",
+            "--max-footprint",
+            limit,
+            "--report",
+            "/private/mlx-guard/report.json",
+            "--",
+            "true",
+        ]);
+        assert_eq!(parsed.is_ok(), accepted, "limit {limit}");
+        if let Err(error) = parsed {
+            assert!(error.to_string().contains("emergency policy band"));
+        }
+    }
 }
 
 #[test]

@@ -127,43 +127,70 @@ fn unavailable_unknown_stale_and_error_are_not_serialized_as_zero() {
 }
 
 #[test]
-fn validator_rejects_unsafe_privacy_hash_signal_and_event_order() {
-    // Catches callers bypassing defaults or smuggling sensitive strings through correlation data.
-    let mut invalid = report();
-    invalid.privacy.redacted_before_persistence = false;
-    assert!(invalid.validate().is_err());
-
-    let mut invalid = report();
-    invalid.run.correlation_hash = Some("SECRET_CANARY".to_owned());
-    assert!(invalid.validate().is_err());
-
-    let mut invalid = report();
-    invalid.run.run_id = "SECRET_CANARY".to_owned();
-    assert!(invalid.validate().is_err());
-
-    let mut invalid = report();
-    invalid.package_version = "SECRET_CANARY".to_owned();
-    assert!(invalid.validate().is_err());
-
-    let mut invalid = report();
-    invalid.signals[0].signal = 0;
-    assert!(invalid.validate().is_err());
-
-    let mut invalid = report();
-    invalid.outcome.at_ms = 9;
-    assert!(invalid.validate().is_err());
-
-    let mut invalid = report();
-    invalid.configuration.wall_time_ms = Some(0);
-    assert!(invalid.validate().is_err());
-
-    let mut invalid = report();
-    invalid.configuration.warning_footprint_bytes = Some(100);
-    assert!(invalid.validate().is_err());
-
-    let mut invalid = report();
-    invalid.samples[0].window_ms = 0;
-    assert!(invalid.validate().is_err());
+fn validator_rejects_each_unsafe_field_through_its_own_check() {
+    // Catches callers bypassing defaults or smuggling sensitive strings through correlation data,
+    // and catches a validator whose checks are miswired so a bad field is rejected for the wrong
+    // reason (or accepted once the check that happened to catch it changes).
+    type Corrupt = fn(&mut ReportV1);
+    type Expected = fn(&ReportError) -> bool;
+    let cases: [(&str, Corrupt, Expected); 9] = [
+        (
+            "unredacted persistence",
+            |r| r.privacy.redacted_before_persistence = false,
+            |e| matches!(e, ReportError::InvalidPrivacy),
+        ),
+        (
+            "non-hash correlation text",
+            |r| r.run.correlation_hash = Some("SECRET_CANARY".to_owned()),
+            |e| matches!(e, ReportError::InvalidIdentity),
+        ),
+        (
+            "non-hex run id",
+            |r| r.run.run_id = "SECRET_CANARY".to_owned(),
+            |e| matches!(e, ReportError::InvalidIdentity),
+        ),
+        (
+            "free-text package version",
+            |r| r.package_version = "SECRET_CANARY".to_owned(),
+            |e| matches!(e, ReportError::InvalidPackageVersion),
+        ),
+        (
+            "signal number zero",
+            |r| r.signals[0].signal = 0,
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "outcome before its last event",
+            |r| r.outcome.at_ms = 9,
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "zero wall time",
+            |r| r.configuration.wall_time_ms = Some(0),
+            |e| matches!(e, ReportError::InvalidConfiguration),
+        ),
+        (
+            "warning threshold not below the limit",
+            |r| r.configuration.warning_footprint_bytes = Some(100),
+            |e| matches!(e, ReportError::InvalidConfiguration),
+        ),
+        (
+            "zero sample window",
+            |r| r.samples[0].window_ms = 0,
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+    ];
+    for (case, corrupt, expected) in cases {
+        let mut invalid = report();
+        corrupt(&mut invalid);
+        let error = invalid
+            .validate()
+            .expect_err(&format!("report with {case} must be rejected"));
+        assert!(
+            expected(&error),
+            "report with {case} was rejected by the wrong check: {error:?}"
+        );
+    }
 }
 
 #[test]

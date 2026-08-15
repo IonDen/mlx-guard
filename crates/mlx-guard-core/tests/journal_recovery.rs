@@ -206,16 +206,16 @@ fn oversized_record_is_rejected_before_any_bytes_are_appended() {
 }
 
 #[test]
-fn parsing_unknown_command_text_never_executes_it() {
-    // Catches replacing data-only serde parsing with a shell or executable deserialization hook.
+fn unknown_record_fields_are_ignored_during_recovery() {
+    // Catches a strict unknown-field mutant that turns a forward-compatible journal record into
+    // an unrecoverable one instead of parsing the known fields and ignoring the rest.
     let directory = TestDirectory::new();
     let path = directory.0.join("report.json");
-    let marker = directory.0.join("parser-executed");
     let journal = SecureJournal::initialize(&path).unwrap();
     let journal_path = journal.journal_path().to_path_buf();
     drop(journal);
     let mut value = serde_json::to_value(transition(0)).unwrap();
-    value["execute"] = serde_json::Value::String(format!("touch {}", marker.display()));
+    value["future_field"] = serde_json::Value::String("ignored".to_owned());
     let payload = serde_json::to_vec(&value).unwrap();
     let checksum = test_crc32(&payload);
     let mut file = OpenOptions::new().append(true).open(&journal_path).unwrap();
@@ -229,7 +229,6 @@ fn parsing_unknown_command_text_never_executes_it() {
 
     assert_eq!(recovered.status, JournalRecoveryStatus::Complete);
     assert_eq!(recovered.records, [transition(0)]);
-    assert!(!marker.exists());
 }
 
 #[test]

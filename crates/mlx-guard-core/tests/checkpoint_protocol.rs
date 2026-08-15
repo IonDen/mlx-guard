@@ -155,7 +155,7 @@ fn spoof_replay_duplicate_and_malformed_frames_never_authenticate() {
         .to_be_bytes();
     let oversized = protocol.ingest(ms(20), &oversized_length);
     assert_eq!(oversized.rejections, [CheckpointRejection::Oversized]);
-    assert!(protocol.buffered_bytes() <= MAX_CHECKPOINT_FRAME_BYTES + 4);
+    assert_eq!(protocol.buffered_bytes(), 0);
 }
 
 #[test]

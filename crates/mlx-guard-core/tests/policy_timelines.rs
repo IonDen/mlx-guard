@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use mlx_guard_core::{
-    Action, CheckpointDisposition, Event, PolicyConfig, PolicyMachine, PolicyState, SampleEvent,
-    SignalNumber,
+    Action, CheckpointDisposition, Event, PolicyConfig, PolicyConfigError, PolicyMachine,
+    PolicyState, SampleEvent, SignalNumber,
 };
 
 fn ms(value: u64) -> Duration {
@@ -285,32 +285,53 @@ fn exit_report_counts_post_signal_observations_without_inventing_reclamation() {
 }
 
 #[test]
-fn invalid_policy_orderings_and_zero_timers_are_rejected() {
-    // Catches accepting a policy whose thresholds cannot provide real hysteresis or escalation.
-    let mut cases = Vec::new();
+fn every_policy_ordering_count_and_timer_invariant_is_rejected_individually() {
+    // Catches deleting any single `valid_config` clause: each case violates exactly one
+    // invariant while the other nine stay valid, so the machine must reject it on that clause
+    // alone (a valid baseline is asserted first to prove the cases fail for the named reason).
+    type Violation = fn(&mut PolicyConfig);
+    assert!(PolicyMachine::enforce(config(false)).is_ok());
 
-    let mut equal_recovery_and_warning = config(false);
-    equal_recovery_and_warning.recovery_bytes = equal_recovery_and_warning.warning_bytes;
-    cases.push(equal_recovery_and_warning);
-
-    let mut emergency_not_above_limit = config(false);
-    emergency_not_above_limit.emergency_bytes = emergency_not_above_limit.limit_bytes;
-    cases.push(emergency_not_above_limit);
-
-    let mut no_consecutive_breaches = config(false);
-    no_consecutive_breaches.required_breach_samples = 0;
-    cases.push(no_consecutive_breaches);
-
-    let mut no_missing_budget = config(false);
-    no_missing_budget.max_missing_samples = 0;
-    cases.push(no_missing_budget);
-
-    let mut zero_grace = config(false);
-    zero_grace.term_grace = Duration::ZERO;
-    cases.push(zero_grace);
-
-    for invalid in cases {
-        assert!(PolicyMachine::enforce(invalid).is_err());
+    let cases: [(&str, Violation); 10] = [
+        ("recovery == warning", |c| {
+            c.recovery_bytes = c.warning_bytes;
+        }),
+        ("warning == limit", |c| {
+            c.warning_bytes = c.limit_bytes;
+        }),
+        ("emergency == limit", |c| {
+            c.emergency_bytes = c.limit_bytes;
+        }),
+        ("required_breach_samples == 0", |c| {
+            c.required_breach_samples = 0;
+        }),
+        ("max_missing_samples == 0", |c| {
+            c.max_missing_samples = 0;
+        }),
+        ("max_sample_age == 0", |c| {
+            c.max_sample_age = Duration::ZERO;
+        }),
+        ("max_sample_window == 0", |c| {
+            c.max_sample_window = Duration::ZERO;
+        }),
+        ("term_grace == 0", |c| {
+            c.term_grace = Duration::ZERO;
+        }),
+        ("checkpoint_timeout == Some(0)", |c| {
+            c.checkpoint_timeout = Some(Duration::ZERO);
+        }),
+        ("wall_time == Some(0)", |c| {
+            c.wall_time = Some(Duration::ZERO);
+        }),
+    ];
+    for (invariant, violate) in cases {
+        let mut invalid = config(false);
+        violate(&mut invalid);
+        assert_eq!(
+            PolicyMachine::enforce(invalid).err(),
+            Some(PolicyConfigError),
+            "policy with {invariant} must be rejected"
+        );
     }
 }
 
@@ -340,6 +361,37 @@ fn clock_regression_fails_closed_and_still_escalates() {
         observer.apply(sample(9, Some(1))),
         [Action::RecordMissing, Action::StopObserving]
     );
+}
+
+#[test]
+fn clock_regression_after_supervisor_error_never_sends_a_second_term() {
+    // Catches dropping the fail-closed guard so every further out-of-order event re-emits TERM
+    // and resets the KILL deadline instead of leaving the first escalation to run its course.
+    let mut machine = PolicyMachine::enforce(config(false)).unwrap();
+    machine.apply(sample(10, Some(1)));
+    assert!(
+        machine
+            .apply(sample(9, Some(1)))
+            .contains(&Action::SendTerm {
+                checkpoint: CheckpointDisposition::SkippedObservationFailure,
+            })
+    );
+    assert_eq!(machine.state(), PolicyState::SupervisorError);
+
+    assert_eq!(machine.apply(sample(8, Some(1))), []);
+    assert_eq!(machine.apply(Event::Tick { at: ms(7) }), []);
+    assert_eq!(machine.state(), PolicyState::SupervisorError);
+    assert_eq!(machine.next_deadline(), Some(ms(110)));
+    assert_eq!(
+        machine.apply(Event::Tick { at: ms(110) }),
+        [Action::SendKill]
+    );
+
+    let mut observer = PolicyMachine::observe(ms(100), ms(10), 3);
+    observer.apply(sample(10, Some(1)));
+    observer.apply(sample(9, Some(1)));
+    assert_eq!(observer.apply(sample(8, Some(1))), []);
+    assert_eq!(observer.state(), PolicyState::SupervisorError);
 }
 
 #[test]

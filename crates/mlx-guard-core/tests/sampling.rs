@@ -295,12 +295,19 @@ fn history_stays_fixed_capacity_during_churn_and_keeps_latest_evidence() {
             .collect::<Vec<_>>(),
         vec![9_997, 9_998, 9_999]
     );
-    assert!(sampler.history().all(|sample| {
-        !sample.events.iter().any(|event| {
-            matches!(
-                event,
-                ContainmentEvent::IdentityChanged { pid, .. } if *pid < 100
-            )
-        })
-    }));
+    // Each retained sample keeps its own containment evidence: exactly the disappearance of the
+    // child seen one sample earlier, and no false identity change for the stable root or the
+    // freshly observed child.
+    for sample in sampler.history() {
+        let previous_child = identity(
+            101 + i32::try_from((sample.sequence - 1) % 20).unwrap(),
+            sample.sequence + 1,
+        );
+        assert_eq!(
+            sample.events,
+            [ContainmentEvent::Disappeared(previous_child)],
+            "sample {} lost or invented containment evidence",
+            sample.sequence
+        );
+    }
 }
