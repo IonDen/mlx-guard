@@ -3,8 +3,8 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mlx_guard_cli::{execute, parse_cli};
@@ -45,7 +45,7 @@ impl Drop for TestDirectory {
 #[test]
 fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
     // Catches runtime wiring that never negotiates the FD or mistakes signal delivery for an ack.
-    let _runtime_lock = RUNTIME_LOCK.lock().unwrap();
+    let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
     let parsed = parse_cli([
@@ -100,7 +100,7 @@ fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
 #[test]
 fn observe_finalizes_on_consecutive_missing_root_samples_without_signaling() {
     // Catches observe waiting forever or using cleanup-on-drop to kill after measurement loss.
-    let _runtime_lock = RUNTIME_LOCK.lock().unwrap();
+    let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
     let parsed = parse_cli([
@@ -136,7 +136,7 @@ fn observe_finalizes_on_consecutive_missing_root_samples_without_signaling() {
 #[test]
 fn unavailable_supervisor_signal_control_finalizes_before_worker_launch() {
     // Catches a supervisor-owned resource failure escaping without a typed durable artifact.
-    let _runtime_lock = RUNTIME_LOCK.lock().unwrap();
+    let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let _occupied_monitor = TerminalSignalMonitor::install().unwrap();
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
@@ -171,7 +171,7 @@ fn unavailable_supervisor_signal_control_finalizes_before_worker_launch() {
 #[test]
 fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
     // Catches waiting for a blocked cooperative worker instead of enforcing the bounded timeout.
-    let _runtime_lock = RUNTIME_LOCK.lock().unwrap();
+    let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
     let parsed = parse_cli([
@@ -199,7 +199,10 @@ fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
     assert!(result.stderr.is_empty());
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
     assert_eq!(report.checkpoint.status, CheckpointStatus::TimedOut);
-    assert!(report.checkpoint.at_ms.is_some_and(|at| at < 1_200));
+    // TERM must follow the 100 ms checkpoint timeout after the 1 s wall deadline (about 1.1 s),
+    // never the blocked worker's own 3 s wall; 2 s separates the two with headroom for a slow
+    // shared runner instead of a 100 ms margin that flaked on macOS CI.
+    assert!(report.checkpoint.at_ms.is_some_and(|at| at < 2_000));
     assert!(report.signals.iter().any(|signal| {
         signal.signal == checkpoint_signal_usr1().get()
             && signal.target == SignalTarget::CooperativeEndpoint
@@ -215,7 +218,7 @@ fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
 #[test]
 fn escaped_descendant_is_reported_as_containment_uncertainty() {
     // Catches presenting owned-group cleanup as complete containment after a descendant calls setsid.
-    let _runtime_lock = RUNTIME_LOCK.lock().unwrap();
+    let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
     let parsed = parse_cli([
