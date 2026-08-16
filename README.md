@@ -91,13 +91,25 @@ kernel or system-wide failure. It never chooses a destructive limit automaticall
 Interactive terminal job control, sandboxed execution, and Mac App Store distribution are outside
 the v0.1 scope. Direct CLI and Python-wheel distribution are the target.
 
-## Relationship to MetalGuard
+## MetalGuard and mlx-guard
 
-[MetalGuard](https://github.com/Harperbot/metal-guard) provides MLX-aware in-application defenses:
-load and unload checks, allocator-aware recovery, a Python subprocess runner, and panic cooldowns.
-`mlx-guard` operates at a different boundary. It accepts a literal command, measures the
-OS-accounted footprint of its owned process group, applies external signal escalation, and writes a
-typed report without importing the workload. The projects are complementary and independent.
+Both projects exist because a runaway MLX process can take the whole Mac down. They defend
+different rings.
+
+| | [MetalGuard](https://github.com/Harperbot/metal-guard) | mlx-guard |
+|---|---|---|
+| Where it runs | Inside your Python process, around MLX code you write | Outside, as a separate native parent of any command |
+| What it measures | `mx.metal.get_active_memory()`, with `vm_stat` system totals as fallback | OS-accounted `phys_footprint` of the owned process group |
+| What it needs from you | Import it and route MLX work through its runner and gates | Nothing inside the workload: a command line and a byte limit |
+| When things go wrong | Load and unload checks, allocator-aware recovery, crash-burst and kernel-panic cooldowns, panic postmortems, a registry of known-panic models | An optional cooperative checkpoint request, then TERM and KILL against the explicit limit, plus a redacted JSON report |
+| Fits | MLX apps that want recovery without a supervisor process | Trainers, servers, benches, shell scripts, anything you can launch |
+
+Running both is reasonable: MetalGuard keeps the workload healthy from the inside, and mlx-guard
+is the outer ring for the case where the process itself can no longer be trusted (a limit set
+inside a process shares that process's fate). An outside, OS-accounted number also cross-checks
+the in-process counters, which MetalGuard's maintainer notes may not see every allocation. He
+reviewed this boundary and called the projects complementary, with no overlapping code
+([metal-guard #7](https://github.com/Harperbot/metal-guard/issues/7#issuecomment-5307251324)).
 
 ## Documentation
 
