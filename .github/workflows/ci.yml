@@ -22,9 +22,21 @@ jobs:
         with:
           components: clippy,rustfmt
       - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Runner profile
+        run: |
+          uname -srm
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            sysctl -n hw.ncpu hw.memsize
+          else
+            nproc
+            grep MemTotal /proc/meminfo
+          fi
+          uptime
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-      - run: cargo test --workspace --all-targets --all-features
+      # Real-process tests spawn CPU-stalling and allocating fixtures; run them one at a time so
+      # a hosted 3-vCPU runner does not starve one test's fixture with another test's workers.
+      - run: cargo test --workspace --all-targets --all-features -- --test-threads=1
       - if: runner.os == 'macOS'
         run: ./scripts/test-metal-fixture.sh
 
