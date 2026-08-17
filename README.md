@@ -135,6 +135,14 @@ contract below defines one subsystem.
 | [Security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) | Vulnerability reporting |
 | [M1 Max 32 GB evidence](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.1.0/m1-max-32gb/README.md) | Raw v0.1 accuracy, timing, endurance, lifecycle, and false-intervention measurements |
 
+## Research notes
+
+- [Why the memory limit must live outside the process](https://github.com/IonDen/mlx-guard/blob/main/docs/papers/why-the-memory-limit-must-live-outside-the-process.md)
+  — why an in-process cap or watchdog shares the fate of the process it guards, why the counter a
+  workload reads is not the charge the OS applies, what macOS gives a supervisor in place of
+  cgroups, and what external supervision still cannot promise, with the measured overhead and
+  gaps from the committed v0.1 evidence.
+
 ## Development
 
 Rust 1.93 is pinned in `rust-toolchain.toml`. The workspace contains the native supervisor, the core
