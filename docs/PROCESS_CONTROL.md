@@ -12,6 +12,10 @@ the parent can query it, the successful pre-exec setup and retained root status 
 A launch that cannot establish either result fails. Public process-control methods cannot construct
 or signal PID or PGID zero.
 
+If the root exits before the supervisor's first identity inspection can bind `(pid, start_abstime)`,
+the supervisor preserves the child's exit status and writes a valid report with zero samples and
+identity unknown. Only an inspect failure on a still-live child is a supervisor failure (exit 70).
+
 The root and group have separate lifecycles. `wait_root` preserves the root's normal exit code or
 terminating signal even when descendants remain. The supervisor retains the validated PGID after a
 fast root exit so cleanup can still target the remaining group. Dropping an `OwnedProcess` sends

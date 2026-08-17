@@ -127,7 +127,7 @@ pub enum ContainmentEvent {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TrackingFrame {
     pub owned_members: Vec<ProcessObservation>,
-    pub escaped_identities: Vec<ProcessIdentity>,
+    pub escape_observed: bool,
     pub events: Vec<ContainmentEvent>,
     pub aggregate_footprint: AggregateFootprint,
     pub observation_failures: Vec<ObservationFailure>,
@@ -140,6 +140,8 @@ struct TrackedProcess {
     parent_pid: i32,
 }
 
+const MAX_ESCAPED_EVIDENCE: usize = 64;
+
 /// Stateful comparison of identity-bound process snapshots.
 #[derive(Debug)]
 pub struct IdentityTracker {
@@ -148,6 +150,7 @@ pub struct IdentityTracker {
     tracked: BTreeMap<ProcessIdentity, TrackedProcess>,
     last_by_pid: BTreeMap<i32, ProcessIdentity>,
     escaped: BTreeSet<ProcessIdentity>,
+    escaped_count: u64,
     root_exit_observed: bool,
 }
 
@@ -167,6 +170,7 @@ impl IdentityTracker {
             tracked: BTreeMap::new(),
             last_by_pid: BTreeMap::new(),
             escaped: BTreeSet::new(),
+            escaped_count: 0,
             root_exit_observed: false,
         })
     }
@@ -216,11 +220,16 @@ impl IdentityTracker {
                 },
             );
             if !is_root && !in_owned_group {
-                if self.escaped.insert(observation.identity) {
-                    events.push(ContainmentEvent::LeftOwnedGroup {
-                        identity: observation.identity,
-                        observed_group: observation.process_group_id,
-                    });
+                if self.escaped.len() < MAX_ESCAPED_EVIDENCE {
+                    if self.escaped.insert(observation.identity) {
+                        self.escaped_count = self.escaped_count.saturating_add(1);
+                        events.push(ContainmentEvent::LeftOwnedGroup {
+                            identity: observation.identity,
+                            observed_group: observation.process_group_id,
+                        });
+                    }
+                } else if !self.escaped.contains(&observation.identity) {
+                    self.escaped_count = self.escaped_count.saturating_add(1);
                 }
             } else if !observation.exited {
                 owned_members.push(observation);
@@ -252,7 +261,7 @@ impl IdentityTracker {
         TrackingFrame {
             root_exit_observed: self.root_exit_observed,
             owned_members,
-            escaped_identities: self.escaped.iter().copied().collect(),
+            escape_observed: self.escaped_count > 0,
             events,
             aggregate_footprint,
             observation_failures: relevant_failures,
@@ -559,14 +568,16 @@ pub fn wait_for_owned_group_empty(
                             kind: ObservationFailureKind::EnumerationFailed,
                         });
                     }
+                    let escaped_identities: Vec<_> =
+                        tracker.escaped.iter().copied().collect();
                     let complete = owned_group_empty
-                        && frame.escaped_identities.is_empty()
+                        && escaped_identities.is_empty()
                         && observation_failures.is_empty();
                     return CleanupReport {
                         owned_group_empty,
                         complete,
                         survivors,
-                        escaped_identities: frame.escaped_identities,
+                        escaped_identities,
                         observation_failures,
                     };
                 }

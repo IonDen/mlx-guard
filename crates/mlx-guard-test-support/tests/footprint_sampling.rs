@@ -219,7 +219,7 @@ fn targeted_sampling_still_detects_a_child_that_leaves_the_owned_group() {
     read_phase(&mut output, "ESCAPED");
     let mut sampler = sampler_for(&process, inventory);
     let sample = sampler.sample_native(&inventory, Instant::now()).clone();
-    assert_eq!(sample.escaped_identities.len(), 1);
+    assert!(sample.escape_observed);
     assert!(
         sample
             .members

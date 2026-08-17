@@ -147,7 +147,7 @@ pub struct FootprintSample {
     pub members: Vec<ProcessFootprintSample>,
     pub outcome: SampleOutcome,
     pub events: Vec<ContainmentEvent>,
-    pub escaped_identities: Vec<ProcessIdentity>,
+    pub escape_observed: bool,
 }
 
 /// Stateful conversion of native snapshots into a fixed-capacity sample history.
@@ -201,12 +201,12 @@ impl FootprintSampler {
             || self
                 .last_started_at
                 .is_some_and(|previous| started_at < previous);
-        let (members, outcome, events, escaped_identities) = if clock_discontinuity {
+        let (members, outcome, events, escape_observed) = if clock_discontinuity {
             (
                 Vec::new(),
                 SampleOutcome::ClockDiscontinuity,
                 Vec::new(),
-                Vec::new(),
+                false,
             )
         } else {
             self.last_started_at = Some(started_at);
@@ -242,13 +242,13 @@ impl FootprintSampler {
                         },
                         AggregateFootprint::Overflow => SampleOutcome::Overflow,
                     };
-                    (members, outcome, frame.events, frame.escaped_identities)
+                    (members, outcome, frame.events, frame.escape_observed)
                 }
                 Err(error) => (
                     Vec::new(),
                     SampleOutcome::SnapshotFailed { kind: error.kind },
                     Vec::new(),
-                    Vec::new(),
+                    false,
                 ),
             }
         };
@@ -259,7 +259,7 @@ impl FootprintSampler {
             members,
             outcome,
             events,
-            escaped_identities,
+            escape_observed,
         };
         self.next_sequence = self.next_sequence.saturating_add(1);
         if self.history.len() == self.config.history_capacity {
