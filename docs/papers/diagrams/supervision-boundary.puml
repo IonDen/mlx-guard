@@ -1,0 +1,37 @@
+@startuml
+title Where the enforcement loop runs, and what it shares fate with
+
+top to bottom direction
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam roundCorner 10
+skinparam defaultFontName Helvetica
+skinparam defaultFontColor #111827
+skinparam ArrowColor #4B5563
+skinparam ArrowFontColor #374151
+skinparam rectangle {
+  BorderColor #4B5563
+  FontColor #111827
+  BackgroundColor #F8FAFC
+}
+
+rectangle "Supervisor process — native parent, outside the failure domain\nsamples OS-accounted phys_footprint per validated member,\nruns the policy state machine, writes the journal and final report" as sup #DCFCE7
+
+rectangle "Workload failure domain\nstarved, killed, or panicking together" as domain #FEE2E2 {
+  rectangle "Owned process group" as group #FEE2E2 {
+    rectangle "Supervised command (root)\nPython and MLX" as root #DBEAFE
+    rectangle "Descendants\ndataloader, spawned steps" as desc #DBEAFE
+  }
+  rectangle "In-process guard\nreads framework counters from inside;\nends when the process ends" as inproc #FEF3C7
+
+  group -[hidden]down- inproc
+}
+
+rectangle "Escaped descendant\nsetsid, outside the owned group;\nrecorded as evidence, not contained" as escaped #F3F4F6
+
+sup -down-> group : sample every member,\nTERM then KILL
+sup -down-> root : checkpoint request\n(negotiated endpoint only)
+desc -down-> escaped : setsid
+
+@enduml
