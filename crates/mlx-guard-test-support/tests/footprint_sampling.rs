@@ -695,8 +695,7 @@ fn pid_churn_sampler_rss_stays_bounded_despite_many_distinct_children() {
         "max_resident={max_resident}"
     );
     assert!(
-        final_footprint
-            <= footprint_started.saturating_add(CHURN_MAX_FOOTPRINT_GROWTH_BYTES),
+        final_footprint <= footprint_started.saturating_add(CHURN_MAX_FOOTPRINT_GROWTH_BYTES),
         "start={footprint_started} final={final_footprint} growth={}",
         final_footprint.saturating_sub(footprint_started)
     );

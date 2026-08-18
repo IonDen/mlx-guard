@@ -568,8 +568,7 @@ pub fn wait_for_owned_group_empty(
                             kind: ObservationFailureKind::EnumerationFailed,
                         });
                     }
-                    let escaped_identities: Vec<_> =
-                        tracker.escaped.iter().copied().collect();
+                    let escaped_identities: Vec<_> = tracker.escaped.iter().copied().collect();
                     let complete = owned_group_empty
                         && escaped_identities.is_empty()
                         && observation_failures.is_empty();
