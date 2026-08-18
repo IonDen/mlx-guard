@@ -308,7 +308,7 @@ fn prepare_observe_worker(
     inventory: NativeProcessInventory,
     sample_config: SamplingConfig,
 ) -> Result<PreparedObserve, RunLaunchFailure> {
-    let process =
+    let mut process =
         OwnedProcess::launch(&launch_options(common)).map_err(|error| RunLaunchFailure {
             outcome: launch_outcome(error.kind()),
             diagnostic: error.to_string(),
@@ -317,13 +317,20 @@ fn prepare_observe_worker(
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
     })?;
-    let root = inventory
-        .inspect(root_pid)
-        .map_err(|_| RunLaunchFailure {
+    let root = if let Ok(observation) = inventory.inspect(root_pid) {
+        observation.identity
+    } else {
+        if let Ok(Some(outcome)) = process.try_wait_root() {
+            return Err(RunLaunchFailure {
+                outcome: supervisor_outcome(outcome),
+                diagnostic: "child exited before identity inspection".to_owned(),
+            });
+        }
+        return Err(RunLaunchFailure {
             outcome: SupervisorOutcome::SupervisorFailure,
             diagnostic: "root process identity could not be established".to_owned(),
-        })?
-        .identity;
+        });
+    };
     let tracker =
         IdentityTracker::new(root, process.process_group_id()).map_err(|_| RunLaunchFailure {
             outcome: SupervisorOutcome::SupervisorFailure,
@@ -342,7 +349,7 @@ fn prepare_run_worker(
     inherited_checkpoint: CheckpointWorkerEndpoint,
     sample_config: SamplingConfig,
 ) -> Result<PreparedRun, RunLaunchFailure> {
-    let process = OwnedProcess::launch_with_checkpoint(
+    let mut process = OwnedProcess::launch_with_checkpoint(
         &launch_options(&options.common),
         inherited_checkpoint,
     )
@@ -354,13 +361,20 @@ fn prepare_run_worker(
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
     })?;
-    let root = inventory
-        .inspect(root_pid)
-        .map_err(|_| RunLaunchFailure {
+    let root = if let Ok(observation) = inventory.inspect(root_pid) {
+        observation.identity
+    } else {
+        if let Ok(Some(outcome)) = process.try_wait_root() {
+            return Err(RunLaunchFailure {
+                outcome: supervisor_outcome(outcome),
+                diagnostic: "child exited before identity inspection".to_owned(),
+            });
+        }
+        return Err(RunLaunchFailure {
             outcome: SupervisorOutcome::SupervisorFailure,
             diagnostic: "root process identity could not be established".to_owned(),
-        })?
-        .identity;
+        });
+    };
     let tracker =
         IdentityTracker::new(root, process.process_group_id()).map_err(|_| RunLaunchFailure {
             outcome: SupervisorOutcome::SupervisorFailure,
@@ -584,7 +598,7 @@ impl RunRuntime<'_> {
             .record_sample(&sample, processed_at, &advisory);
         retain_recent_sample(&mut self.report_samples, window.clone());
         self.final_footprint = window.aggregate_footprint_bytes.clone();
-        self.escape_detected |= !sample.escaped_identities.is_empty();
+        self.escape_detected |= sample.escape_observed;
         if sample.sequence < MAX_SAMPLE_HISTORY_CAPACITY as u64 {
             self.record(
                 JournalEntry::Sample(Box::new(window.clone())),
@@ -889,7 +903,7 @@ impl ObserveRuntime {
             .record_sample(&sample, processed_at, &advisory);
         retain_recent_sample(&mut self.report_samples, window.clone());
         self.final_footprint = window.aggregate_footprint_bytes.clone();
-        self.escape_detected |= !sample.escaped_identities.is_empty();
+        self.escape_detected |= sample.escape_observed;
         if sample.sequence < MAX_SAMPLE_HISTORY_CAPACITY as u64 {
             self.record(
                 JournalEntry::Sample(Box::new(window.clone())),
@@ -993,6 +1007,10 @@ fn finalize_without_worker(
         SupervisorOutcome::LaunchNotFound => TerminalKind::LaunchNotFound,
         SupervisorOutcome::LaunchNotExecutable => TerminalKind::LaunchNotExecutable,
         SupervisorOutcome::InvalidConfiguration => TerminalKind::InvalidConfiguration,
+        SupervisorOutcome::ChildExited(code) => TerminalKind::ChildExited { code },
+        SupervisorOutcome::ChildSignaled(signal) => TerminalKind::ChildSignaled {
+            signal: signal.get(),
+        },
         _ => TerminalKind::SupervisorFailure,
     };
     let terminal = TerminalOutcome {
@@ -1000,15 +1018,37 @@ fn finalize_without_worker(
         kind,
         final_footprint_bytes: Observed::Unknown,
     };
-    if append_terminal(&mut journal, &mut sequence, false, terminal).is_err()
-        || journal.finalize().is_err()
-    {
+    let is_child_exit = matches!(
+        outcome,
+        SupervisorOutcome::ChildExited(_) | SupervisorOutcome::ChildSignaled(_)
+    );
+    if append_terminal(&mut journal, &mut sequence, false, terminal).is_err() {
         return RuntimeResult::failure(
             SupervisorOutcome::PartialArtifactFailure,
             "launch failed and its report could not be finalized",
         );
     }
-    RuntimeResult::failure(outcome, diagnostic)
+    if is_child_exit {
+        match journal.finalize() {
+            Ok(artifacts) => RuntimeResult {
+                outcome,
+                stdout: artifacts.summary,
+                stderr: String::new(),
+            },
+            Err(_) => RuntimeResult::failure(
+                SupervisorOutcome::PartialArtifactFailure,
+                "child exited but its report could not be finalized",
+            ),
+        }
+    } else {
+        if journal.finalize().is_err() {
+            return RuntimeResult::failure(
+                SupervisorOutcome::PartialArtifactFailure,
+                "launch failed and its report could not be finalized",
+            );
+        }
+        RuntimeResult::failure(outcome, diagnostic)
+    }
 }
 
 fn launch_outcome(kind: mlx_guard_core::LaunchErrorKind) -> SupervisorOutcome {

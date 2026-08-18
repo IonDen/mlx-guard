@@ -37,6 +37,13 @@ parent-child edges. It calls the more expensive rusage observer only for relevan
 preserves best-effort escape detection without inspecting the footprint of every process on the
 machine. Sampling continues after TERM or KILL is requested until process exit is actually observed.
 
+## Supervisor footprint envelope
+
+The supervisor's own footprint scales with the number of currently live processes in the owned group,
+not with the total number of distinct pids ever observed. Per-sample cost is independent of run
+duration. Escape evidence retains at most 64 identities plus a total count; the per-sample frame
+carries only a boolean.
+
 ## Interpretation limits
 
 The aggregate is a multi-call estimate, not an instantaneous machine-wide truth. Shared pages may be

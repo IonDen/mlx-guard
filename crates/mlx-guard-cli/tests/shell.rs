@@ -683,6 +683,77 @@ fn policy_kills_a_worker_that_outlives_term_grace() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn observe_preserves_exit_status_when_child_exits_before_identity_inspection() {
+    // Catches discarding a short-lived child's exit status as SupervisorFailure (exit 70) when the
+    // child exits before the supervisor's first identity inspection can bind (pid, start_abstime).
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args(["observe", "--sample-interval", "10ms", "--report"])
+        .arg(&report_path)
+        .args(["--", "/usr/bin/true"])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = mlx_guard_core::ReportV1::from_json(
+        &fs::read_to_string(&report_path).expect("final report must exist"),
+    )
+    .unwrap();
+    assert_eq!(
+        report.outcome.kind,
+        mlx_guard_core::TerminalKind::ChildExited { code: 0 }
+    );
+    assert!(report.signals.is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn run_preserves_nonzero_exit_status_when_child_exits_before_identity_inspection() {
+    // Catches losing a non-zero child exit code when the child exits before the supervisor binds
+    // its process identity.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args([
+            "run",
+            "--max-footprint",
+            "1TiB",
+            "--sample-interval",
+            "10ms",
+            "--report",
+        ])
+        .arg(&report_path)
+        .args(["--", "/usr/bin/false"])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = mlx_guard_core::ReportV1::from_json(
+        &fs::read_to_string(&report_path).expect("final report must exist"),
+    )
+    .unwrap();
+    assert_eq!(
+        report.outcome.kind,
+        mlx_guard_core::TerminalKind::ChildExited { code: 1 }
+    );
+    assert!(report.signals.is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn launch_failures_keep_their_exact_status_and_final_report_kind() {
     // Catches collapsing not-found and not-executable launch failures into supervisor exit 70.
     let directory = TestDirectory::new();

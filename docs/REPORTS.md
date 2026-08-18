@@ -17,7 +17,9 @@ The top-level report contains:
 - a typed terminal outcome, final footprint availability, and privacy assertions.
 
 Observed values use one of five tagged states: `available`, `unknown`, `unavailable`, `stale`, or
-`error`. Missing or failed observations are never encoded as zero. Artifact errors use fixed codes;
+`error`. Missing or failed observations are never encoded as zero. A child that exits before its
+identity can be inspected produces a valid report with zero samples, `unknown` final footprint,
+and the child's actual terminal status — not a supervisor failure. Artifact errors use fixed codes;
 they do not include a path or raw operating-system message. Checkpoint request delivery is
 `requested_unverified`. A nonce- and request-matching worker response is
 `acknowledged_unverified_durability`, which still does not prove durable bytes.

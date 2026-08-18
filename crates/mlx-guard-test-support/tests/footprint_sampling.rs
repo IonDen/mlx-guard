@@ -219,7 +219,7 @@ fn targeted_sampling_still_detects_a_child_that_leaves_the_owned_group() {
     read_phase(&mut output, "ESCAPED");
     let mut sampler = sampler_for(&process, inventory);
     let sample = sampler.sample_native(&inventory, Instant::now()).clone();
-    assert_eq!(sample.escaped_identities.len(), 1);
+    assert!(sample.escape_observed);
     assert!(
         sample
             .members
@@ -555,5 +555,153 @@ fn thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds() {
         max_resident,
         footprint_started,
         final_footprint,
+    );
+}
+
+struct ChurnProcessGroup {
+    process_group_id: i32,
+    child: Child,
+}
+
+impl ChurnProcessGroup {
+    fn spawn(lifetime: Duration) -> Self {
+        let lifetime_seconds = lifetime.as_secs().max(1);
+        let child = Command::new("/bin/sh")
+            .args([
+                "-c",
+                &format!(
+                    "end=$(($(date +%s) + {lifetime_seconds})); \
+                     while [ \"$(date +%s)\" -lt \"$end\" ]; do /bin/sleep 0.05; done"
+                ),
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let process_group_id = child.id().cast_signed();
+        Self {
+            process_group_id,
+            child,
+        }
+    }
+
+    fn root_pid(&self) -> i32 {
+        self.child.id().cast_signed()
+    }
+}
+
+impl Drop for ChurnProcessGroup {
+    fn drop(&mut self) {
+        unsafe {
+            libc::kill(-self.process_group_id, libc::SIGKILL);
+        }
+        self.child.wait().ok();
+    }
+}
+
+const CHURN_DEFAULT_SECONDS: u64 = 30;
+const CHURN_MAX_SECONDS: u64 = 300;
+const CHURN_MAX_RSS_BYTES: u64 = 20 * 1024 * 1024;
+const CHURN_MAX_FOOTPRINT_GROWTH_BYTES: u64 = 4 * 1024 * 1024;
+
+#[test]
+#[ignore = "bounded pid-churn endurance acceptance"]
+fn pid_churn_sampler_rss_stays_bounded_despite_many_distinct_children() {
+    let run_seconds = std::env::var("MLX_GUARD_CHURN_SECONDS")
+        .map_or(CHURN_DEFAULT_SECONDS, |value| value.parse::<u64>().unwrap());
+    assert!((1..=CHURN_MAX_SECONDS).contains(&run_seconds));
+    let warmup = Duration::from_millis(500);
+    let duration = Duration::from_secs(run_seconds);
+    let group = ChurnProcessGroup::spawn(warmup + duration + Duration::from_secs(10));
+    thread::sleep(warmup);
+
+    let inventory = NativeProcessInventory::new();
+    let root = inventory.inspect(group.root_pid()).unwrap().identity;
+    let tracker = IdentityTracker::new(root, group.process_group_id).unwrap();
+    let config = SamplingConfig::new(
+        Duration::from_millis(50),
+        Duration::from_millis(100),
+        Duration::from_millis(50),
+        ENDURANCE_HISTORY_CAPACITY,
+    )
+    .unwrap();
+    let mut sampler = FootprintSampler::new(config, tracker);
+    let epoch = Instant::now();
+
+    let started = Instant::now();
+    let cpu_started = cpu_seconds();
+    let footprint_started = current_footprint_bytes(inventory);
+    let mut max_resident = maximum_resident_bytes();
+    let mut total_samples = 0_u64;
+    let mut distinct_root_samples = 0_u64;
+    let mut next_progress = Duration::from_secs(10);
+    let mut windows = Vec::new();
+
+    while started.elapsed() < duration {
+        let sample = sampler.sample_native(&inventory, epoch);
+        total_samples += 1;
+        if sample
+            .members
+            .iter()
+            .any(|member| member.identity.pid == group.root_pid())
+        {
+            distinct_root_samples += 1;
+        }
+        windows.push(sample.finished_at.checked_sub(sample.started_at).unwrap());
+        if started.elapsed() >= next_progress {
+            let footprint = current_footprint_bytes(inventory);
+            max_resident = max_resident.max(maximum_resident_bytes());
+            eprintln!(
+                "churn elapsed_s={} samples={total_samples} footprint_bytes={footprint} max_rss={}",
+                started.elapsed().as_secs(),
+                max_resident
+            );
+            next_progress += Duration::from_secs(10);
+        }
+        thread::sleep(sampler.delay_until_next(epoch.elapsed()).unwrap());
+    }
+
+    let elapsed = started.elapsed();
+    let cpu_used = cpu_seconds() - cpu_started;
+    let final_footprint = current_footprint_bytes(inventory);
+    max_resident = max_resident.max(maximum_resident_bytes());
+    let cpu_percent = cpu_used / elapsed.as_secs_f64() * 100.0;
+
+    windows.sort_unstable();
+    let p95_index = (windows.len() * 95 / 100).min(windows.len().saturating_sub(1));
+    let p95 = windows[p95_index];
+
+    eprintln!(
+        "churn complete elapsed_s={elapsed_s} total_samples={total_samples} \
+         root_samples={distinct_root_samples} cpu_percent={cpu_percent:.4} \
+         start_footprint={footprint_started} final_footprint={final_footprint} \
+         max_rss={max_resident} p95_window={p95:?}",
+        elapsed_s = elapsed.as_secs()
+    );
+
+    assert!(total_samples >= 10, "too few samples: {total_samples}");
+    assert!(
+        distinct_root_samples > 0,
+        "root was never observed in samples"
+    );
+    assert!(
+        p95 <= Duration::from_millis(10),
+        "p95 sample window too wide: {p95:?}"
+    );
+    assert!(
+        max_resident <= CHURN_MAX_RSS_BYTES,
+        "max_resident={max_resident}"
+    );
+    assert!(
+        final_footprint <= footprint_started.saturating_add(CHURN_MAX_FOOTPRINT_GROWTH_BYTES),
+        "start={footprint_started} final={final_footprint} growth={}",
+        final_footprint.saturating_sub(footprint_started)
+    );
+    assert!(
+        sampler.history_len() <= ENDURANCE_HISTORY_CAPACITY,
+        "history_len={}",
+        sampler.history_len()
     );
 }

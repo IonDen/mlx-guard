@@ -18,7 +18,7 @@ fn complete_sample(sequence: u64, at_ms: u64, total_bytes: u64) -> FootprintSamp
         members: Vec::new(),
         outcome: SampleOutcome::Complete { total_bytes },
         events: Vec::new(),
-        escaped_identities: Vec::new(),
+        escape_observed: false,
     }
 }
 
@@ -34,7 +34,7 @@ fn partial_sample(sequence: u64, at_ms: u64, known_bytes: u64) -> FootprintSampl
             observation_failures: Vec::new(),
         },
         events: Vec::new(),
-        escaped_identities: Vec::new(),
+        escape_observed: false,
     }
 }
 
@@ -112,7 +112,7 @@ fn sub_millisecond_native_window_remains_positive_in_the_millisecond_schema() {
         members: Vec::new(),
         outcome: SampleOutcome::Complete { total_bytes: 100 },
         events: Vec::new(),
-        escaped_identities: Vec::new(),
+        escape_observed: false,
     };
     let mut calibration = ObserveCalibration::new();
 
