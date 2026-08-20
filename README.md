@@ -25,6 +25,9 @@ Version 0.1 is an alpha release.
 pip install mlx-guard
 ```
 
+The CLI also works without a Python project: `uvx mlx-guard …` runs it on demand, and
+`pipx install mlx-guard` keeps it on your PATH.
+
 Wheels cover macOS 11 or newer on Apple Silicon with Python 3.10 through 3.14 and contain the
 precompiled supervisor, so installing needs no Rust toolchain. Building from source needs Rust 1.93
 and maturin.
