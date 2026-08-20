@@ -30,6 +30,12 @@ Common options:
 `run` also accepts `--wall-time DURATION`, capped at 30 days. When present, it is an enforcement
 limit independent of memory.
 
+`run` also accepts `--checkpoint-timeout DURATION`, default `1s`, within `10ms..=60s`: how long a
+requested cooperative checkpoint may wait for the worker's authenticated acknowledgement before
+the supervisor fails closed and sends TERM. Values below `10ms` are shorter than a scheduler
+slice; values above `60s` let a runaway workload keep growing during a requested checkpoint.
+Observe mode rejects the option.
+
 ## Value grammar
 
 Byte values are positive base-10 integers followed by one case-sensitive binary suffix: `B`, `KiB`,

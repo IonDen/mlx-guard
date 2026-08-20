@@ -21,6 +21,7 @@ fn run_golden_freezes_normalized_configuration_and_literal_argv() {
     };
     assert_eq!(run.max_footprint_bytes, 26 * 1024 * 1024 * 1024);
     assert_eq!(run.wall_time, Some(Duration::from_secs(2 * 60 * 60)));
+    assert_eq!(run.checkpoint_timeout, None);
     assert_eq!(run.common.sample_interval, Duration::from_millis(50));
     assert_eq!(
         run.common.report_path,
@@ -107,6 +108,63 @@ fn enforcement_requires_an_explicit_limit_and_mandatory_separator() {
             "1GiB",
             "--",
             "python",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
+fn checkpoint_timeout_is_parsed_bounded_and_enforcement_only() {
+    // Catches losing the explicit acknowledgement bound, accepting a meaningless or unbounded
+    // timeout, or observe mode growing an enforcement-only option.
+    let parsed = parse_cli([
+        "mlx-guard",
+        "run",
+        "--max-footprint",
+        "1GiB",
+        "--checkpoint-timeout",
+        "250ms",
+        "--report",
+        "/private/mlx-guard/report.json",
+        "--",
+        "true",
+    ])
+    .expect("an in-range checkpoint timeout must parse");
+    let CommandMode::Run(run) = parsed.mode else {
+        panic!("expected run mode");
+    };
+    assert_eq!(run.checkpoint_timeout, Some(Duration::from_millis(250)));
+
+    for out_of_range in ["9ms", "61s", "2m"] {
+        let error = parse_cli([
+            "mlx-guard",
+            "run",
+            "--max-footprint",
+            "1GiB",
+            "--checkpoint-timeout",
+            out_of_range,
+            "--report",
+            "/private/mlx-guard/report.json",
+            "--",
+            "true",
+        ])
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("10ms..=60s"),
+            "value {out_of_range}: {error}"
+        );
+    }
+
+    assert!(
+        parse_cli([
+            "mlx-guard",
+            "observe",
+            "--checkpoint-timeout",
+            "1s",
+            "--report",
+            "/private/mlx-guard/report.json",
+            "--",
+            "true",
         ])
         .is_err()
     );

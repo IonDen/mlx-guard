@@ -73,6 +73,9 @@ fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
     assert!(result.stderr.is_empty());
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
     assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
+    // Pins the shipped default: a real cooperative worker missed the former 100 ms bound on the
+    // 3 vCPU CI runner, so the acknowledgement window defaults to one second (see docs/POLICY.md).
+    assert_eq!(report.configuration.checkpoint_timeout_ms, Some(1_000));
     assert_eq!(
         report.checkpoint.status,
         CheckpointStatus::AcknowledgedUnverifiedDurability,
@@ -114,7 +117,7 @@ fn observe_finalizes_on_consecutive_missing_root_samples_without_signaling() {
         FIXTURE,
         "fast-root-exit",
         "1",
-        "500",
+        "1500",
     ])
     .unwrap();
     let started = Instant::now();
@@ -123,14 +126,17 @@ fn observe_finalizes_on_consecutive_missing_root_samples_without_signaling() {
 
     assert_eq!(result.outcome, SupervisorOutcome::SupervisorFailure);
     assert_eq!(result.stderr, "mlx-guard: footprint observation failed\n");
-    assert!(started.elapsed() < Duration::from_millis(300));
+    // Waiting for the surviving child means at least its 1.5 s fixture wall; finalizing on
+    // measurement loss takes tens of milliseconds. One second separates the two with headroom
+    // for the starved 3 vCPU CI runner (the outcome assertions above carry the semantics).
+    assert!(started.elapsed() < Duration::from_secs(1));
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
     assert_eq!(report.outcome.kind, TerminalKind::SupervisorFailure);
     assert!(report.signals.is_empty());
     assert!(report.transitions.iter().any(|transition| {
         transition.from == PolicyState::Observe && transition.to == PolicyState::SupervisorError
     }));
-    std::thread::sleep(Duration::from_millis(550));
+    std::thread::sleep(Duration::from_millis(1_600));
 }
 
 #[test]
@@ -183,6 +189,8 @@ fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
         "1s",
         "--sample-interval",
         "10ms",
+        "--checkpoint-timeout",
+        "100ms",
         "--report",
         report_path.to_str().unwrap(),
         "--",
@@ -198,6 +206,7 @@ fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert!(result.stderr.is_empty());
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
+    assert_eq!(report.configuration.checkpoint_timeout_ms, Some(100));
     assert_eq!(report.checkpoint.status, CheckpointStatus::TimedOut);
     // The blocked worker sleeps 500 ms and then acknowledges (its 3 s argument is only its own
     // watchdog), so TERM must land within those 500 ms of the USR1 request — nominally after the

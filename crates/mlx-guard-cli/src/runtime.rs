@@ -22,7 +22,10 @@ use crate::{CommandMode, CommonOptions, ObserveOptions, ParsedCli, RunOptions, p
 
 const REQUIRED_BREACH_SAMPLES: u32 = 2;
 const MAX_MISSING_SAMPLES: u32 = 3;
-const CHECKPOINT_TIMEOUT: Duration = Duration::from_millis(100);
+// A real cooperative worker on a loaded machine missed the former 100 ms acknowledgement window
+// (observed on the 3 vCPU CI runner); interventions happen under exactly that kind of pressure,
+// so the default matches TERM_GRACE's order of magnitude. `--checkpoint-timeout` overrides it.
+const DEFAULT_CHECKPOINT_TIMEOUT: Duration = Duration::from_secs(1);
 const TERM_GRACE: Duration = Duration::from_secs(1);
 
 /// Complete user-visible result of one parsed command execution.
@@ -1175,7 +1178,11 @@ fn run_policy_config(options: &RunOptions) -> PolicyConfig {
         max_missing_samples: MAX_MISSING_SAMPLES,
         max_sample_age: options.common.sample_interval.saturating_mul(2),
         max_sample_window: options.common.sample_interval,
-        checkpoint_timeout: Some(CHECKPOINT_TIMEOUT),
+        checkpoint_timeout: Some(
+            options
+                .checkpoint_timeout
+                .unwrap_or(DEFAULT_CHECKPOINT_TIMEOUT),
+        ),
         term_grace: TERM_GRACE,
         wall_time: options.wall_time,
     }

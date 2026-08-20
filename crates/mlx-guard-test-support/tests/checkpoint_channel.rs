@@ -61,7 +61,7 @@ fn launch(
     let mut output = BufReader::new(process.take_stdout().unwrap());
     let mut error = process.take_stderr().unwrap();
     channel.begin_negotiation().unwrap();
-    let negotiation_deadline = Instant::now() + Duration::from_millis(500);
+    let negotiation_deadline = Instant::now() + Duration::from_secs(3);
     while !channel.poll_ready().unwrap() {
         if let Some(outcome) = process.try_wait_root().unwrap() {
             let mut message = String::new();
@@ -120,9 +120,9 @@ fn inherited_channel_authenticates_real_worker_completion() {
     // Catches treating signal delivery or stdout text as checkpoint completion.
     let (mut process, _output, mut channel) = launch("checkpoint-success", 1);
     let epoch = Instant::now();
-    request_and_signal(&process, &mut channel, epoch, Duration::from_millis(200));
+    request_and_signal(&process, &mut channel, epoch, Duration::from_secs(2));
 
-    let deadline = Instant::now() + Duration::from_millis(200);
+    let deadline = Instant::now() + Duration::from_secs(2);
     let acknowledgement = loop {
         let poll = channel.poll(epoch.elapsed()).unwrap();
         if let Some(acknowledgement) = poll.acknowledgement {
@@ -149,9 +149,9 @@ fn real_worker_spoof_is_rejected_before_matching_completion() {
     // Catches trusting descriptor possession without checking the per-run nonce.
     let (mut process, _output, mut channel) = launch("checkpoint-spoof", 1);
     let epoch = Instant::now();
-    request_and_signal(&process, &mut channel, epoch, Duration::from_millis(200));
+    request_and_signal(&process, &mut channel, epoch, Duration::from_secs(2));
 
-    let deadline = Instant::now() + Duration::from_millis(200);
+    let deadline = Instant::now() + Duration::from_secs(2);
     let mut saw_spoof = false;
     let mut acknowledged = false;
     while Instant::now() < deadline && !acknowledged {
@@ -181,8 +181,10 @@ fn reserved_checkpoint_descriptor_environment_cannot_be_overridden() {
 
 #[test]
 fn blocked_handler_times_out_without_blocking_the_supervisor() {
-    // Catches a blocking read/join that lets checkpoint work extend the enforcement deadline.
-    let (mut process, _output, mut channel) = launch("checkpoint-blocked", 150);
+    // Catches a blocking read/join that lets checkpoint work extend the enforcement deadline. The
+    // worker blocks for 1.5 s, so a poll that waits on it takes at least that long; a one-second
+    // bound separates it from the protocol declaring the request late on its own clock.
+    let (mut process, _output, mut channel) = launch("checkpoint-blocked", 1_500);
     let epoch = Instant::now();
     request_and_signal(&process, &mut channel, epoch, Duration::from_millis(30));
 
@@ -192,11 +194,11 @@ fn blocked_handler_times_out_without_blocking_the_supervisor() {
         if !poll.rejections.is_empty() {
             break poll;
         }
-        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(started.elapsed() < Duration::from_secs(1));
         std::thread::sleep(Duration::from_millis(1));
     };
     assert_eq!(poll.rejections, [CheckpointRejection::Late]);
-    assert!(started.elapsed() < Duration::from_millis(100));
+    assert!(started.elapsed() < Duration::from_secs(1));
     process.kill_group().unwrap();
     process.wait_root().unwrap();
 }
@@ -213,7 +215,7 @@ fn endpoint_exit_and_protocol_cancellation_are_typed() {
         Duration::from_millis(200),
     );
     exited_process.wait_root().unwrap();
-    let deadline = Instant::now() + Duration::from_millis(100);
+    let deadline = Instant::now() + Duration::from_secs(1);
     loop {
         let poll = exited_channel.poll(epoch.elapsed()).unwrap();
         if poll
@@ -266,9 +268,9 @@ fn bounded_checkpoint_allocation_remains_observable_until_acknowledged() {
         SampleOutcome::Complete { total_bytes } => total_bytes,
         ref outcome => panic!("unexpected baseline: {outcome:?}"),
     };
-    request_and_signal(&process, &mut channel, epoch, Duration::from_millis(200));
+    request_and_signal(&process, &mut channel, epoch, Duration::from_secs(2));
 
-    let deadline = Instant::now() + Duration::from_millis(200);
+    let deadline = Instant::now() + Duration::from_secs(2);
     let mut observed_growth = false;
     let mut acknowledged = false;
     while Instant::now() < deadline && !acknowledged {
