@@ -19,6 +19,8 @@ pub use runtime::{RuntimeResult, execute};
 const MIN_SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_SAMPLE_INTERVAL: Duration = Duration::from_secs(10);
 const MAX_WALL_TIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+const MIN_CHECKPOINT_TIMEOUT: Duration = Duration::from_millis(10);
+const MAX_CHECKPOINT_TIMEOUT: Duration = Duration::from_secs(60);
 
 const fn policy_band_step(limit: u64) -> u64 {
     let tenth = limit / 10;
@@ -55,6 +57,8 @@ pub struct RunOptions {
     pub max_footprint_bytes: u64,
     /// Optional wall-time intervention limit.
     pub wall_time: Option<Duration>,
+    /// Optional cooperative checkpoint acknowledgement timeout override.
+    pub checkpoint_timeout: Option<Duration>,
     /// Options shared with observe-only mode.
     pub common: CommonOptions,
 }
@@ -100,6 +104,7 @@ where
         RawCommand::Run {
             max_footprint_bytes,
             wall_time,
+            checkpoint_timeout,
             common,
         } => {
             if max_footprint_bytes < 2 {
@@ -118,6 +123,7 @@ where
             CommandMode::Run(RunOptions {
                 max_footprint_bytes,
                 wall_time,
+                checkpoint_timeout,
                 common: normalize(common)?,
             })
         }
@@ -278,6 +284,9 @@ enum RawCommand {
         /// Optional wall-time intervention threshold, capped at 30 days.
         #[arg(long, value_parser = parse_wall_time)]
         wall_time: Option<Duration>,
+        /// Cooperative checkpoint acknowledgement timeout (10ms..=60s, default 1s).
+        #[arg(long, value_parser = parse_checkpoint_timeout)]
+        checkpoint_timeout: Option<Duration>,
         /// Launch and sampling options.
         #[command(flatten)]
         common: RawCommon,
@@ -323,6 +332,14 @@ fn parse_wall_time(value: &str) -> Result<Duration, String> {
     let duration = parse_duration(value)?;
     if duration > MAX_WALL_TIME {
         return Err("--wall-time must not exceed 30 days".to_owned());
+    }
+    Ok(duration)
+}
+
+fn parse_checkpoint_timeout(value: &str) -> Result<Duration, String> {
+    let duration = parse_duration(value)?;
+    if !(MIN_CHECKPOINT_TIMEOUT..=MAX_CHECKPOINT_TIMEOUT).contains(&duration) {
+        return Err("--checkpoint-timeout must be within 10ms..=60s".to_owned());
     }
     Ok(duration)
 }

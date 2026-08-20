@@ -49,7 +49,7 @@ impl Drop for TestDirectory {
 
 #[cfg(target_os = "macos")]
 fn wait_for_first_sample(journal_path: &std::path::Path) {
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(3);
     loop {
         if let Ok(recovery) = mlx_guard_core::JournalRecovery::read(journal_path)
             && recovery
@@ -609,7 +609,7 @@ fn late_storage_loss_does_not_stop_wall_time_intervention() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("the command must run");
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(3);
     while !journal_path.exists() {
         assert!(
             Instant::now() < deadline,
@@ -626,7 +626,9 @@ fn late_storage_loss_does_not_stop_wall_time_intervention() {
         String::from_utf8_lossy(&output.stderr),
         "mlx-guard: artifact read failed\n"
     );
-    assert!(started.elapsed() < Duration::from_secs(2));
+    // Waiting out the worker's five-second sleep is the failure this catches; four seconds
+    // separates it from the 100 ms wall intervention with CI scheduler headroom.
+    assert!(started.elapsed() < Duration::from_secs(4));
     assert!(!report_path.exists());
 }
 

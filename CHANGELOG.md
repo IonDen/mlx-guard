@@ -5,7 +5,17 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
-No user-visible changes yet.
+### Added
+
+- `mlx-guard run` accepts `--checkpoint-timeout DURATION` (`10ms..=60s`) to bound how long a
+  requested cooperative checkpoint waits for the worker's authenticated acknowledgement.
+
+### Changed
+
+- The checkpoint acknowledgement timeout default rose from 100ms to 1s. A real cooperative worker
+  on a loaded 3-CPU machine missed the former window, and interventions happen under exactly that
+  kind of pressure. The timeout still fails closed: an unresponsive worker receives TERM when it
+  expires. Pass `--checkpoint-timeout 100ms` to keep the previous behavior.
 
 ## [0.1.0] - 2026-08-12
 

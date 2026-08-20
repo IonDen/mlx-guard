@@ -86,7 +86,7 @@ fn enforcement_policy() -> PolicyMachine {
 }
 
 fn wait_until_gone(pid: i32) {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     while process_exists(pid) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }

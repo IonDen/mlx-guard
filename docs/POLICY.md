@@ -38,9 +38,13 @@ The limit must be at least `2B` so these bands remain strictly ordered. Two cons
 above the limit start the checkpoint or TERM path. Three consecutive unusable samples trigger the
 mode-specific observation failure policy.
 
-The checkpoint acknowledgement timeout is 100ms and TERM grace is one second. Maximum sample age is
-twice `--sample-interval`; maximum collection-window width equals the interval. These values are not
-configurable in v0.1 and are recorded in each report.
+The checkpoint acknowledgement timeout defaults to one second and accepts `--checkpoint-timeout`
+within `10ms..=60s`. The former 100ms default was missed by a real cooperative worker on a loaded
+3-CPU machine, and interventions happen under exactly that kind of pressure; the timeout still
+fails closed, so an unresponsive worker receives TERM when it expires. TERM grace is one second.
+Maximum sample age is twice `--sample-interval`; maximum collection-window width equals the
+interval. TERM grace and the sampling-derived maxima are not configurable. The effective values
+are recorded in each report.
 
 ## Measurement quality and clocks
 

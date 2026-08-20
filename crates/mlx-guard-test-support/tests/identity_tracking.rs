@@ -92,7 +92,7 @@ const fn process_is_zombie(_pid: i32) -> bool {
 }
 
 fn wait_until_gone(pid: i32) {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     while process_exists(pid) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
@@ -235,7 +235,7 @@ fn real_churn_double_fork_and_root_zombie_keep_bound_identities() {
         .unwrap()
         .identity;
     let mut tracker = IdentityTracker::new(root, churn.process_group_id()).unwrap();
-    let deadline = Instant::now() + Duration::from_millis(500);
+    let deadline = Instant::now() + Duration::from_millis(1_800);
     let mut saw_child = false;
     while Instant::now() < deadline && churn.try_wait_root().unwrap().is_none() {
         let frame = tracker.update(inventory.snapshot().unwrap());
@@ -283,7 +283,7 @@ fn real_churn_double_fork_and_root_zombie_keep_bound_identities() {
         .inspect(fast.root_pid().cast_signed())
         .unwrap()
         .identity;
-    let deadline = Instant::now() + Duration::from_secs(1);
+    let deadline = Instant::now() + Duration::from_secs(3);
     let exited = loop {
         let observed = inventory.inspect_expected(root).unwrap();
         if observed.exited || Instant::now() >= deadline {
