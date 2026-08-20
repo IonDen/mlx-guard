@@ -3,6 +3,8 @@
 *A design memo from `mlx-guard`: what an in-process memory guard cannot promise on Apple
 unified memory, and the external supervisor built for the outer ring*
 
+> 📄 [Read on the website](https://ineshin.space/papers/why-the-memory-limit-must-live-outside-the-process/) — same paper, formatted for reading.
+
 An MLX workload that runs away with memory does not fail politely. Unified memory means the
 process, the window server, and the kernel's GPU driver are all drawing from the same pool, and
 a run that reaches the bottom of that pool can end in a paging storm, a frozen machine, or a

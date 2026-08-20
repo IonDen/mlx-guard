@@ -137,7 +137,11 @@ contract below defines one subsystem.
 
 ## Research notes
 
-- [Why the memory limit must live outside the process](https://github.com/IonDen/mlx-guard/blob/main/docs/papers/why-the-memory-limit-must-live-outside-the-process.md)
+One write-up covers the reasoning behind this design in more depth than a README can, including
+the limits the tool cannot clear. It is published at [ineshin.space](https://ineshin.space)
+alongside the rest of my Apple Silicon work, and the source Markdown lives under `docs/papers/`.
+
+- [Why the memory limit must live outside the process](https://ineshin.space/papers/why-the-memory-limit-must-live-outside-the-process/)
   — why an in-process cap or watchdog shares the fate of the process it guards, why the counter a
   workload reads is not the charge the OS applies, what macOS gives a supervisor in place of
   cgroups, and what external supervision still cannot promise, with the measured overhead and
