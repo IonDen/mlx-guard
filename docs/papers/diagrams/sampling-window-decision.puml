@@ -1,0 +1,68 @@
+@startuml
+title One sampling window: what reaches policy, and what stays diagnostics
+
+skinparam backgroundColor #FFFFFF
+skinparam shadowing false
+skinparam roundCorner 10
+skinparam defaultFontName Helvetica
+skinparam defaultFontColor #111827
+skinparam ArrowColor #4B5563
+skinparam ArrowFontColor #374151
+skinparam activity {
+  BorderColor #4B5563
+  FontColor #111827
+  BackgroundColor #F8FAFC
+  DiamondBorderColor #4B5563
+  DiamondBackgroundColor #F8FAFC
+  DiamondFontColor #111827
+}
+
+start
+:Enumerate the owned process group,
+previously tracked identities,
+and public parent-child edges;
+:Inspect each relevant PID:
+proc_pid_rusage, proc_pidinfo,
+proc_pid_rusage again (start-token reuse check);
+
+while (next observation?) is (yes)
+  if (identity validated and live?) then (yes)
+    if (still in the owned group?) then (yes)
+      :Owned member:
+      footprint enters the sum; <<#DBEAFE>>
+    else (no: setsid, left the group)
+      :Escape evidence for the whole run.
+      Excluded from the sum,
+      and the aggregate is not made partial; <<#F3F4F6>>
+    endif
+  else (no)
+    if (confirmed disappearance?) then (yes)
+      :Recorded as an event.
+      Sum unaffected; <<#F3F4F6>>
+    else (no)
+      :Typed failure: stale, denied, malformed,
+      unsupported, or enumeration failure.
+      Aggregate becomes incomplete.
+      PID and failure kind retained; <<#FEF3C7>>
+    endif
+  endif
+endwhile (no more)
+
+:Aggregate over owned members
+(overflow is its own typed result);
+
+if (complete and no overflow,
+clock did not move backwards,
+positive window duration,
+within the maximum window,
+within the freshness limit?) then (all hold)
+  :Numeric aggregate to policy.
+  A threshold comparison is allowed; <<#DCFCE7>>
+else (any fails)
+  :Diagnostics only.
+  Known bytes and missing identities kept,
+  no threshold decision from this window; <<#FEE2E2>>
+endif
+stop
+
+@enduml
