@@ -37,6 +37,12 @@ else
 fi
 
 cd "$repo_root"
+version=$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)
+if [[ -z $version ]]; then
+    echo "workspace version is unavailable" >&2
+    exit 1
+fi
+package_name="mlx_guard-${version}"
 if [[ -z $artifact_dir ]]; then
     "${maturin[@]}" build \
         --release \
@@ -52,7 +58,7 @@ if [[ ${#wheels[@]} -ne 1 ]]; then
     exit 1
 fi
 wheel=${wheels[0]}
-if [[ ${wheel##*/} != mlx_guard-0.1.0-py3-none-macosx_11_0_arm64.whl ]]; then
+if [[ ${wheel##*/} != "${package_name}-py3-none-macosx_11_0_arm64.whl" ]]; then
     echo "unexpected wheel tag: ${wheel##*/}" >&2
     exit 1
 fi
@@ -66,10 +72,10 @@ for required in \
     'mlx_guard/_checkpoint.py' \
     'mlx_guard/_client.py' \
     'mlx_guard/py.typed' \
-    'mlx_guard-0.1.0.data/scripts/mlx-guard' \
-    'mlx_guard-0.1.0.dist-info/licenses/LICENSE' \
-    'mlx_guard-0.1.0.dist-info/licenses/THIRD_PARTY_LICENSES.md' \
-    'mlx_guard-0.1.0.dist-info/sboms/mlx-guard-cli.cyclonedx.json'; do
+    "${package_name}.data/scripts/mlx-guard" \
+    "${package_name}.dist-info/licenses/LICENSE" \
+    "${package_name}.dist-info/licenses/THIRD_PARTY_LICENSES.md" \
+    "${package_name}.dist-info/sboms/mlx-guard-cli.cyclonedx.json"; do
     if ! grep -Fqx "$required" <<<"$wheel_listing"; then
         echo "wheel is missing $required" >&2
         exit 1
@@ -144,20 +150,20 @@ fi
 sdist=${sdists[0]}
 sdist_listing=$(tar -tzf "$sdist")
 for required in \
-    'mlx_guard-0.1.0/LICENSE' \
-    'mlx_guard-0.1.0/CHANGELOG.md' \
-    'mlx_guard-0.1.0/RELEASE_NOTES.md' \
-    'mlx_guard-0.1.0/SECURITY.md' \
-    'mlx_guard-0.1.0/THIRD_PARTY_LICENSES.md' \
-    'mlx_guard-0.1.0/crates/mlx-guard-cli/src/runtime.rs' \
-    'mlx_guard-0.1.0/crates/mlx-guard-core/src/lib.rs' \
-    'mlx_guard-0.1.0/docs/EXAMPLES.md' \
-    'mlx_guard-0.1.0/docs/RELEASE.md' \
-    'mlx_guard-0.1.0/docs/SUPPORT.md' \
-    'mlx_guard-0.1.0/docs/THREAT_MODEL.md' \
-    'mlx_guard-0.1.0/python/mlx_guard/_binary.py' \
-    'mlx_guard-0.1.0/python/mlx_guard/_checkpoint.py' \
-    'mlx_guard-0.1.0/python/mlx_guard/_client.py'; do
+    "${package_name}/LICENSE" \
+    "${package_name}/CHANGELOG.md" \
+    "${package_name}/RELEASE_NOTES.md" \
+    "${package_name}/SECURITY.md" \
+    "${package_name}/THIRD_PARTY_LICENSES.md" \
+    "${package_name}/crates/mlx-guard-cli/src/runtime.rs" \
+    "${package_name}/crates/mlx-guard-core/src/lib.rs" \
+    "${package_name}/docs/EXAMPLES.md" \
+    "${package_name}/docs/RELEASE.md" \
+    "${package_name}/docs/SUPPORT.md" \
+    "${package_name}/docs/THREAT_MODEL.md" \
+    "${package_name}/python/mlx_guard/_binary.py" \
+    "${package_name}/python/mlx_guard/_checkpoint.py" \
+    "${package_name}/python/mlx_guard/_client.py"; do
     if ! grep -Fqx "$required" <<<"$sdist_listing"; then
         echo "source distribution is missing $required" >&2
         exit 1
@@ -182,7 +188,7 @@ sdist_wheel_dir="$proof_root/sdist-wheel"
 mkdir -p "$sdist_source" "$sdist_wheel_dir"
 tar -xzf "$sdist" -C "$sdist_source"
 (
-    cd "$sdist_source/mlx_guard-0.1.0"
+    cd "$sdist_source/${package_name}"
     "${maturin[@]}" build --release --locked --out "$sdist_wheel_dir"
 )
 sdist_wheels=("$sdist_wheel_dir"/*.whl)
