@@ -820,32 +820,47 @@ struct ObserveRuntime {
 impl ObserveRuntime {
     fn run(mut self) -> RuntimeResult {
         let completion = self.sample_until_exit();
-        let (outcome, kind, diagnostic, relinquish) = match completion {
-            ObserveCompletion::Root(root_outcome) => (
-                supervisor_outcome(root_outcome),
-                terminal_kind(root_outcome),
-                None,
-                false,
-            ),
-            ObserveCompletion::ObservationFailure => (
-                SupervisorOutcome::SupervisorFailure,
-                TerminalKind::SupervisorFailure,
-                Some("footprint observation failed".to_owned()),
-                true,
-            ),
-            ObserveCompletion::SupervisorFailure(diagnostic) => (
-                SupervisorOutcome::SupervisorFailure,
-                TerminalKind::SupervisorFailure,
-                Some(diagnostic),
-                true,
-            ),
+        let ObserveFinal {
+            outcome,
+            kind,
+            child_status,
+            owned_group_survivors,
+            diagnostic,
+            relinquish,
+        } = match completion {
+            ObserveCompletion::Root { outcome, survivors } => ObserveFinal {
+                outcome: supervisor_outcome(outcome),
+                kind: terminal_kind(outcome),
+                child_status: Some(ChildStatus::from(outcome)),
+                owned_group_survivors: survivors.then_some(true),
+                diagnostic: survivors.then(|| OBSERVE_SURVIVORS_DIAGNOSTIC.to_owned()),
+                // Observe never signals the command, so survivors must outlive the run instead
+                // of being killed when the owned process is dropped.
+                relinquish: survivors,
+            },
+            ObserveCompletion::ObservationFailure => ObserveFinal {
+                outcome: SupervisorOutcome::SupervisorFailure,
+                kind: TerminalKind::SupervisorFailure,
+                child_status: None,
+                owned_group_survivors: None,
+                diagnostic: Some("footprint observation failed".to_owned()),
+                relinquish: true,
+            },
+            ObserveCompletion::SupervisorFailure(diagnostic) => ObserveFinal {
+                outcome: SupervisorOutcome::SupervisorFailure,
+                kind: TerminalKind::SupervisorFailure,
+                child_status: None,
+                owned_group_survivors: None,
+                diagnostic: Some(diagnostic),
+                relinquish: true,
+            },
         };
         let terminal = TerminalOutcome {
             at_ms: duration_ms(self.started.elapsed()),
             kind,
             final_footprint_bytes: self.final_footprint.clone(),
-            child_status: None,
-            owned_group_survivors: None,
+            child_status,
+            owned_group_survivors,
         };
         self.record_terminal(terminal);
         if relinquish {
@@ -892,10 +907,14 @@ impl ObserveRuntime {
                     return ObserveCompletion::SupervisorFailure(error.to_string());
                 }
             };
-            if let Some(outcome) = self.root_outcome
-                && !group_exists
-            {
-                return ObserveCompletion::Root(outcome);
+            // The root's own exit ends the observation, whether or not owned-group members are
+            // still running; observe reports the survivors rather than waiting for or signalling
+            // them.
+            if let Some(outcome) = self.root_outcome {
+                return ObserveCompletion::Root {
+                    outcome,
+                    survivors: group_exists,
+                };
             }
             if let Err(diagnostic) = self.forward_terminal_signals() {
                 return ObserveCompletion::SupervisorFailure(diagnostic);
@@ -1031,9 +1050,28 @@ impl ObserveRuntime {
 
 #[derive(Debug, Eq, PartialEq)]
 enum ObserveCompletion {
-    Root(RootOutcome),
+    Root {
+        outcome: RootOutcome,
+        /// Whether owned-group members were still running when the root exited.
+        survivors: bool,
+    },
     ObservationFailure,
     SupervisorFailure(String),
+}
+
+/// Stderr diagnostic for an observe run the root ended while owned-group members were alive.
+const OBSERVE_SURVIVORS_DIAGNOSTIC: &str =
+    "observe ended at root exit; owned-group members were still running and were not signalled";
+
+/// What an observe completion determines about the final report and process result.
+struct ObserveFinal {
+    outcome: SupervisorOutcome,
+    kind: TerminalKind,
+    child_status: Option<ChildStatus>,
+    owned_group_survivors: Option<bool>,
+    diagnostic: Option<String>,
+    /// Whether the owned group must be left running instead of killed when the process drops.
+    relinquish: bool,
 }
 
 fn finalize_without_worker(

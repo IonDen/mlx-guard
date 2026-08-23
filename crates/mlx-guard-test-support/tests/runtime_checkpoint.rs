@@ -1,16 +1,18 @@
 #![cfg(target_os = "macos")]
+#![allow(unsafe_code)]
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mlx_guard_cli::{execute, parse_cli};
 use mlx_guard_core::{
-    CheckpointStatus, PolicyState, ReportV1, SignalResult, SignalTarget, SupervisorOutcome,
-    TerminalKind, TerminalSignalMonitor, checkpoint_signal_usr1,
+    CheckpointStatus, ChildStatus, PolicyState, ReportV1, SignalResult, SignalTarget,
+    SupervisorOutcome, TerminalKind, TerminalSignalMonitor, checkpoint_signal_usr1,
 };
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
@@ -40,6 +42,24 @@ impl Drop for TestDirectory {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.0).unwrap();
     }
+}
+
+/// Report whether the pid still names a process this test is allowed to signal.
+fn process_exists(pid: i32) -> bool {
+    // SAFETY: signal zero only probes the fixture pid's liveness and delivers nothing.
+    unsafe {
+        libc::kill(pid, 0) == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+}
+
+/// Wait until the pid is gone, bounded by a deadline rather than a fixed sleep.
+fn wait_until_gone(pid: i32) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while process_exists(pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!process_exists(pid));
 }
 
 #[test]
@@ -101,11 +121,14 @@ fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
 }
 
 #[test]
-fn observe_finalizes_on_consecutive_missing_root_samples_without_signaling() {
-    // Catches observe waiting forever or using cleanup-on-drop to kill after measurement loss.
+fn observe_ends_at_root_exit_leaves_survivors_running_and_reports_it() {
+    // Catches observe treating a root exit as measurement loss, or SIGKILLing the survivor on
+    // drop instead of relinquishing it.
     let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
+    let pid_file = directory.0.join("child.pid");
+    let pid_file_assignment = format!("MLX_GUARD_FIXTURE_PID_FILE={}", pid_file.display());
     let parsed = parse_cli([
         "mlx-guard",
         "observe",
@@ -113,30 +136,53 @@ fn observe_finalizes_on_consecutive_missing_root_samples_without_signaling() {
         "10ms",
         "--report",
         report_path.to_str().unwrap(),
+        "--env",
+        pid_file_assignment.as_str(),
         "--",
         FIXTURE,
         "fast-root-exit",
         "1",
-        "1500",
+        "5000",
     ])
     .unwrap();
-    let started = Instant::now();
 
     let result = execute(parsed);
 
-    assert_eq!(result.outcome, SupervisorOutcome::SupervisorFailure);
-    assert_eq!(result.stderr, "mlx-guard: footprint observation failed\n");
-    // Waiting for the surviving child means at least its 1.5 s fixture wall; finalizing on
-    // measurement loss takes tens of milliseconds. One second separates the two with headroom
-    // for the starved 3 vCPU CI runner (the outcome assertions above carry the semantics).
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_eq!(result.outcome, SupervisorOutcome::ChildExited(23));
+    assert_eq!(
+        result.stderr,
+        "mlx-guard: observe ended at root exit; owned-group members were still running and were \
+         not signalled\n"
+    );
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
-    assert_eq!(report.outcome.kind, TerminalKind::SupervisorFailure);
-    assert!(report.signals.is_empty());
-    assert!(report.transitions.iter().any(|transition| {
-        transition.from == PolicyState::Observe && transition.to == PolicyState::SupervisorError
-    }));
-    std::thread::sleep(Duration::from_millis(1_600));
+    assert_eq!(report.outcome.kind, TerminalKind::ChildExited { code: 23 });
+    assert_eq!(
+        report.outcome.child_status,
+        Some(ChildStatus::Exited { code: 23 })
+    );
+    assert_eq!(report.outcome.owned_group_survivors, Some(true));
+    assert!(report.signals.is_empty(), "{report:#?}");
+    assert!(
+        report
+            .transitions
+            .iter()
+            .all(|transition| transition.to != PolicyState::SupervisorError),
+        "{report:#?}"
+    );
+    let child: i32 = fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    // SAFETY: signal zero only probes the surviving fixture child and delivers nothing.
+    assert_eq!(
+        unsafe { libc::kill(child, 0) },
+        0,
+        "survivor must still be alive"
+    );
+    // SAFETY: the pid names this test's own fixture descendant, which the test now cleans up.
+    unsafe { libc::kill(child, libc::SIGKILL) };
+    wait_until_gone(child);
 }
 
 #[test]
