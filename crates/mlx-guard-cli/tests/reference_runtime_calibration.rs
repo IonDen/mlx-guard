@@ -9,8 +9,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mlx_guard_core::{
-    CheckpointStatus, JournalEntry, JournalRecovery, Observed, PolicyState, ReportV1, SignalTarget,
-    TerminalKind,
+    CheckpointStatus, ChildStatus, JournalEntry, JournalRecovery, Observed, PolicyState, ReportV1,
+    SignalReason, SignalTarget, TerminalKind,
 };
 use serde::Serialize;
 
@@ -590,13 +590,17 @@ fn reference_host_scenarios_write_reports_and_false_intervention_count() {
         ],
         &fixture_worker("fast-root-exit", 1, 500),
     );
-    assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
+    assert_eq!(report.outcome.kind, TerminalKind::ChildExited { code: 23 });
     assert_eq!(owned_group_signals(&report), [15]);
     assert!(
-        report
+        !report
             .transitions
             .iter()
             .any(|transition| transition.to == PolicyState::SupervisorError)
+    );
+    assert_eq!(
+        report.outcome.child_status,
+        Some(ChildStatus::Exited { code: 23 })
     );
     scenarios.push(fast_root);
 
@@ -674,7 +678,11 @@ fn reference_host_scenarios_write_reports_and_false_intervention_count() {
     let mut false_interventions = 0;
     for (name, mode_args, worker) in safe_cases {
         let (record, report) = scenario_record(&output_directory, name, &mode_args, &worker);
-        if report.outcome.kind == TerminalKind::PolicyIntervention || !report.signals.is_empty() {
+        let unexpected_signal = report
+            .signals
+            .iter()
+            .any(|signal| signal.reason != Some(SignalReason::RootExitCleanup));
+        if report.outcome.kind == TerminalKind::PolicyIntervention || unexpected_signal {
             false_interventions += 1;
         }
         assert_eq!(report.outcome.kind, TerminalKind::ChildExited { code: 0 });

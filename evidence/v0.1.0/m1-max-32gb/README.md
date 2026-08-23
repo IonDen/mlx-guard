@@ -41,6 +41,9 @@ acknowledged checkpoint, checkpoint timeout, TERM, KILL, storage loss, fast root
 cleanup, and session escape. The accompanying `reports/` directory contains the final reports and
 durable journals. Four safe workloads completed with zero false interventions.
 
+The `root-fast-exit` scenario records 0.1.0 behavior (measurement-loss fail-closed, exit 75); from
+0.2.0 the same scenario ends with the root's status after survivor cleanup — see the 0.2.0 bundle.
+
 ## Safety limits and rerun
 
 Synthetic fixtures were capped at 128 MiB aggregate and 10 seconds. The Metal calibration used a
