@@ -61,10 +61,11 @@ pub use process_control::{
 pub use report::{
     AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
     AdvisorySource, ArtifactErrorCode, ArtifactErrorRecord, Capabilities, CapturePolicy,
-    CheckpointRecord, CheckpointStatus, EscapeEvidence, MemoryPressureLevel, ObservationError,
-    Observed, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode,
-    ReportV1, RetentionPolicy, RunIdentity, SampleWindow, SignalRecord, SignalResult, SignalTarget,
-    TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason, UploadPolicy,
+    CheckpointRecord, CheckpointStatus, ChildStatus, EscapeEvidence, MemoryPressureLevel,
+    ObservationError, Observed, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration,
+    ReportError, ReportMode, ReportV1, RetentionPolicy, RunIdentity, SampleWindow, SignalReason,
+    SignalRecord, SignalResult, SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord,
+    UnavailableReason, UploadPolicy,
 };
 #[cfg(unix)]
 pub use sampling::{

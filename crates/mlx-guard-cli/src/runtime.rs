@@ -13,9 +13,9 @@ use mlx_guard_core::{
     ObserveCalibration, Observed, OwnedProcess, PersistenceAttempt, PlatformSupport, PolicyConfig,
     PolicyMachine, PrivacyDefaults, ProcessInterventionActuator, REPORT_SCHEMA_VERSION,
     ReportConfiguration, ReportMode, ResilientJournal, RootOutcome, RunIdentity, SamplingConfig,
-    SecureJournal, SignalRecord, SignalResult, SignalTarget, StdioMode, SupervisorOutcome,
-    TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason,
-    VERSION, checkpoint_signal_usr1, platform_support,
+    SecureJournal, SignalReason, SignalRecord, SignalResult, SignalTarget, StdioMode,
+    SupervisorOutcome, TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord,
+    UnavailableReason, VERSION, checkpoint_signal_usr1, platform_support,
 };
 
 use crate::{CommandMode, CommonOptions, ObserveOptions, ParsedCli, RunOptions, policy_band_step};
@@ -461,6 +461,8 @@ impl RunRuntime<'_> {
             at_ms: duration_ms(at),
             kind,
             final_footprint_bytes: self.final_footprint.clone(),
+            child_status: None,
+            owned_group_survivors: None,
         };
         self.record_terminal(terminal);
         let notice = self.journal.stderr_notice();
@@ -795,6 +797,8 @@ impl ObserveRuntime {
             at_ms: duration_ms(self.started.elapsed()),
             kind,
             final_footprint_bytes: self.final_footprint.clone(),
+            child_status: None,
+            owned_group_survivors: None,
         };
         self.record_terminal(terminal);
         if relinquish {
@@ -884,6 +888,7 @@ impl ObserveRuntime {
                     signal: delivered_signal,
                     target: SignalTarget::OwnedProcessGroup,
                     result,
+                    reason: Some(SignalReason::ExternalSignal),
                 }),
                 JournalDurability::Sync,
             );
@@ -1020,6 +1025,8 @@ fn finalize_without_worker(
         at_ms: 0,
         kind,
         final_footprint_bytes: Observed::Unknown,
+        child_status: None,
+        owned_group_survivors: None,
     };
     let is_child_exit = matches!(
         outcome,
@@ -1248,6 +1255,7 @@ fn signal_record(
         signal,
         target,
         result,
+        reason: None,
     })
 }
 

@@ -36,6 +36,8 @@ fn record(sequence: u64) -> JournalRecord {
             final_footprint_bytes: mlx_guard_core::Observed::Unavailable {
                 reason: mlx_guard_core::UnavailableReason::NotApplicable,
             },
+            child_status: None,
+            owned_group_survivors: None,
         }),
     )
 }
