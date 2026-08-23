@@ -751,6 +751,10 @@ fn run_preserves_nonzero_exit_status_when_child_exits_before_identity_inspection
         report.outcome.kind,
         mlx_guard_core::TerminalKind::ChildExited { code: 1 }
     );
+    assert_eq!(
+        report.outcome.child_status,
+        Some(mlx_guard_core::ChildStatus::Exited { code: 1 })
+    );
     assert!(report.signals.is_empty());
 }
 

@@ -6,18 +6,22 @@ use std::time::{Duration, Instant};
 
 use mlx_guard_core::{
     Actuation, ActuationFailure, ActuationOutcome, Capabilities, CheckpointBinding,
-    CheckpointChannel, CheckpointNonce, CheckpointRecord, CheckpointStatus,
-    CheckpointWorkerEndpoint, ClientReady, EscapeEvidence, Event, FootprintSampler,
-    IdentityTracker, InterventionEngine, JournalDurability, JournalEntry, JournalHeader,
-    JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver, NativeProcessInventory,
-    ObserveCalibration, Observed, OwnedProcess, PersistenceAttempt, PlatformSupport, PolicyConfig,
-    PolicyMachine, PrivacyDefaults, ProcessInterventionActuator, REPORT_SCHEMA_VERSION,
-    ReportConfiguration, ReportMode, ResilientJournal, RootOutcome, RunIdentity, SamplingConfig,
-    SecureJournal, SignalReason, SignalRecord, SignalResult, SignalTarget, StdioMode,
-    SupervisorOutcome, TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord,
-    UnavailableReason, VERSION, checkpoint_signal_usr1, platform_support,
+    CheckpointChannel, CheckpointDisposition, CheckpointNonce, CheckpointRecord, CheckpointStatus,
+    CheckpointWorkerEndpoint, ChildStatus, ClientReady, EscapeEvidence, Event, FootprintSampler,
+    IdentityTracker, InterventionEngine, InterventionRecord, JournalDurability, JournalEntry,
+    JournalHeader, JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver,
+    NativeProcessInventory, ObserveCalibration, Observed, OwnedProcess, PersistenceAttempt,
+    PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults,
+    ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode,
+    ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal, SignalReason,
+    SignalRecord, SignalResult, SignalTarget, StdioMode, SupervisorOutcome, TerminalKind,
+    TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason, VERSION,
+    checkpoint_signal_usr1, platform_support,
 };
 
+use crate::completion::{
+    Completion, CompletionInputs, complete, supervisor_outcome, terminal_kind,
+};
 use crate::{CommandMode, CommonOptions, ObserveOptions, ParsedCli, RunOptions, policy_band_step};
 
 const REQUIRED_BREACH_SAMPLES: u32 = 2;
@@ -283,6 +287,10 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
         final_footprint: Observed::Unknown,
         escape_detected: false,
         intervention_started: false,
+        root_exit_applied: false,
+        supervisor_error: None,
+        intervention_cause: None,
+        shutdown_reason: None,
     };
     ready.notify();
     runtime.run()
@@ -424,44 +432,48 @@ struct RunRuntime<'a> {
     root_outcome: Option<RootOutcome>,
     final_footprint: Observed<u64>,
     escape_detected: bool,
+    /// Whether a counted intervention attempt has been made against the owned group.
     intervention_started: bool,
+    /// Whether owned-group survivor cleanup has already been requested for this run.
+    root_exit_applied: bool,
+    /// Diagnostic latched the first time the policy machine failed closed.
+    supervisor_error: Option<&'static str>,
+    /// Whether the footprint limit or the wall limit opened the current intervention.
+    intervention_cause: Option<SignalReason>,
+    /// Why the shutdown sequence in flight was started.
+    shutdown_reason: Option<SignalReason>,
 }
 
 impl RunRuntime<'_> {
     fn run(mut self) -> RuntimeResult {
         let completion = self.sample_until_exit();
         let at = self.started.elapsed();
-        let (outcome, kind, diagnostic) = match completion {
-            RunCompletion::Root(root_outcome) => {
+        let supervisor_failure = match completion {
+            RunCompletion::Root(_) => {
                 self.apply_event(Event::ProcessExited {
                     at,
                     final_footprint_bytes: observed_value(&self.final_footprint),
                 });
-                if self.intervention_started {
-                    (
-                        SupervisorOutcome::PolicyIntervention,
-                        TerminalKind::PolicyIntervention,
-                        None,
-                    )
-                } else {
-                    (
-                        supervisor_outcome(root_outcome),
-                        terminal_kind(root_outcome),
-                        None,
-                    )
-                }
+                None
             }
-            RunCompletion::SupervisorFailure(diagnostic) => (
-                SupervisorOutcome::SupervisorFailure,
-                TerminalKind::SupervisorFailure,
-                Some(diagnostic),
-            ),
+            RunCompletion::SupervisorFailure(diagnostic) => Some(diagnostic),
         };
+        let Completion {
+            outcome,
+            kind,
+            child_status,
+            diagnostic,
+        } = complete(CompletionInputs {
+            root_outcome: self.root_outcome,
+            intervention_started: self.intervention_started,
+            supervisor_error: self.supervisor_error,
+            supervisor_failure,
+        });
         let terminal = TerminalOutcome {
             at_ms: duration_ms(at),
             kind,
             final_footprint_bytes: self.final_footprint.clone(),
-            child_status: None,
+            child_status,
             owned_group_survivors: None,
         };
         self.record_terminal(terminal);
@@ -506,6 +518,18 @@ impl RunRuntime<'_> {
                 && !group_exists
             {
                 return RunCompletion::Root(outcome);
+            }
+            // The root command is gone but the group it owns is not. Drain the checkpoint socket
+            // first so an acknowledgement already in flight is not lost, then ask the policy
+            // machine to clean the survivors up. The machine latches its own intervention flag, so
+            // samples of the departed root degrade to missing observations instead of failing the
+            // supervisor closed.
+            if self.root_outcome.is_some() && group_exists && !self.root_exit_applied {
+                self.root_exit_applied = true;
+                self.poll_checkpoint_channel();
+                self.apply_event(Event::RootExited {
+                    at: self.started.elapsed(),
+                });
             }
 
             self.poll_checkpoint_channel();
@@ -571,7 +595,7 @@ impl RunRuntime<'_> {
             CheckpointNegotiation::Unavailable => return,
         }
         if self.checkpoint_negotiation == CheckpointNegotiation::Ready
-            && self.engine.policy().state() == mlx_guard_core::PolicyState::CheckpointRequested
+            && self.engine.policy().state() == PolicyState::CheckpointRequested
         {
             match self.engine.actuator_mut().poll_checkpoint(now) {
                 Ok(observation) => {
@@ -614,7 +638,16 @@ impl RunRuntime<'_> {
     }
 
     fn apply_event(&mut self, event: Event) {
-        let external_signal = matches!(event, Event::ExternalSignal { .. });
+        // A forwarded terminal signal and post-exit survivor cleanup are both asked for by the
+        // world rather than chosen by the footprint or wall policy, so neither may claim the run's
+        // exit status. Anything they later escalate into still counts.
+        let uncounted = matches!(
+            event,
+            Event::ExternalSignal { .. } | Event::RootExited { .. }
+        );
+        if let Some(reason) = shutdown_reason_for(&event) {
+            self.shutdown_reason = Some(reason);
+        }
         if let Event::CheckpointAck {
             at,
             authenticated: true,
@@ -624,15 +657,39 @@ impl RunRuntime<'_> {
             self.checkpoint_status = CheckpointStatus::AcknowledgedUnverifiedDurability;
             self.checkpoint_at_ms = Some(duration_ms(*at));
         }
+        let new_records = self.handle_event(event);
+        self.intervention_started |= !uncounted && !new_records.is_empty();
+        self.record_actuations(&new_records);
+    }
+
+    /// Apply one event to the policy machine, persisting every transition it causes, and return
+    /// the intervention attempts that were executed for it.
+    fn handle_event(&mut self, event: Event) -> Vec<InterventionRecord> {
+        let event_cause = intervention_cause_for(&event);
+        let error_diagnostic = supervisor_error_diagnostic(&event);
         let previous_attempts = self.engine.evidence().total_attempts;
         let final_footprint = observed_value(&self.final_footprint);
         let Self {
             engine,
             journal,
             sequence,
+            intervention_cause,
+            supervisor_error,
             ..
         } = self;
         let _ = engine.handle_with_transition_observer(event, |at, from, to| {
+            if intervention_cause.is_none()
+                && matches!(from, PolicyState::Normal | PolicyState::Warning)
+                && matches!(
+                    to,
+                    PolicyState::CheckpointRequested | PolicyState::Terminating
+                )
+            {
+                *intervention_cause = event_cause;
+            }
+            if to == PolicyState::SupervisorError && supervisor_error.is_none() {
+                *supervisor_error = Some(error_diagnostic);
+            }
             record_resilient(
                 journal,
                 sequence,
@@ -649,53 +706,41 @@ impl RunRuntime<'_> {
             .evidence()
             .total_attempts
             .saturating_sub(previous_attempts);
-        self.intervention_started |= !external_signal && new_attempts > 0;
         let records = engine.evidence().records();
         let new_record_count = usize::try_from(new_attempts).unwrap_or(usize::MAX);
         let start = records.len().saturating_sub(new_record_count);
-        let new_records = records.iter().skip(start).copied().collect::<Vec<_>>();
-        let signals = new_records
-            .iter()
-            .filter_map(|record| {
-                signal_record(
-                    record.requested_at,
-                    record.action,
-                    record.result,
-                    Some(checkpoint_signal_usr1().get()),
-                )
-            })
-            .collect::<Vec<_>>();
+        records.iter().skip(start).copied().collect()
+    }
+
+    /// Record one signal per executed attempt, carrying the reason it was requested.
+    fn record_actuations(&mut self, new_records: &[InterventionRecord]) {
         for record in new_records {
-            match (record.action, record.result) {
-                (Actuation::Checkpoint { .. }, Ok(ActuationOutcome::Delivered)) => {
-                    self.checkpoint_status = CheckpointStatus::RequestedUnverified;
-                    self.checkpoint_at_ms = Some(duration_ms(record.requested_at));
-                }
-                (
-                    Actuation::Term {
-                        checkpoint: mlx_guard_core::CheckpointDisposition::TimedOut,
-                    },
-                    _,
-                ) => {
-                    self.checkpoint_status = CheckpointStatus::TimedOut;
-                    self.checkpoint_at_ms = Some(duration_ms(record.requested_at));
-                }
-                (Actuation::Checkpoint { .. }, Err(_))
-                    if self.checkpoint_negotiation == CheckpointNegotiation::Ready =>
-                {
-                    self.checkpoint_status = CheckpointStatus::Cancelled;
-                    self.checkpoint_at_ms = Some(duration_ms(record.requested_at));
-                }
-                _ => {}
+            let reason =
+                actuation_reason(record.action, self.intervention_cause, self.shutdown_reason);
+            // A TERM or a forwarded signal opens the shutdown a later KILL escalates.
+            if matches!(
+                record.action,
+                Actuation::Term { .. } | Actuation::ForwardSignal(_)
+            ) {
+                self.shutdown_reason = reason;
             }
-        }
-        for signal in signals {
-            record_resilient(
-                journal,
-                sequence,
-                JournalEntry::Signal(signal),
-                JournalDurability::Sync,
-            );
+            if let Some(status) = checkpoint_progress(
+                record.action,
+                record.result,
+                self.checkpoint_negotiation == CheckpointNegotiation::Ready,
+            ) {
+                self.checkpoint_status = status;
+                self.checkpoint_at_ms = Some(duration_ms(record.requested_at));
+            }
+            if let Some(signal) = signal_record(
+                record.requested_at,
+                record.action,
+                record.result,
+                Some(checkpoint_signal_usr1().get()),
+                reason,
+            ) {
+                self.record(JournalEntry::Signal(signal), JournalDurability::Sync);
+            }
         }
     }
 
@@ -932,7 +977,7 @@ impl ObserveRuntime {
                 JournalDurability::Sync,
             );
         }
-        self.observation_failed = current_state == mlx_guard_core::PolicyState::SupervisorError;
+        self.observation_failed = current_state == PolicyState::SupervisorError;
     }
 
     fn record_terminal(&mut self, outcome: TerminalOutcome) {
@@ -989,22 +1034,6 @@ enum ObserveCompletion {
     SupervisorFailure(String),
 }
 
-fn supervisor_outcome(outcome: RootOutcome) -> SupervisorOutcome {
-    match outcome {
-        RootOutcome::Exited(code) => SupervisorOutcome::ChildExited(code),
-        RootOutcome::Signaled(signal) => SupervisorOutcome::ChildSignaled(signal),
-    }
-}
-
-fn terminal_kind(outcome: RootOutcome) -> TerminalKind {
-    match outcome {
-        RootOutcome::Exited(code) => TerminalKind::ChildExited { code },
-        RootOutcome::Signaled(signal) => TerminalKind::ChildSignaled {
-            signal: signal.get(),
-        },
-    }
-}
-
 fn finalize_without_worker(
     mut journal: SecureJournal,
     mut sequence: u64,
@@ -1021,11 +1050,20 @@ fn finalize_without_worker(
         },
         _ => TerminalKind::SupervisorFailure,
     };
+    // A child that exited before the supervisor could bind its identity still has a real status,
+    // and it is the only status this run will ever observe.
+    let child_status = match outcome {
+        SupervisorOutcome::ChildExited(code) => Some(ChildStatus::Exited { code }),
+        SupervisorOutcome::ChildSignaled(signal) => Some(ChildStatus::Signaled {
+            signal: signal.get(),
+        }),
+        _ => None,
+    };
     let terminal = TerminalOutcome {
         at_ms: 0,
         kind,
         final_footprint_bytes: Observed::Unknown,
-        child_status: None,
+        child_status,
         owned_group_survivors: None,
     };
     let is_child_exit = matches!(
@@ -1217,11 +1255,97 @@ fn observed_value(value: &Observed<u64>) -> Option<u64> {
     }
 }
 
+/// Return the shutdown reason an event establishes before the policy machine decides anything.
+fn shutdown_reason_for(event: &Event) -> Option<SignalReason> {
+    match event {
+        Event::ExternalSignal { .. } => Some(SignalReason::ExternalSignal),
+        Event::RootExited { .. } => Some(SignalReason::RootExitCleanup),
+        _ => None,
+    }
+}
+
+/// Return the explicit limit whose breach an event can open an intervention for.
+fn intervention_cause_for(event: &Event) -> Option<SignalReason> {
+    match event {
+        Event::Sample(_) => Some(SignalReason::Footprint),
+        Event::Tick { .. } => Some(SignalReason::WallTime),
+        _ => None,
+    }
+}
+
+/// Name the failure that made the policy machine fail closed on this event.
+fn supervisor_error_diagnostic(event: &Event) -> &'static str {
+    match event {
+        Event::Sample(_) => "footprint observation failed",
+        Event::ActuationFailed { .. } => "signal delivery failed",
+        Event::SupervisorFault { .. } => "supervisor fault",
+        _ => "supervision failed closed",
+    }
+}
+
+/// Derive why one executed actuation was requested.
+///
+/// A TERM's checkpoint disposition names every non-policy cause exactly; the remaining
+/// dispositions escalate whichever explicit limit opened the intervention.
+fn actuation_reason(
+    action: Actuation,
+    intervention_cause: Option<SignalReason>,
+    shutdown_reason: Option<SignalReason>,
+) -> Option<SignalReason> {
+    match action {
+        Actuation::Checkpoint { .. } => intervention_cause,
+        Actuation::Term { checkpoint } => match checkpoint {
+            CheckpointDisposition::SkippedRootExited => Some(SignalReason::RootExitCleanup),
+            CheckpointDisposition::SkippedObservationFailure => {
+                Some(SignalReason::ObservationFailure)
+            }
+            CheckpointDisposition::SkippedSupervisorFailure => Some(SignalReason::SupervisorFault),
+            CheckpointDisposition::AcknowledgedUnverifiedDurability
+            | CheckpointDisposition::TimedOut
+            | CheckpointDisposition::SkippedCheckpointFailure
+            | CheckpointDisposition::SkippedNotNegotiated => intervention_cause,
+        },
+        Actuation::ForwardSignal(_) => Some(SignalReason::ExternalSignal),
+        // A KILL only ever escalates a shutdown that is already under way, so it inherits that
+        // shutdown's reason instead of inventing one of its own.
+        Actuation::Kill => shutdown_reason,
+    }
+}
+
+/// Return the checkpoint status one executed actuation proves, or `None` to leave it unchanged.
+fn checkpoint_progress(
+    action: Actuation,
+    result: Result<ActuationOutcome, ActuationFailure>,
+    negotiated: bool,
+) -> Option<CheckpointStatus> {
+    match action {
+        Actuation::Checkpoint { .. } => match result {
+            Ok(ActuationOutcome::Delivered) => Some(CheckpointStatus::RequestedUnverified),
+            Ok(ActuationOutcome::ProcessMissing) => None,
+            // A failed request cancels only a checkpoint that was actually negotiated.
+            Err(_) => negotiated.then_some(CheckpointStatus::Cancelled),
+        },
+        Actuation::Term { checkpoint } => match checkpoint {
+            CheckpointDisposition::TimedOut => Some(CheckpointStatus::TimedOut),
+            // Cleaning up owned-group survivors after the root already exited reports nothing
+            // about the cooperative endpoint, so the negotiated status stays exactly as it was.
+            CheckpointDisposition::SkippedRootExited
+            | CheckpointDisposition::AcknowledgedUnverifiedDurability
+            | CheckpointDisposition::SkippedCheckpointFailure
+            | CheckpointDisposition::SkippedObservationFailure
+            | CheckpointDisposition::SkippedSupervisorFailure
+            | CheckpointDisposition::SkippedNotNegotiated => None,
+        },
+        Actuation::Kill | Actuation::ForwardSignal(_) => None,
+    }
+}
+
 fn signal_record(
     at: Duration,
     action: Actuation,
     result: Result<ActuationOutcome, ActuationFailure>,
     checkpoint_signal: Option<u8>,
+    reason: Option<SignalReason>,
 ) -> Option<SignalRecord> {
     let (signal, target) = match action {
         Actuation::Checkpoint { .. } => {
@@ -1255,7 +1379,7 @@ fn signal_record(
         signal,
         target,
         result,
-        reason: None,
+        reason,
     })
 }
 
