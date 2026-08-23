@@ -42,8 +42,13 @@ impl Drop for TestDirectory {
     }
 }
 
-/// Supervise one fixture command and return both the process result and its final report.
+/// Supervise one fixture command under a limit no fixture can reach.
 fn run_report(extra: &[&str]) -> (RuntimeResult, ReportV1) {
+    run_report_under_limit("1TiB", extra)
+}
+
+/// Supervise one fixture command and return both the process result and its final report.
+fn run_report_under_limit(max_footprint: &str, extra: &[&str]) -> (RuntimeResult, ReportV1) {
     let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
@@ -51,7 +56,7 @@ fn run_report(extra: &[&str]) -> (RuntimeResult, ReportV1) {
         "mlx-guard",
         "run",
         "--max-footprint",
-        "1TiB",
+        max_footprint,
         "--sample-interval",
         "10ms",
         "--report",
@@ -231,6 +236,33 @@ fn a_hung_handshake_fails_the_checkpoint_request_and_terms_with_the_wall_reason(
     assert_eq!(
         reasons(&report),
         [(15, Some(SignalReason::WallTime))],
+        "{report:#?}"
+    );
+}
+
+#[test]
+fn an_emergency_band_breach_kills_at_once_and_names_the_footprint() {
+    // Catches the headline scenario recording a SIGKILL with no cause: an emergency-band breach
+    // escalates no earlier signal, so the KILL must carry the footprint that opened it.
+    // Every real process is far above the 3 B emergency band of a 2 B limit, so the first sample
+    // decides this deterministically.
+    let (result, report) = run_report_under_limit("2B", &["--", FIXTURE, "cpu-stall", "1", "2000"]);
+
+    assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
+    assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
+    assert_eq!(
+        report.outcome.child_status,
+        Some(ChildStatus::Signaled { signal: 9 })
+    );
+    assert!(
+        report.transitions.iter().any(|transition| {
+            transition.from == PolicyState::Normal && transition.to == PolicyState::Emergency
+        }),
+        "{report:#?}"
+    );
+    assert_eq!(
+        reasons(&report),
+        [(9, Some(SignalReason::Footprint))],
         "{report:#?}"
     );
 }

@@ -678,11 +678,15 @@ impl RunRuntime<'_> {
             ..
         } = self;
         let _ = engine.handle_with_transition_observer(event, |at, from, to| {
+            // An emergency-band breach skips the graceful path entirely, so the cause has to be
+            // latched on the way into `Emergency` as well or its KILL would carry no reason.
             if intervention_cause.is_none()
                 && matches!(from, PolicyState::Normal | PolicyState::Warning)
                 && matches!(
                     to,
-                    PolicyState::CheckpointRequested | PolicyState::Terminating
+                    PolicyState::CheckpointRequested
+                        | PolicyState::Terminating
+                        | PolicyState::Emergency
                 )
             {
                 *intervention_cause = event_cause;
@@ -717,11 +721,9 @@ impl RunRuntime<'_> {
         for record in new_records {
             let reason =
                 actuation_reason(record.action, self.intervention_cause, self.shutdown_reason);
-            // A TERM or a forwarded signal opens the shutdown a later KILL escalates.
-            if matches!(
-                record.action,
-                Actuation::Term { .. } | Actuation::ForwardSignal(_)
-            ) {
+            // Every signal sent to the owned group is the shutdown in flight; a cooperative
+            // checkpoint request is not, so it never relabels one.
+            if !matches!(record.action, Actuation::Checkpoint { .. }) {
                 self.shutdown_reason = reason;
             }
             if let Some(status) = checkpoint_progress(
@@ -1306,9 +1308,9 @@ fn actuation_reason(
             | CheckpointDisposition::SkippedNotNegotiated => intervention_cause,
         },
         Actuation::ForwardSignal(_) => Some(SignalReason::ExternalSignal),
-        // A KILL only ever escalates a shutdown that is already under way, so it inherits that
-        // shutdown's reason instead of inventing one of its own.
-        Actuation::Kill => shutdown_reason,
+        // A KILL usually escalates a shutdown already under way and inherits its reason. An
+        // emergency-band KILL escalates nothing, so it falls back to the limit that opened it.
+        Actuation::Kill => shutdown_reason.or(intervention_cause),
     }
 }
 
@@ -1457,4 +1459,284 @@ fn run_identity(common: &CommonOptions) -> Result<RunIdentity, ()> {
 
 fn duration_ms(value: Duration) -> u64 {
     u64::try_from(value.as_millis()).unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use mlx_guard_core::{
+        Actuation, ActuationFailure, ActuationKind, ActuationOutcome, CheckpointDisposition,
+        CheckpointStatus, Event, SampleEvent, SignalNumber, SignalReason,
+    };
+
+    use super::{
+        actuation_reason, checkpoint_progress, intervention_cause_for, shutdown_reason_for,
+        supervisor_error_diagnostic,
+    };
+
+    fn sample() -> Event {
+        Event::Sample(SampleEvent {
+            captured_at: Duration::from_millis(10),
+            processed_at: Duration::from_millis(11),
+            window: Duration::from_millis(1),
+            aggregate_bytes: Some(4096),
+        })
+    }
+
+    fn tick() -> Event {
+        Event::Tick {
+            at: Duration::from_millis(11),
+        }
+    }
+
+    #[test]
+    fn only_an_external_signal_or_a_root_exit_opens_a_shutdown_before_the_policy_decides() {
+        // Catches a sample or tick pre-labelling a shutdown the policy machine has not chosen yet.
+        assert_eq!(
+            shutdown_reason_for(&Event::ExternalSignal {
+                at: Duration::from_millis(11),
+                signal: SignalNumber::new(15).unwrap(),
+            }),
+            Some(SignalReason::ExternalSignal)
+        );
+        assert_eq!(
+            shutdown_reason_for(&Event::RootExited {
+                at: Duration::from_millis(11),
+            }),
+            Some(SignalReason::RootExitCleanup)
+        );
+        assert_eq!(shutdown_reason_for(&sample()), None);
+        assert_eq!(shutdown_reason_for(&tick()), None);
+    }
+
+    #[test]
+    fn a_measurement_opens_a_footprint_intervention_and_a_tick_opens_a_wall_one() {
+        // Catches attributing every intervention to whichever limit was checked most recently.
+        assert_eq!(
+            intervention_cause_for(&sample()),
+            Some(SignalReason::Footprint)
+        );
+        assert_eq!(
+            intervention_cause_for(&tick()),
+            Some(SignalReason::WallTime)
+        );
+        assert_eq!(
+            intervention_cause_for(&Event::RootExited {
+                at: Duration::from_millis(11),
+            }),
+            None
+        );
+        assert_eq!(
+            intervention_cause_for(&Event::SupervisorFault {
+                at: Duration::from_millis(11),
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn every_way_of_failing_closed_names_the_failure_that_caused_it() {
+        // Catches one generic diagnostic standing in for measurement, delivery, and fault failures.
+        assert_eq!(
+            supervisor_error_diagnostic(&sample()),
+            "footprint observation failed"
+        );
+        assert_eq!(
+            supervisor_error_diagnostic(&Event::ActuationFailed {
+                at: Duration::from_millis(11),
+                action: ActuationKind::Kill,
+                failure: ActuationFailure::SignalFailed,
+            }),
+            "signal delivery failed"
+        );
+        assert_eq!(
+            supervisor_error_diagnostic(&Event::SupervisorFault {
+                at: Duration::from_millis(11),
+            }),
+            "supervisor fault"
+        );
+        assert_eq!(
+            supervisor_error_diagnostic(&tick()),
+            "supervision failed closed"
+        );
+    }
+
+    #[test]
+    fn a_term_reports_the_cause_its_checkpoint_disposition_names() {
+        // Catches survivor cleanup, lost measurement, and supervisor faults all reading as a breach.
+        let named = [
+            (
+                CheckpointDisposition::SkippedRootExited,
+                SignalReason::RootExitCleanup,
+            ),
+            (
+                CheckpointDisposition::SkippedObservationFailure,
+                SignalReason::ObservationFailure,
+            ),
+            (
+                CheckpointDisposition::SkippedSupervisorFailure,
+                SignalReason::SupervisorFault,
+            ),
+        ];
+        for (disposition, expected) in named {
+            assert_eq!(
+                actuation_reason(
+                    Actuation::Term {
+                        checkpoint: disposition
+                    },
+                    Some(SignalReason::WallTime),
+                    None,
+                ),
+                Some(expected),
+                "{disposition:?}"
+            );
+        }
+
+        let escalating = [
+            CheckpointDisposition::AcknowledgedUnverifiedDurability,
+            CheckpointDisposition::TimedOut,
+            CheckpointDisposition::SkippedCheckpointFailure,
+            CheckpointDisposition::SkippedNotNegotiated,
+        ];
+        for disposition in escalating {
+            assert_eq!(
+                actuation_reason(
+                    Actuation::Term {
+                        checkpoint: disposition
+                    },
+                    Some(SignalReason::Footprint),
+                    None,
+                ),
+                Some(SignalReason::Footprint),
+                "{disposition:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_checkpoint_request_and_a_forwarded_signal_report_their_own_cause() {
+        // Catches a cooperative request inheriting an unrelated shutdown reason.
+        assert_eq!(
+            actuation_reason(
+                Actuation::Checkpoint {
+                    request_id: 7,
+                    overshoot_bytes: 1,
+                    deadline_at: Duration::from_millis(20),
+                },
+                Some(SignalReason::Footprint),
+                Some(SignalReason::ExternalSignal),
+            ),
+            Some(SignalReason::Footprint)
+        );
+        assert_eq!(
+            actuation_reason(
+                Actuation::ForwardSignal(SignalNumber::new(2).unwrap()),
+                Some(SignalReason::Footprint),
+                None,
+            ),
+            Some(SignalReason::ExternalSignal)
+        );
+    }
+
+    #[test]
+    fn a_kill_inherits_the_shutdown_it_escalates() {
+        // Catches an escalation relabelling a shutdown that another signal already started.
+        assert_eq!(
+            actuation_reason(
+                Actuation::Kill,
+                Some(SignalReason::Footprint),
+                Some(SignalReason::ExternalSignal),
+            ),
+            Some(SignalReason::ExternalSignal)
+        );
+        assert_eq!(
+            actuation_reason(Actuation::Kill, None, Some(SignalReason::RootExitCleanup)),
+            Some(SignalReason::RootExitCleanup)
+        );
+    }
+
+    #[test]
+    fn an_emergency_kill_is_attributed_to_the_footprint_that_caused_it() {
+        // Catches the headline scenario, an immediate emergency-band kill, recording no reason at
+        // all: it escalates no earlier signal, so its cause is the breach that opened it.
+        assert_eq!(
+            actuation_reason(Actuation::Kill, Some(SignalReason::Footprint), None),
+            Some(SignalReason::Footprint)
+        );
+    }
+
+    #[test]
+    fn only_a_delivered_or_cancelled_request_moves_the_checkpoint_status() {
+        // Catches a failed request cancelling a checkpoint that was never negotiated.
+        let request = Actuation::Checkpoint {
+            request_id: 7,
+            overshoot_bytes: 1,
+            deadline_at: Duration::from_millis(20),
+        };
+        assert_eq!(
+            checkpoint_progress(request, Ok(ActuationOutcome::Delivered), true),
+            Some(CheckpointStatus::RequestedUnverified)
+        );
+        assert_eq!(
+            checkpoint_progress(request, Ok(ActuationOutcome::ProcessMissing), true),
+            None
+        );
+        assert_eq!(
+            checkpoint_progress(request, Err(ActuationFailure::CheckpointRejected), true),
+            Some(CheckpointStatus::Cancelled)
+        );
+        assert_eq!(
+            checkpoint_progress(request, Err(ActuationFailure::CheckpointUnavailable), false),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_timed_out_term_moves_the_checkpoint_status_and_no_group_signal_does() {
+        // Catches root-exit cleanup or a forwarded signal overwriting negotiated checkpoint state.
+        assert_eq!(
+            checkpoint_progress(
+                Actuation::Term {
+                    checkpoint: CheckpointDisposition::TimedOut,
+                },
+                Ok(ActuationOutcome::Delivered),
+                true,
+            ),
+            Some(CheckpointStatus::TimedOut)
+        );
+        let unchanged = [
+            CheckpointDisposition::SkippedRootExited,
+            CheckpointDisposition::AcknowledgedUnverifiedDurability,
+            CheckpointDisposition::SkippedCheckpointFailure,
+            CheckpointDisposition::SkippedObservationFailure,
+            CheckpointDisposition::SkippedSupervisorFailure,
+            CheckpointDisposition::SkippedNotNegotiated,
+        ];
+        for disposition in unchanged {
+            assert_eq!(
+                checkpoint_progress(
+                    Actuation::Term {
+                        checkpoint: disposition
+                    },
+                    Ok(ActuationOutcome::Delivered),
+                    true,
+                ),
+                None,
+                "{disposition:?}"
+            );
+        }
+        assert_eq!(
+            checkpoint_progress(Actuation::Kill, Ok(ActuationOutcome::Delivered), true),
+            None
+        );
+        assert_eq!(
+            checkpoint_progress(
+                Actuation::ForwardSignal(SignalNumber::new(15).unwrap()),
+                Ok(ActuationOutcome::Delivered),
+                true,
+            ),
+            None
+        );
+    }
 }
