@@ -855,6 +855,12 @@ impl ObserveRuntime {
                 relinquish: true,
             },
         };
+        // Relinquishing cleanup ownership before the remaining fallible work (journal writes,
+        // finalization) runs means a panic there cannot unwind into kill-on-drop: survivors this
+        // run decided to leave running are already outside the owned process's cleanup path.
+        if relinquish {
+            self.process.relinquish();
+        }
         let terminal = TerminalOutcome {
             at_ms: duration_ms(self.started.elapsed()),
             kind,
@@ -862,10 +868,14 @@ impl ObserveRuntime {
             child_status,
             owned_group_survivors,
         };
-        self.record_terminal(terminal);
-        if relinquish {
-            self.process.relinquish();
-        }
+        Self::record_terminal(
+            &mut self.journal,
+            &mut self.sequence,
+            &self.sampler,
+            &self.report_samples,
+            self.escape_detected,
+            terminal,
+        );
         let notice = self.journal.stderr_notice();
         let Some(mut journal) = self.journal.into_inner() else {
             return RuntimeResult {
@@ -948,7 +958,9 @@ impl ObserveRuntime {
             };
             self.terminal_signal_count = self.terminal_signal_count.saturating_add(1);
             let result = result.map_err(|error| error.to_string())?;
-            self.record(
+            record_resilient(
+                &mut self.journal,
+                &mut self.sequence,
                 JournalEntry::Signal(SignalRecord {
                     at_ms: duration_ms(self.started.elapsed()),
                     signal: delivered_signal,
@@ -979,7 +991,9 @@ impl ObserveRuntime {
         self.final_footprint = window.aggregate_footprint_bytes.clone();
         self.escape_detected |= sample.escape_observed;
         if sample.sequence < MAX_SAMPLE_HISTORY_CAPACITY as u64 {
-            self.record(
+            record_resilient(
+                &mut self.journal,
+                &mut self.sequence,
                 JournalEntry::Sample(Box::new(window.clone())),
                 JournalDurability::Buffered,
             );
@@ -988,7 +1002,9 @@ impl ObserveRuntime {
         let _ = self.policy.apply(Event::Sample(policy_event));
         let current_state = self.policy.state();
         if previous_state != current_state {
-            self.record(
+            record_resilient(
+                &mut self.journal,
+                &mut self.sequence,
                 JournalEntry::Transition(TransitionRecord {
                     at_ms: duration_ms(processed_at),
                     from: previous_state,
@@ -1001,49 +1017,71 @@ impl ObserveRuntime {
         self.observation_failed = current_state == PolicyState::SupervisorError;
     }
 
-    fn record_terminal(&mut self, outcome: TerminalOutcome) {
-        self.record_recent_sample_history();
-        self.record(
+    // These take explicit field references rather than `&mut self` so `run` can call them after
+    // relinquishing the owned process, which requires partially moving `self.process` out first.
+    fn record_terminal(
+        journal: &mut ResilientJournal<SecureJournal>,
+        sequence: &mut u64,
+        sampler: &FootprintSampler,
+        report_samples: &VecDeque<mlx_guard_core::SampleWindow>,
+        escape_detected: bool,
+        outcome: TerminalOutcome,
+    ) {
+        Self::record_recent_sample_history(journal, sequence, sampler, report_samples);
+        record_resilient(
+            journal,
+            sequence,
             JournalEntry::Checkpoint(CheckpointRecord {
                 status: CheckpointStatus::NotNegotiated,
                 at_ms: None,
             }),
             JournalDurability::Sync,
         );
-        self.record(
+        record_resilient(
+            journal,
+            sequence,
             JournalEntry::Escape(EscapeEvidence {
                 detected: Observed::Available {
-                    value: self.escape_detected,
+                    value: escape_detected,
                 },
             }),
             JournalDurability::Buffered,
         );
-        self.record(JournalEntry::Outcome(outcome), JournalDurability::Sync);
+        record_resilient(
+            journal,
+            sequence,
+            JournalEntry::Outcome(outcome),
+            JournalDurability::Sync,
+        );
     }
 
-    fn record_recent_sample_history(&mut self) {
-        if self
-            .sampler
+    fn record_recent_sample_history(
+        journal: &mut ResilientJournal<SecureJournal>,
+        sequence: &mut u64,
+        sampler: &FootprintSampler,
+        report_samples: &VecDeque<mlx_guard_core::SampleWindow>,
+    ) {
+        if sampler
             .history()
             .next()
             .is_none_or(|sample| sample.sequence == 0)
         {
             return;
         }
-        self.record(JournalEntry::SampleHistoryReset, JournalDurability::Sync);
-        let samples = self.report_samples.iter().cloned().collect::<Vec<_>>();
-        for sample in samples {
-            self.record(
+        record_resilient(
+            journal,
+            sequence,
+            JournalEntry::SampleHistoryReset,
+            JournalDurability::Sync,
+        );
+        let recent_samples = report_samples.iter().cloned().collect::<Vec<_>>();
+        for sample in recent_samples {
+            record_resilient(
+                journal,
+                sequence,
                 JournalEntry::Sample(Box::new(sample)),
                 JournalDurability::Buffered,
             );
-        }
-    }
-
-    fn record(&mut self, entry: JournalEntry, durability: JournalDurability) {
-        let record = JournalRecord::new(self.sequence, entry);
-        if self.journal.record(&record, durability) == PersistenceAttempt::Persisted {
-            self.sequence = self.sequence.saturating_add(1);
         }
     }
 }

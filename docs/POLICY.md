@@ -24,7 +24,7 @@ are advisory and cannot change state. MLX's own counters are not read at all in 
 | any active state | repeated terminal signal | intervention already started | emergency | send KILL |
 | any active state | process exit | always | exited | report observed result |
 | normal, warning, or checkpoint-requested | root exited with owned-group survivors | always | terminating | send TERM (cleanup) |
-| terminating, emergency, supervisor-error, or exited | root exited | always | unchanged | none |
+| observe, terminating, emergency, supervisor-error, or exited | root exited | always | unchanged | none |
 
 Values between recovery and warning retain the previous normal or warning state. A sample at or
 above the ordinary limit contributes to the consecutive-breach count. A sample below that limit
