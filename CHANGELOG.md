@@ -17,6 +17,14 @@ versions follow Semantic Versioning.
   kind of pressure. The timeout still fails closed: an unresponsive worker receives TERM when it
   expires. Pass `--checkpoint-timeout 100ms` to keep the previous behavior.
 
+### Fixed
+
+- A command that exits before the supervisor's first identity inspection now keeps its real
+  exit status instead of being reported as supervisor failure (exit 70).
+- Supervisor memory no longer grows with every distinct child process observed during a long
+  run: containment-escape evidence is bounded to 64 identities, and the per-sample identity copy
+  was removed. An opt-in pid-churn endurance test pins the bound.
+
 ## [0.1.0] - 2026-08-12
 
 ### Added
