@@ -140,8 +140,8 @@ contract below defines one subsystem.
 
 ## Research notes
 
-One write-up covers the reasoning behind this design in more depth than a README can, including
-the limits the tool cannot clear. It is published at [ineshin.space](https://ineshin.space)
+Two write-ups cover the reasoning behind this design in more depth than a README can, including
+the limits the tool cannot clear. They are published at [ineshin.space](https://ineshin.space)
 alongside the rest of my Apple Silicon work, and the source Markdown lives under `docs/papers/`.
 
 - [Why the memory limit must live outside the process](https://ineshin.space/papers/why-the-memory-limit-must-live-outside-the-process/)
@@ -149,6 +149,12 @@ alongside the rest of my Apple Silicon work, and the source Markdown lives under
   workload reads is not the charge the OS applies, what macOS gives a supervisor in place of
   cgroups, and what external supervision still cannot promise, with the measured overhead and
   gaps from the committed v0.1 evidence.
+- [Measuring a macOS process tree honestly](https://ineshin.space/papers/measuring-a-macos-process-tree-honestly/)
+  — the measurement half of the same argument: which OS signal a supervisor can act on, why a
+  PID is not an identity, why tree discovery is a race the tool can only record, the rule that
+  keeps a partial aggregate from triggering a limit, and the observations in the v0.1 evidence
+  that support less than they appear to, including the pages a released Metal buffer does not
+  give back within the window watched.
 
 ## Development
 
