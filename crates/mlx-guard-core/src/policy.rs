@@ -60,6 +60,7 @@ pub enum CheckpointDisposition {
     SkippedObservationFailure,
     SkippedSupervisorFailure,
     SkippedNotNegotiated,
+    SkippedRootExited,
 }
 
 /// The platform side effect whose execution failed.
@@ -119,6 +120,9 @@ pub enum Event {
         at: Duration,
         final_footprint_bytes: Option<u64>,
     },
+    RootExited {
+        at: Duration,
+    },
 }
 
 impl Event {
@@ -130,7 +134,8 @@ impl Event {
             | Self::ExternalSignal { at, .. }
             | Self::ActuationFailed { at, .. }
             | Self::SupervisorFault { at }
-            | Self::ProcessExited { at, .. } => *at,
+            | Self::ProcessExited { at, .. }
+            | Self::RootExited { at } => *at,
         }
     }
 }
@@ -341,6 +346,7 @@ impl PolicyMachine {
                 failure,
             } => self.apply_actuation_failed(at, action, failure),
             Event::SupervisorFault { at } => self.apply_supervisor_fault(at),
+            Event::RootExited { at } => self.apply_root_exited(at),
             Event::ProcessExited { .. } => unreachable!("process exit handled before dispatch"),
         }
     }
@@ -549,6 +555,28 @@ impl PolicyMachine {
         self.intervention_started = true;
         self.term_deadline = Some(at.saturating_add(self.config.term_grace));
         vec![Action::ForwardSignal(signal)]
+    }
+
+    /// Clean up owned-group survivors after the root command has already exited.
+    ///
+    /// Only a live, not-yet-escalating machine starts the TERM → grace → KILL sequence; an
+    /// already-terminating, terminal, or non-enforcing machine treats this as a no-op so cleanup
+    /// never cancels an in-flight shutdown or re-escalates it.
+    fn apply_root_exited(&mut self, at: Duration) -> Vec<Action> {
+        if !matches!(
+            self.state,
+            PolicyState::Normal | PolicyState::Warning | PolicyState::CheckpointRequested
+        ) {
+            return Vec::new();
+        }
+        self.active_request_id = None;
+        self.checkpoint_deadline = None;
+        self.state = PolicyState::Terminating;
+        self.intervention_started = true;
+        self.term_deadline = Some(at.saturating_add(self.config.term_grace));
+        vec![Action::SendTerm {
+            checkpoint: CheckpointDisposition::SkippedRootExited,
+        }]
     }
 
     fn apply_actuation_failed(

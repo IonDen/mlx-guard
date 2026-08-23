@@ -395,6 +395,70 @@ fn clock_regression_after_supervisor_error_never_sends_a_second_term() {
 }
 
 #[test]
+fn root_exit_with_survivors_terms_then_kills_on_the_grace_deadline() {
+    // Catches cleanup skipping the grace, or not using the TERM → KILL escalation clock.
+    let mut machine = PolicyMachine::enforce(config(false)).unwrap();
+    assert_eq!(
+        machine.apply(Event::RootExited { at: ms(10) }),
+        vec![Action::SendTerm {
+            checkpoint: CheckpointDisposition::SkippedRootExited
+        }]
+    );
+    assert_eq!(machine.state(), PolicyState::Terminating);
+    assert_eq!(machine.next_deadline(), Some(ms(110)));
+    assert_eq!(
+        machine.apply(Event::Tick { at: ms(110) }),
+        vec![Action::SendKill]
+    );
+    assert_eq!(machine.state(), PolicyState::Emergency);
+}
+
+#[test]
+fn root_exit_cleanup_is_not_re_escalated_by_missing_samples() {
+    // Catches the cleanup path leaving the intervention latch unset, which would let three
+    // missing samples send a second TERM and reset the grace (the clock-regression invariant).
+    let mut machine = PolicyMachine::enforce(config(false)).unwrap();
+    let _ = machine.apply(Event::RootExited { at: ms(10) });
+    for at in [20, 30, 40] {
+        assert_eq!(machine.apply(sample(at, None)), vec![Action::RecordMissing]);
+    }
+    assert_eq!(machine.state(), PolicyState::Terminating);
+    assert_eq!(machine.next_deadline(), Some(ms(110)));
+}
+
+#[test]
+fn root_exit_during_an_active_shutdown_is_a_no_op() {
+    // Catches cleanup cancelling an in-flight TERM grace or double-signalling.
+    let mut machine = PolicyMachine::enforce(config(true)).unwrap();
+    let _ = machine.apply(sample(0, Some(100)));
+    let _ = machine.apply(sample(10, Some(101))); // → CheckpointRequested
+    assert_eq!(
+        machine.apply(Event::RootExited { at: ms(20) }),
+        vec![Action::SendTerm {
+            checkpoint: CheckpointDisposition::SkippedRootExited
+        }]
+    );
+    assert_eq!(machine.apply(Event::RootExited { at: ms(25) }), vec![]);
+    assert_eq!(machine.state(), PolicyState::Terminating);
+}
+
+#[test]
+fn process_exit_overwrites_supervisor_error_so_the_runtime_must_latch_it() {
+    // Documents why the exit-code helper cannot read the live state: ProcessExited always
+    // lands in Exited, even from SupervisorError.
+    let mut machine = PolicyMachine::enforce(config(false)).unwrap();
+    for at in [0, 10, 20] {
+        let _ = machine.apply(sample(at, None));
+    }
+    assert_eq!(machine.state(), PolicyState::SupervisorError);
+    let _ = machine.apply(Event::ProcessExited {
+        at: ms(30),
+        final_footprint_bytes: None,
+    });
+    assert_eq!(machine.state(), PolicyState::Exited);
+}
+
+#[test]
 fn long_sleep_advances_one_safety_phase_per_observed_tick() {
     // Catches sleep recovery that emits checkpoint, TERM, and KILL from one stale wake-up.
     let mut settings = config(true);
