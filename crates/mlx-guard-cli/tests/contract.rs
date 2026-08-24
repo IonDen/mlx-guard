@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use mlx_guard_cli::{CommandMode, parse_bytes, parse_cli, parse_duration};
+use mlx_guard_cli::{CommandMode, OnParentExitOption, parse_bytes, parse_cli, parse_duration};
 
 fn golden_args(contents: &str) -> Vec<OsString> {
     std::iter::once(OsString::from("mlx-guard"))
@@ -336,6 +336,82 @@ fn policy_duration_ranges_are_checked_after_unit_parsing() {
             "python",
         ])
         .is_err()
+    );
+}
+
+#[test]
+fn on_parent_exit_defaults_to_terminate_and_is_validated() {
+    // Catches losing the default terminate behavior, an unparsed detach opt-in on either mode,
+    // or a typo silently falling through to whichever variant matches first.
+    for (mode, args) in [
+        (
+            "observe",
+            vec![
+                "mlx-guard",
+                "observe",
+                "--report",
+                "/private/mlx-guard/report.json",
+                "--",
+                "true",
+            ],
+        ),
+        (
+            "run",
+            vec![
+                "mlx-guard",
+                "run",
+                "--max-footprint",
+                "1GiB",
+                "--report",
+                "/private/mlx-guard/report.json",
+                "--",
+                "true",
+            ],
+        ),
+    ] {
+        let parsed = parse_cli(args).unwrap_or_else(|error| panic!("{mode}: {error}"));
+        let common = match parsed.mode {
+            CommandMode::Observe(observe) => observe.common,
+            CommandMode::Run(run) => run.common,
+        };
+        assert_eq!(
+            common.on_parent_exit,
+            OnParentExitOption::Terminate,
+            "{mode}"
+        );
+    }
+
+    let parsed = parse_cli([
+        "mlx-guard",
+        "observe",
+        "--on-parent-exit=detach",
+        "--report",
+        "/private/mlx-guard/report.json",
+        "--",
+        "true",
+    ])
+    .expect("detach must parse");
+    let CommandMode::Observe(observe) = parsed.mode else {
+        panic!("expected observe mode");
+    };
+    assert_eq!(observe.common.on_parent_exit, OnParentExitOption::Detach);
+
+    let error = parse_cli([
+        "mlx-guard",
+        "observe",
+        "--on-parent-exit",
+        "never",
+        "--report",
+        "/private/mlx-guard/report.json",
+        "--",
+        "true",
+    ])
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("--on-parent-exit must be terminate or detach"),
+        "{error}"
     );
 }
 

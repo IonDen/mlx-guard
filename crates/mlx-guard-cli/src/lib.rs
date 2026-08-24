@@ -18,6 +18,54 @@ mod runtime;
 #[cfg(unix)]
 pub use runtime::{RuntimeResult, execute};
 
+/// Write the result summary, tolerating a summary reader that has gone away.
+///
+/// Only a broken pipe is swallowed — a dead parent that held our stdout must not turn a
+/// finalized supervision result into a panic (exit 101).
+///
+/// # Panics
+///
+/// Panics on any write or flush error other than a broken pipe: it is a supervisor-host
+/// defect worth surfacing.
+#[cfg(unix)]
+pub fn write_summary(result: &RuntimeResult) {
+    use std::io::{ErrorKind, Write};
+    for (stream, bytes) in [
+        (
+            &mut std::io::stdout().lock() as &mut dyn Write,
+            result.stdout.as_bytes(),
+        ),
+        (
+            &mut std::io::stderr().lock() as &mut dyn Write,
+            result.stderr.as_bytes(),
+        ),
+    ] {
+        match stream.write_all(bytes).and_then(|()| stream.flush()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::BrokenPipe => {}
+            Err(error) => panic!("summary write failed: {error}"),
+        }
+    }
+}
+
+/// What the supervisor does when its launching parent exits.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OnParentExitOption {
+    /// Terminate the owned process group when the parent exits.
+    Terminate,
+    /// Leave the owned process group running when the parent exits.
+    Detach,
+}
+
+impl From<OnParentExitOption> for mlx_guard_core::OnParentExit {
+    fn from(value: OnParentExitOption) -> Self {
+        match value {
+            OnParentExitOption::Terminate => Self::Terminate,
+            OnParentExitOption::Detach => Self::Detach,
+        }
+    }
+}
+
 const MIN_SAMPLE_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_SAMPLE_INTERVAL: Duration = Duration::from_secs(10);
 const MAX_WALL_TIME: Duration = Duration::from_secs(30 * 24 * 60 * 60);
@@ -81,6 +129,8 @@ pub struct CommonOptions {
     /// Optional inherited descriptor closed when the native runtime is ready for client signals.
     #[doc(hidden)]
     pub client_ready_fd: Option<i32>,
+    /// What the supervisor does when its launching parent exits.
+    pub on_parent_exit: OnParentExitOption,
     /// Literal executable and argument vector following the mandatory `--` separator.
     pub command: Vec<OsString>,
 }
@@ -219,6 +269,7 @@ fn normalize(raw: RawCommon) -> Result<CommonOptions, CliParseError> {
         clear_env: raw.clear_env,
         env,
         client_ready_fd: raw.client_ready_fd,
+        on_parent_exit: raw.on_parent_exit,
         command: raw.command,
     })
 }
@@ -315,6 +366,9 @@ struct RawCommon {
     /// Internal Python-client readiness descriptor. The invoking client transfers ownership.
     #[arg(long, hide = true, value_parser = parse_client_ready_fd)]
     client_ready_fd: Option<i32>,
+    /// What the supervisor does when its launching parent exits (terminate | detach).
+    #[arg(long = "on-parent-exit", default_value = "terminate", value_parser = parse_on_parent_exit)]
+    on_parent_exit: OnParentExitOption,
     /// Literal executable and arguments. The `--` separator is mandatory.
     #[arg(last = true, required = true, num_args = 1.., value_name = "COMMAND")]
     command: Vec<OsString>,
@@ -344,4 +398,28 @@ fn parse_checkpoint_timeout(value: &str) -> Result<Duration, String> {
         return Err("--checkpoint-timeout must be within 10ms..=60s".to_owned());
     }
     Ok(duration)
+}
+
+fn parse_on_parent_exit(value: &str) -> Result<OnParentExitOption, String> {
+    match value {
+        "terminate" => Ok(OnParentExitOption::Terminate),
+        "detach" => Ok(OnParentExitOption::Detach),
+        _ => Err("--on-parent-exit must be terminate or detach".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn write_summary_with_non_empty_streams_does_not_panic() {
+        let result = RuntimeResult {
+            outcome: mlx_guard_core::SupervisorOutcome::ChildExited(0),
+            stdout: "stdout content\n".to_owned(),
+            stderr: "stderr content\n".to_owned(),
+        };
+        write_summary(&result);
+    }
 }

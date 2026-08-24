@@ -7,8 +7,7 @@ fn main() -> ExitCode {
     match mlx_guard_cli::parse_cli(env::args_os()) {
         Ok(parsed) => {
             let result = mlx_guard_cli::execute(parsed);
-            print!("{}", result.stdout);
-            eprint!("{}", result.stderr);
+            mlx_guard_cli::write_summary(&result);
             ExitCode::from(result.outcome.exit_code())
         }
         Err(error) if error.is_display_only() => {
