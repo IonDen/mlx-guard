@@ -30,9 +30,11 @@ An escape remains evidence for the whole run. Later group cleanup cannot turn th
 that an arbitrary daemon was contained. Discovery can still miss a process that forks, escapes, and
 exits entirely between snapshots.
 
-An exited process reports no process group, so it is never recorded as an escape. Each escaped
-identity contributes one increment to the escape count for the whole run, however many samples
-observe it.
+An exited process reports no process group, so it is never recorded as an escape. Each distinct
+escaped identity contributes at least one increment to the escape count for the run. Above the
+retained-evidence cap the counted mark lives only on the tracked set, so an identity that a sample
+misses and later re-observes can add a further increment. The count is bounded evidence of distinct
+escapes, not an exact census.
 
 ## Aggregation
 

@@ -141,7 +141,11 @@ struct TrackedProcess {
     /// Sticky per-identity mark that an escape was already counted for this identity.
     ///
     /// The mark rides on the per-sample tracked set, so it stays bounded by the live members
-    /// while remaining independent of the capped `escaped` evidence list.
+    /// while remaining independent of the capped `escaped` evidence list. Consequence: an
+    /// identity a sample fails to observe loses its mark, so past the evidence cap, where the
+    /// retained set no longer remembers it either, a later re-observation counts it again.
+    /// Observation gaps are typed outcomes here, so that drift is real rather than theoretical.
+    /// The alternative is unbounded per-identity memory, which the supervisor does not keep.
     escaped: bool,
 }
 
@@ -180,10 +184,13 @@ impl IdentityTracker {
         })
     }
 
-    /// Count of distinct identities observed outside the owned group, counted once each.
+    /// Count of identities observed outside the owned group.
     ///
-    /// The count is not bounded by the retained escape evidence: identities past the evidence
-    /// cap are still counted, but each identity contributes exactly one increment.
+    /// At least one increment per distinct escaped identity, and not bounded by the retained
+    /// escape evidence: identities past the evidence cap are still counted. Above that cap the
+    /// counted mark lives only on the tracked set, so an identity a sample misses and later
+    /// re-observes can add a further increment. Read this as bounded evidence of distinct
+    /// escapes, not an exact census.
     #[must_use]
     pub const fn escaped_count(&self) -> u64 {
         self.escaped_count

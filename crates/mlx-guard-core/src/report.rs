@@ -357,9 +357,12 @@ pub struct CheckpointRecord {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EscapeEvidence {
     pub detected: Observed<bool>,
-    /// Distinct escapes observation counted (once per escaped identity, independent of the
-    /// bounded in-memory evidence list — truncation is counted, never silent). Present only
-    /// when nonzero. Only the count is persisted — never the escapees' pids.
+    /// Escapes observation counted: at least one increment per distinct escaped identity, and
+    /// independent of the bounded in-memory evidence list, so truncation is counted rather than
+    /// silent. Above that cap the counted mark lives only on the tracked set, so an identity a
+    /// sample misses and later re-observes can add a further increment; this is bounded evidence
+    /// of distinct escapes, not an exact census. Present only when nonzero. Only the count is
+    /// persisted, never the escapees' pids.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escaped_count: Option<u64>,
 }

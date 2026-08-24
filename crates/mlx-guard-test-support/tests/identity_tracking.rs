@@ -213,7 +213,7 @@ fn seventy_synthetic_escapees_count_seventy_not_thousands() {
     assert_eq!(tracker.escaped_count(), 0);
     assert!(!first.escape_observed);
 
-    for _round in 0..4 {
+    for round in 0..4 {
         let mut escaping = vec![root_member];
         escaping.extend(owned.iter().map(|member| ProcessObservation {
             process_group_id: 900,
@@ -222,6 +222,14 @@ fn seventy_synthetic_escapees_count_seventy_not_thousands() {
         let frame = tracker.update(snapshot(escaping));
         assert!(frame.escape_observed);
         assert_eq!(tracker.escaped_count(), 70);
+        // Retained evidence is capped at 64 identities and never re-emitted, so the count is
+        // pinned as independent of the list that bounds supervisor memory.
+        let evidence = frame
+            .events
+            .iter()
+            .filter(|event| matches!(event, ContainmentEvent::LeftOwnedGroup { .. }))
+            .count();
+        assert_eq!(evidence, if round == 0 { 64 } else { 0 });
     }
 }
 
