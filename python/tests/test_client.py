@@ -198,9 +198,12 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn("--on-parent-exit", default_argv)
 
     def test_on_parent_exit_values_match_the_native_grammar(self) -> None:
-        # Catches a Python-side value drifting from the native `parse_on_parent_exit`
-        # match arms (`crates/mlx-guard-cli/src/lib.rs`), which accept exactly
-        # "terminate" and "detach" and reject everything else.
+        # Verifies Python's own accept/reject list for on_parent_exit is internally
+        # consistent with the documented grammar strings — exactly "terminate" and
+        # "detach" accepted, everything else rejected. This does not invoke the
+        # native binary, so it cannot catch the native `parse_on_parent_exit` match
+        # arms (`crates/mlx-guard-cli/src/lib.rs`) drifting from these values on
+        # their own.
         for accepted in ("terminate", "detach"):
             config = mlx_guard.ObserveConfig(
                 command=("/bin/true",),

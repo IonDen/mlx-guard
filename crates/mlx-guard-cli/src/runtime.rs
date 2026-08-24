@@ -416,12 +416,15 @@ fn parent_has_exited(
     let Some(parent) = state.parent else {
         return false;
     };
-    // On macOS a process reparents only once its real parent has exited (there is no subreaper
-    // that could reparent it earlier), so a `getppid()` match against the recorded parent pid is
-    // conclusive proof the parent is still alive: return immediately, with no inspection at all.
-    // Confirmation only ever runs after that pre-filter fires (the pid changed). Even then, a
-    // still-alive recorded identity — or any inspection hiccup that merely fails to prove it — is
-    // treated as inconclusive rather than fatal: only a confirmed-gone identity latches the exit.
+    // On macOS a changed `getppid()` is itself the evidence of the parent's death: reparenting to
+    // pid 1 happens only once the real parent has exited (there is no subreaper that could reparent
+    // it earlier), so a still-matching pid is conclusive proof the parent is alive and needs no
+    // inspection at all — return immediately. Confirmation only ever runs after that pre-filter
+    // fires (the pid changed), and it exists purely as a hedge on top of the pid evidence: it treats
+    // exactly one outcome as inconclusive — the recorded `(pid, start_abstime)` identity provably
+    // still alive — and latches the exit on every other outcome, including exited, disappeared,
+    // stale, or an inspection error (after a pid change, a recycled pid may not even be inspectable,
+    // e.g. owned by another user).
     if i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0) == parent.pid {
         return false;
     }
@@ -1588,11 +1591,17 @@ fn shutdown_reason_for(event: &Event) -> Option<SignalReason> {
 
 /// Whether an event may name the shutdown in flight before the policy machine decides anything.
 ///
-/// The policy machine acts on a parent exit only from `Normal` or `Warning`; anywhere else the
-/// event is suppressed, and a suppressed event must not relabel a shutdown another cause opened.
+/// Labels follow the same state gate as their policy handler, so a suppressed event never relabels
+/// a shutdown already in flight: `apply_parent_exited` only acts from `Normal` or `Warning`,
+/// `apply_root_exited` only acts from `Normal`, `Warning`, or `CheckpointRequested`, and
+/// `apply_external_signal` acts from every state, so it stays unconditional here too.
 const fn may_label_shutdown(event: &Event, state: PolicyState) -> bool {
     match event {
         Event::ParentExited { .. } => matches!(state, PolicyState::Normal | PolicyState::Warning),
+        Event::RootExited { .. } => matches!(
+            state,
+            PolicyState::Normal | PolicyState::Warning | PolicyState::CheckpointRequested
+        ),
         _ => true,
     }
 }
@@ -1897,10 +1906,53 @@ mod tests {
             PolicyState::SupervisorError,
         ] {
             assert!(!may_label_shutdown(&parent_exited(), state), "{state:?}");
-            // Every other event keeps labelling from whatever state it arrives in.
+            // External signals and samples/ticks keep labelling from whatever state they arrive
+            // in; `RootExited` has its own narrower gate, checked separately below.
             assert!(may_label_shutdown(&external_signal(), state), "{state:?}");
-            assert!(may_label_shutdown(&root_exited(), state), "{state:?}");
             assert!(may_label_shutdown(&sample(), state), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn a_root_exit_the_policy_machine_would_suppress_never_relabels_the_shutdown() {
+        // Catches a no-op `RootExited` (the common shape: a compliant root already killed by a
+        // parent-exit TERM while a TERM-ignoring group member survives) relabelling a shutdown a
+        // different cause opened: `apply_root_exited` only acts from `Normal`, `Warning`, or
+        // `CheckpointRequested`, so only there may it name the shutdown.
+        for state in [
+            PolicyState::Normal,
+            PolicyState::Warning,
+            PolicyState::CheckpointRequested,
+        ] {
+            assert!(may_label_shutdown(&root_exited(), state), "{state:?}");
+        }
+        for state in [
+            PolicyState::Observe,
+            PolicyState::Terminating,
+            PolicyState::Emergency,
+            PolicyState::Exited,
+            PolicyState::SupervisorError,
+        ] {
+            assert!(!may_label_shutdown(&root_exited(), state), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn an_external_signal_always_labels_the_shutdown_even_mid_escalation() {
+        // `apply_external_signal` acts from every state (escalating straight to Emergency/KILL
+        // once already terminating), so the label gate never suppresses it either — including
+        // from `Terminating`, where a second forwarded signal is the common case.
+        for state in [
+            PolicyState::Observe,
+            PolicyState::Normal,
+            PolicyState::Warning,
+            PolicyState::CheckpointRequested,
+            PolicyState::Terminating,
+            PolicyState::Emergency,
+            PolicyState::Exited,
+            PolicyState::SupervisorError,
+        ] {
+            assert!(may_label_shutdown(&external_signal(), state), "{state:?}");
         }
     }
 
@@ -2265,5 +2317,51 @@ mod tests {
             Duration::from_millis(7)
         ));
         assert_eq!(state.exited_at_ms, Some(7));
+    }
+
+    #[test]
+    fn a_recorded_identity_still_alive_after_a_ppid_change_is_inconclusive_not_fatal() {
+        // Catches the confirmation step treating the pid change alone as proof of death: it must
+        // find the recorded identity provably still alive and retry, never latch a false exit off
+        // one inconclusive read.
+        let inventory = NativeProcessInventory;
+        let mut child = Command::new("/bin/sleep")
+            .arg("5")
+            .spawn()
+            .expect("a throwaway child process must spawn");
+        let child_pid = i32::try_from(child.id()).expect("the throwaway child's pid must fit i32");
+        let recorded = inventory
+            .inspect(child_pid)
+            .expect("the live throwaway child must be inspectable")
+            .identity;
+
+        // `child_pid` is a distinct, freshly spawned pid: it cannot equal this test process's
+        // real, unchanged ppid, so the pre-filter is guaranteed to fire and fall through to
+        // confirmation instead of returning early on a pid match.
+        let real_parent_pid = i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0);
+        assert_ne!(real_parent_pid, child_pid);
+
+        let mut state = ParentWatchState {
+            parent: Some(recorded),
+            watch: ParentWatch::Active,
+            on_parent_exit: OnParentExit::Terminate,
+            exited_at_ms: None,
+        };
+
+        let result = parent_has_exited(&mut state, inventory, Duration::from_millis(9));
+
+        child
+            .kill()
+            .expect("the throwaway child must accept SIGKILL");
+        child.wait().expect("the throwaway child must be reaped");
+
+        assert!(
+            !result,
+            "a provably still-alive recorded identity must not latch an exit"
+        );
+        assert!(
+            state.exited_at_ms.is_none(),
+            "a provably still-alive recorded identity must never latch an exit"
+        );
     }
 }

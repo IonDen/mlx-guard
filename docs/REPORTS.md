@@ -29,9 +29,11 @@ under every outcome kind, so an intervention or supervisor failure never hides h
 ended. `outcome.owned_group_survivors` distinguishes two situations and its encoding is not
 symmetric between them. At a natural root exit, it is `true` when observe ended with owned-group
 members still running (they are not signalled) and is absent — never an explicit `false` — when none
-were left. At a parent-exit shutdown (below), it is always explicit: `Some(true)` when the group was
-still alive at the KILL decision, `Some(false)` when the TERM alone was enough. A reader must treat
-the absent case and an explicit `false` as different facts. Each signal record carries `reason`:
+were left. At a parent-exit shutdown (below), this explicit encoding belongs to `observe`'s own
+completion: `Some(true)` when the group was still alive at the KILL decision, `Some(false)` when the
+TERM alone was enough. `run`'s terminal outcome leaves the field absent at a parent-exit shutdown just
+as it does everywhere else. A reader must treat the absent case and an explicit `false` as different
+facts. Each signal record carries `reason`:
 `footprint`, `wall_time`, `external_signal`, `root_exit_cleanup`, `parent_exit`,
 `observation_failure`, or `supervisor_fault`. All three fields are absent from reports written before
 they existed.
@@ -47,14 +49,16 @@ present only when `parent_watch` was `active` or `detach`. The launching parent'
 start_abstime)` identity is never persisted — only the watch state and this timestamp are. All three
 fields are absent from reports written before they existed.
 
-Observe reports can now carry outcome `policy_intervention`. Under the default `terminate` behavior,
-a launching parent's exit ends observation the same way a forwarded terminal signal does: TERM, a
-one-second grace, KILL if the group is still alive, and the run is reported as an intervention rather
-than a root exit. During that gated shutdown window observe's own measurement-quality policy machine
-keeps running independently, and a `SupervisorError` transition record and a final
-`policy_intervention` outcome can both appear in the same report — both facts are true; the
-in-flight parent-exit intervention owns the outcome, and the transition is only evidence of what the
-sampler saw while it was in flight.
+Observe reports can now carry outcome `policy_intervention`. A forwarded terminal signal (SIGHUP,
+SIGINT, SIGTERM) reaches the owned group unchanged, with no grace timer; observe keeps sampling and
+the run ends when the root exits on its own, reporting the root's own signaled status (`128+n`), not
+a policy intervention. Under the default `terminate` behavior, a launching parent's exit ends
+observation a different way: TERM to the owned group, a one-second grace, KILL if it is still alive,
+and the run is reported as an intervention (`policy_intervention`, exit 75) rather than a root exit.
+During that gated shutdown window observe's own measurement-quality policy machine keeps running
+independently, and a `SupervisorError` transition record and a final `policy_intervention` outcome
+can both appear in the same report — both facts are true; the in-flight parent-exit intervention owns
+the outcome, and the transition is only evidence of what the sampler saw while it was in flight.
 
 Advisory values retain their original schema-v1 fields. New writers may also add `pressure_level`
 and per-field `metadata` with the metric scope, public API source, observation timestamp, and

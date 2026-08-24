@@ -27,8 +27,12 @@ Common options:
 - `--env KEY=VALUE` sets one UTF-8 child environment value and may be repeated. Keys must be nonempty
   and unique. Values may contain `=`.
 - `--on-parent-exit terminate|detach`, default `terminate`. `terminate` watches the process that
-  launched `mlx-guard` and terminates the owned group when it is confirmed gone; `detach` leaves the
-  group running and only records the evidence. The watch is checked once per sampling-loop wake-up,
+  launched `mlx-guard`. A changed `getppid()` is itself the evidence of that process's death — on
+  macOS reparenting to pid 1 happens only once the real parent has exited — and the identity check
+  against the recorded launcher exists only as a hedge on top of it: the check treats a single
+  outcome as inconclusive (the recorded identity provably still alive) and terminates the owned group
+  on every other outcome, including a disappeared, stale, or uninspectable identity. `detach` leaves
+  the group running and only records the evidence. The watch is checked once per sampling-loop wake-up,
   so detection latency is bounded by `--sample-interval` — up to 10s at the maximum. A launcher that
   re-parents `mlx-guard` away from itself right after starting it — a double-fork daemonizer, or a
   shell that backgrounds `mlx-guard` and then exits — looks the same to an already-established watch

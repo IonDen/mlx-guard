@@ -182,9 +182,13 @@ def _process_exists(pid: int) -> bool:
 
 
 def _run_crash_probe(report: str, on_parent_exit: str | None) -> None:
-    # A detached run must outlive the test's own patience window (well under this),
-    # while the default (terminate) path is expected to end almost immediately.
-    duration = "5" if on_parent_exit == "detach" else "0.25"
+    # Both paths use a long-sleep worker (well past the test's own patience window):
+    # a detached run must outlive it, and the terminate run ends at TERM/KILL
+    # detection rather than the worker's natural exit, so a long sleep costs no wall
+    # time there either — it just closes a race where a starved CI runner could let
+    # the worker exit naturally before detection, flipping the outcome to
+    # child_exited instead of policy_intervention.
+    duration = "5"
     supervisor = mlx_guard.start(
         mlx_guard.RunConfig(
             command=("/bin/sleep", duration),
