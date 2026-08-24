@@ -163,7 +163,7 @@ fn a_setsid_escape_is_counted_once_and_an_empty_group_is_not_containment() {
     // Catches counting one escapee once per sample, and catches presenting an emptied owned group
     // as containment while a process this run started keeps running outside it.
     let (_runtime_lock, result, report, escapees) =
-        run_escape_scenario("300ms", &[FIXTURE, "setsid-parent", "1", "800"]);
+        run_escape_scenario("300ms", &[FIXTURE, "setsid-parent", "1", "4000"]);
     let _cleanup = EscapeeCleanup(escapees.clone());
 
     assert_eq!(escapees.len(), 1, "the fixture published {escapees:?}");

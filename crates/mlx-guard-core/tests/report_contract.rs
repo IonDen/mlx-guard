@@ -228,7 +228,10 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
         ),
         (
             "escaped count positive without an observed detection",
-            |r| r.escape.escaped_count = Some(3),
+            |r| {
+                r.escape.detected = Observed::Available { value: false };
+                r.escape.escaped_count = Some(3);
+            },
             |e| matches!(e, ReportError::InvalidEventOrder),
         ),
         (

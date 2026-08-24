@@ -27,11 +27,11 @@ versions follow Semantic Versioning.
 - Reports record `configuration.on_parent_exit`, `configuration.parent_watch`, and
   `outcome.parent_exited_at_ms`, and signal records gained the `parent_exit` reason — whether, and
   how, a run watched for its launching parent's exit, and when that exit was confirmed.
-- Reports record `escape.escaped_count`, present only when nonzero: a bounded count of distinct
-  descendants observed outside the owned process group, alongside the existing `escape.detected`
-  boolean. Real-process tests now cover a `setsid` escape into an empty owned group, a daemonized
-  grandchild, a plain double-fork reparent that stays contained, and a flood of seventy simultaneous
-  escapees past the 64-identity evidence cap.
+- Reports record `escape.escaped_count`, present only when nonzero: a count of distinct
+  descendants observed outside the owned process group (kept even past the 64-identity evidence
+  cap), alongside the existing `escape.detected` boolean. Real-process tests now cover a `setsid`
+  escape into an empty owned group, a daemonized grandchild, a plain double-fork reparent that
+  stays contained, and a flood of seventy simultaneous escapees past the 64-identity evidence cap.
 
 ### Changed
 
