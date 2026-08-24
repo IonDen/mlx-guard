@@ -57,6 +57,12 @@ present only when `parent_watch` was `active` or `detach`. The launching parent'
 start_abstime)` identity is never persisted — only the watch state and this timestamp are. All three
 fields are absent from reports written before they existed.
 
+Validation enforces this pairing in both directions. A `detach` watch requires the `detach` option,
+and a `detach` option requires a watch of `detach` or `parent_unobservable` — the only two watch
+states a `detach` run can record. A `detach` option paired with any other watch, including an
+absent one, is rejected as an invalid configuration, reducing the risk of a report whose
+parent-exit fields disagree with each other.
+
 Observe reports can now carry outcome `policy_intervention`. A forwarded terminal signal (SIGHUP,
 SIGINT, SIGTERM) reaches the owned group unchanged, with no grace timer; observe keeps sampling and
 the run ends when the root exits on its own, reporting the root's own signaled status (`128+n`), not

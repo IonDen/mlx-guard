@@ -578,6 +578,12 @@ impl ReportV1 {
         let parent_watch_agrees_with_option =
             !matches!(self.configuration.parent_watch, Some(ParentWatch::Detach))
                 || self.configuration.on_parent_exit == Some(OnParentExit::Detach);
+        let detach_option_agrees_with_watch = self.configuration.on_parent_exit
+            != Some(OnParentExit::Detach)
+            || matches!(
+                self.configuration.parent_watch,
+                Some(ParentWatch::Detach | ParentWatch::ParentUnobservable)
+            );
         let parent_exit_evidence_has_a_watch = self.outcome.parent_exited_at_ms.is_none()
             || matches!(
                 self.configuration.parent_watch,
@@ -586,6 +592,7 @@ impl ReportV1 {
         if !basic_values_valid
             || !mode_valid
             || !parent_watch_agrees_with_option
+            || !detach_option_agrees_with_watch
             || !parent_exit_evidence_has_a_watch
         {
             return Err(ReportError::InvalidConfiguration);
