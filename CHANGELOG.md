@@ -27,6 +27,11 @@ versions follow Semantic Versioning.
 - Reports record `configuration.on_parent_exit`, `configuration.parent_watch`, and
   `outcome.parent_exited_at_ms`, and signal records gained the `parent_exit` reason — whether, and
   how, a run watched for its launching parent's exit, and when that exit was confirmed.
+- Reports record `escape.escaped_count`, present only when nonzero: a bounded count of distinct
+  descendants observed outside the owned process group, alongside the existing `escape.detected`
+  boolean. Real-process tests now cover a `setsid` escape into an empty owned group, a daemonized
+  grandchild, a plain double-fork reparent that stays contained, and a flood of seventy simultaneous
+  escapees past the 64-identity evidence cap.
 
 ### Changed
 
@@ -63,6 +68,10 @@ versions follow Semantic Versioning.
   held the supervisor's stdout had already gone away (for example, a client that closed the read
   end of a piped stdout). The write now tolerates a broken pipe silently instead of panicking; any
   other write or flush error still panics.
+- Before this release, the internal escape counter kept incrementing on every sample once the bounded
+  evidence list had filled, and could count a child that had merely exited as an escape. Neither was
+  visible in a report, which carried only the `escape.detected` boolean; both are fixed ahead of the
+  count above being published.
 
 ## [0.1.0] - 2026-08-12
 

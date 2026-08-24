@@ -24,6 +24,14 @@ they do not include a path or raw operating-system message. Checkpoint request d
 `requested_unverified`. A nonce- and request-matching worker response is
 `acknowledged_unverified_durability`, which still does not prove durable bytes.
 
+`escape.escaped_count` is optional and present only when nonzero: at least one increment per
+distinct escaped identity observed during the run, independent of the bounded in-memory evidence
+list capped at 64 identities, so an over-cap identity keeps being counted rather than silently
+dropped once the list is full. Above that cap the counted mark lives only on the currently tracked
+set, so an identity a sample misses and later re-observes can add a further increment — read the
+field as bounded evidence of distinct escapes, not an exact census. It is a count, never a list: the
+escaped identities' pids are never persisted.
+
 `outcome.child_status` records the root command's own exit code or signal whenever it was observed,
 under every outcome kind, so an intervention or supervisor failure never hides how the command
 ended. `outcome.owned_group_survivors` distinguishes two situations and its encoding is not
