@@ -893,6 +893,7 @@ impl RunRuntime<'_> {
                 detected: Observed::Available {
                     value: self.escape_detected,
                 },
+                escaped_count: None,
             }),
             JournalDurability::Buffered,
         );
@@ -1270,6 +1271,7 @@ impl ObserveRuntime {
                 detected: Observed::Available {
                     value: escape_detected,
                 },
+                escaped_count: None,
             }),
             JournalDurability::Buffered,
         );
@@ -1455,6 +1457,8 @@ fn append_terminal(
             detected: Observed::Available {
                 value: escape_detected,
             },
+            // No sampler in scope on this pre-launch failure path: nothing was ever observed.
+            escaped_count: None,
         }),
         JournalDurability::Buffered,
     )?;
