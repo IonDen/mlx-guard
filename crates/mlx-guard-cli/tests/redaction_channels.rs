@@ -504,15 +504,19 @@ fn a_multiline_environment_value_reaches_no_persisted_byte() {
 fn every_channel_stays_redacted_through_a_policy_intervention() {
     // Catches a shutdown path that persists launch data the normal exit path redacts, since
     // signals, transitions, and the intervention outcome are all written on this path only.
+    //
+    // The wall-time and worker sleep here are wider than the other cases' whole-second `SLEEP_SCRIPT`
+    // give the worker's two `echo`s headroom to run before TERM lands on a starved runner; the
+    // intervention itself is still pinned by exit code 75, not by how long it took to arrive.
     let directory = CaseDirectory::new();
     let worker = directory.marker_worker(
         MARKER_ALL_EXECUTABLE_DIRECTORY,
         &format!(
-            "#!/bin/sh\necho {MARKER_ALL_CHILD_STDOUT}\necho {MARKER_ALL_CHILD_STDERR} >&2\n{SLEEP_SCRIPT}\n"
+            "#!/bin/sh\necho {MARKER_ALL_CHILD_STDOUT}\necho {MARKER_ALL_CHILD_STDERR} >&2\nexec /bin/sleep 3\n"
         ),
     );
     let output = guard(&directory)
-        .args(["--wall-time", "300ms", "--env"])
+        .args(["--wall-time", "1s", "--env"])
         .arg(format!(
             "{MARKER_ALL_ENV_KEY}={}",
             multiline_env_value(MARKER_ALL_ENV_VALUE)
