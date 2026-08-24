@@ -9,13 +9,16 @@ at root exit, the reported final footprint is the last sample taken before the r
 fresh measurement of whatever survivors are left running. If three consecutive samples are
 unusable, observe writes a supervisor-error report and stops without signalling the command.
 
-Terminal signals and the launching parent exiting are observe's only destructive exceptions. A
-forwarded SIGHUP, SIGINT, or SIGTERM, or — under the default `--on-parent-exit=terminate` — the
-process that launched `mlx-guard` exiting, both end the run the same way: TERM to the owned group, a
-one-second grace, KILL if it is still alive, and the run is reported as a policy intervention (exit
-75) instead of a plain root exit. `--on-parent-exit=detach` turns the parent-exit case back into the
-natural-root-exit case above: the group is left running and the report only records that the parent
-was gone.
+Terminal signals and the launching parent exiting are observe's only destructive exceptions, and
+they end the run two different ways. A forwarded SIGHUP, SIGINT, or SIGTERM reaches the owned group
+unchanged, with no grace timer; observe keeps sampling and the run ends when the root exits,
+reporting the root's own signaled status (`128+n`), not a policy intervention. A second terminal
+signal skips that and requests an immediate KILL instead. Under the default
+`--on-parent-exit=terminate`, the process that launched `mlx-guard` exiting takes the other path:
+TERM to the owned group, a one-second grace, KILL if it is still alive, and the run is reported as a
+policy intervention (exit 75) instead of a plain root exit. `--on-parent-exit=detach` turns the
+parent-exit case back into the natural-root-exit case above: the group is left running and the
+report only records that the parent was gone.
 
 ## Advisory measurements
 

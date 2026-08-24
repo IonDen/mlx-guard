@@ -91,7 +91,7 @@ command ended by a forwarded terminal signal keeps `128+n`. When the root exits 
 members survive, `run` terminates them (TERM, one-second grace, KILL) and reports the root's own
 status unless KILL was needed; `observe` ends at root exit, leaves survivors running, and reports
 it. When the launching parent exits under the default `--on-parent-exit=terminate`, both modes treat
-that the same as a forwarded terminal signal: TERM, one-second grace, KILL if still alive, and the
+that as a supervisor-initiated intervention: TERM, one-second grace, KILL if still alive, and the
 result is a policy intervention (75). `--on-parent-exit=detach` never opens this path.
 
 ## Signals, terminal, and stdio

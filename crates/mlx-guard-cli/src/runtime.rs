@@ -416,13 +416,21 @@ fn parent_has_exited(
     let Some(parent) = state.parent else {
         return false;
     };
-    // A free pre-filter first (an orphan reparents to pid 1 on macOS), then the exact
-    // `(pid, start_abstime)` confirmation, which a recycled pid cannot pass.
-    if i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0) == parent.pid
-        && inventory
-            .inspect_expected(parent)
-            .is_ok_and(|observation| !observation.exited)
+    // On macOS a process reparents only once its real parent has exited (there is no subreaper
+    // that could reparent it earlier), so a `getppid()` match against the recorded parent pid is
+    // conclusive proof the parent is still alive: return immediately, with no inspection at all.
+    // Confirmation only ever runs after that pre-filter fires (the pid changed). Even then, a
+    // still-alive recorded identity — or any inspection hiccup that merely fails to prove it — is
+    // treated as inconclusive rather than fatal: only a confirmed-gone identity latches the exit.
+    if i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0) == parent.pid {
+        return false;
+    }
+    if inventory
+        .inspect_expected(parent)
+        .is_ok_and(|observation| !observation.exited)
     {
+        // The recorded identity is still observably alive despite the pid change: retry on the
+        // next tick instead of latching a false exit off one inconclusive read.
         return false;
     }
     state.exited_at_ms = Some(duration_ms(now));
@@ -1803,6 +1811,7 @@ fn duration_ms(value: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
     use std::time::Duration;
 
     use mlx_guard_core::{
@@ -1812,9 +1821,10 @@ mod tests {
     };
 
     use super::{
-        OnParentExitOption, actuation_reason, checkpoint_progress, establish_parent_watch,
-        intervention_cause_for, may_label_shutdown, opens_an_uncounted_shutdown,
-        shutdown_reason_for, supervisor_error_diagnostic,
+        OnParentExitOption, ParentWatchState, actuation_reason, checkpoint_progress,
+        establish_parent_watch, intervention_cause_for, may_label_shutdown,
+        opens_an_uncounted_shutdown, parent_has_exited, shutdown_reason_for,
+        supervisor_error_diagnostic,
     };
 
     fn sample() -> Event {
@@ -2183,5 +2193,77 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_ppid_match_alone_proves_the_parent_alive_without_inspecting_it() {
+        // Catches a transient inspection hiccup (rusage/proc_pidinfo failing for one tick) being
+        // read as the parent's death while `getppid()` still names it: on macOS reparenting only
+        // ever happens after the real parent has exited, so the pid match alone is conclusive and
+        // must short-circuit before any inspection, let alone latch a false exit off of one.
+        let inventory = NativeProcessInventory;
+        let real_parent_pid = i32::try_from(std::os::unix::process::parent_id())
+            .expect("this test process's real ppid must fit i32");
+        let parent = inventory
+            .inspect(real_parent_pid)
+            .expect("this test process's real, live parent must be inspectable")
+            .identity;
+        let mut state = ParentWatchState {
+            parent: Some(parent),
+            watch: ParentWatch::Active,
+            on_parent_exit: OnParentExit::Terminate,
+            exited_at_ms: None,
+        };
+
+        assert!(!parent_has_exited(
+            &mut state,
+            inventory,
+            Duration::from_millis(1)
+        ));
+        assert!(
+            state.exited_at_ms.is_none(),
+            "a live parent must never latch an exit"
+        );
+    }
+
+    #[test]
+    fn a_changed_ppid_only_latches_once_the_recorded_identity_is_confirmed_gone() {
+        // Catches the pre-filter's ppid mismatch alone being trusted as proof of death: it must
+        // only ever open a confirmation step, and only a recorded identity that confirmation can
+        // no longer see alive may latch the exit.
+        let inventory = NativeProcessInventory;
+        let mut child = Command::new("/bin/sleep")
+            .arg("5")
+            .spawn()
+            .expect("a throwaway child process must spawn");
+        let child_pid = i32::try_from(child.id()).expect("the throwaway child's pid must fit i32");
+        let recorded = inventory
+            .inspect(child_pid)
+            .expect("the live throwaway child must be inspectable")
+            .identity;
+        child
+            .kill()
+            .expect("the throwaway child must accept SIGKILL");
+        child.wait().expect("the throwaway child must be reaped");
+
+        // `child_pid` is a distinct, freshly spawned pid: it cannot equal this test process's
+        // real, unchanged ppid, so the pre-filter is guaranteed to fire and fall through to
+        // confirmation instead of returning early on a pid match.
+        let real_parent_pid = i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0);
+        assert_ne!(real_parent_pid, child_pid);
+
+        let mut state = ParentWatchState {
+            parent: Some(recorded),
+            watch: ParentWatch::Active,
+            on_parent_exit: OnParentExit::Terminate,
+            exited_at_ms: None,
+        };
+
+        assert!(parent_has_exited(
+            &mut state,
+            inventory,
+            Duration::from_millis(7)
+        ));
+        assert_eq!(state.exited_at_ms, Some(7));
     }
 }
