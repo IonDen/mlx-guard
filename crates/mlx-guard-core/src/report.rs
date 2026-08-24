@@ -735,3 +735,26 @@ impl Error for ReportError {
         }
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{ChildStatus, RootOutcome};
+    use crate::SignalNumber;
+
+    #[test]
+    fn from_root_outcome_maps_an_exited_root_to_the_exited_arm() {
+        assert_eq!(
+            ChildStatus::from(RootOutcome::Exited(3)),
+            ChildStatus::Exited { code: 3 }
+        );
+    }
+
+    #[test]
+    fn from_root_outcome_maps_a_signaled_root_to_the_signaled_arm() {
+        let signal = SignalNumber::new(9).unwrap();
+        assert_eq!(
+            ChildStatus::from(RootOutcome::Signaled(signal)),
+            ChildStatus::Signaled { signal: 9 }
+        );
+    }
+}

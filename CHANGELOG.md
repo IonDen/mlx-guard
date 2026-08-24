@@ -11,8 +11,8 @@ versions follow Semantic Versioning.
   requested cooperative checkpoint waits for the worker's authenticated acknowledgement.
 - Reports record `outcome.child_status`, the root command's own exit status, independently of
   whichever result ends up owning the process exit code.
-- Reports record `outcome.owned_group_survivors`, whether owned-group members were still running
-  when the supervisor stopped.
+- Observe reports record `outcome.owned_group_survivors`, whether owned-group members were still
+  running when observation ended at root exit.
 - Each recorded signal now carries a `reason` describing why it was sent.
 - The policy state machine gained a `RootExited` event and a `SkippedRootExited` checkpoint
   disposition to support cleanup after the root command exits early.

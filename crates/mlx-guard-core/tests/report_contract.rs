@@ -136,7 +136,7 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
     // reason (or accepted once the check that happened to catch it changes).
     type Corrupt = fn(&mut ReportV1);
     type Expected = fn(&ReportError) -> bool;
-    let cases: [(&str, Corrupt, Expected); 11] = [
+    let cases: [(&str, Corrupt, Expected); 12] = [
         (
             "unredacted persistence",
             |r| r.privacy.redacted_before_persistence = false,
@@ -192,6 +192,14 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
             |r| {
                 r.outcome.kind = TerminalKind::ChildExited { code: 0 };
                 r.outcome.child_status = Some(ChildStatus::Exited { code: 3 });
+            },
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "child status disagrees with a signaled outcome",
+            |r| {
+                r.outcome.kind = TerminalKind::ChildSignaled { signal: 9 };
+                r.outcome.child_status = Some(ChildStatus::Signaled { signal: 15 });
             },
             |e| matches!(e, ReportError::InvalidEventOrder),
         ),
@@ -293,7 +301,9 @@ fn a_pre_0_2_report_parses_with_the_new_optional_fields_absent() {
 
 #[test]
 fn awkward_exit_fields_round_trip_byte_exact() {
-    // Catches dropping child_status, owned_group_survivors, or a signal reason on either side.
+    // Catches dropping child_status, owned_group_survivors, or a signal reason on either side of
+    // JSON serialization. This is a schema-level round trip; it does not exercise
+    // `From<RootOutcome> for ChildStatus` (see `report::tests` for that direct coverage).
     let json = include_str!("fixtures/report-v1-awkward.json");
     let report = ReportV1::from_json(json).unwrap();
     assert_eq!(
