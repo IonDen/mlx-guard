@@ -4,10 +4,10 @@ use std::time::Duration;
 use mlx_guard_core::{
     AdvisoryMetrics, AdvisoryScope, AdvisorySnapshot, ArtifactErrorCode, ArtifactErrorRecord,
     Capabilities, CheckpointRecord, CheckpointStatus, ChildStatus, EscapeEvidence,
-    MemoryPressureLevel, ObservationError, Observed, PolicyState, PrivacyDefaults,
-    REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1, RunIdentity,
-    SampleWindow, SignalReason, SignalRecord, SignalResult, SignalTarget, TerminalKind,
-    TerminalOutcome, TransitionRecord, UnavailableReason,
+    MemoryPressureLevel, ObservationError, Observed, OnParentExit, ParentWatch, PolicyState,
+    PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1,
+    RunIdentity, SampleWindow, SignalReason, SignalRecord, SignalResult, SignalTarget,
+    TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
 };
 
 fn identity() -> RunIdentity {
@@ -52,6 +52,8 @@ fn report() -> ReportV1 {
             max_sample_window_ms: 10,
             checkpoint_timeout_ms: Some(50),
             term_grace_ms: 100,
+            on_parent_exit: None,
+            parent_watch: None,
         },
         samples: vec![SampleWindow {
             captured_at_ms: 10,
@@ -102,6 +104,7 @@ fn report() -> ReportV1 {
             final_footprint_bytes: Observed::Unknown,
             child_status: None,
             owned_group_survivors: None,
+            parent_exited_at_ms: None,
         },
         privacy,
     }
@@ -136,7 +139,7 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
     // reason (or accepted once the check that happened to catch it changes).
     type Corrupt = fn(&mut ReportV1);
     type Expected = fn(&ReportError) -> bool;
-    let cases: [(&str, Corrupt, Expected); 12] = [
+    let cases: [(&str, Corrupt, Expected); 15] = [
         (
             "unredacted persistence",
             |r| r.privacy.redacted_before_persistence = false,
@@ -200,6 +203,24 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
             |r| {
                 r.outcome.kind = TerminalKind::ChildSignaled { signal: 9 };
                 r.outcome.child_status = Some(ChildStatus::Signaled { signal: 15 });
+            },
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "parent watch detach without the detach option",
+            |r| r.configuration.parent_watch = Some(ParentWatch::Detach),
+            |e| matches!(e, ReportError::InvalidConfiguration),
+        ),
+        (
+            "parent exit evidence without an active or detach watch",
+            |r| r.outcome.parent_exited_at_ms = Some(1),
+            |e| matches!(e, ReportError::InvalidConfiguration),
+        ),
+        (
+            "parent exit evidence after the outcome",
+            |r| {
+                r.configuration.parent_watch = Some(ParentWatch::Active);
+                r.outcome.parent_exited_at_ms = Some(r.outcome.at_ms + 1);
             },
             |e| matches!(e, ReportError::InvalidEventOrder),
         ),
@@ -295,8 +316,15 @@ fn a_pre_0_2_report_parses_with_the_new_optional_fields_absent() {
     let report = ReportV1::from_json(include_str!("fixtures/report-v1.json")).unwrap();
     assert_eq!(report.outcome.child_status, None);
     assert_eq!(report.outcome.owned_group_survivors, None);
+    assert_eq!(report.configuration.on_parent_exit, None);
+    assert_eq!(report.configuration.parent_watch, None);
+    assert_eq!(report.outcome.parent_exited_at_ms, None);
     assert!(report.signals.iter().all(|signal| signal.reason.is_none()));
-    assert!(!report.to_json_pretty().unwrap().contains("child_status"));
+    let encoded = report.to_json_pretty().unwrap();
+    assert!(!encoded.contains("child_status"));
+    assert!(!encoded.contains("on_parent_exit"));
+    assert!(!encoded.contains("parent_watch"));
+    assert!(!encoded.contains("parent_exited_at_ms"));
 }
 
 #[test]
@@ -315,5 +343,21 @@ fn awkward_exit_fields_round_trip_byte_exact() {
         report.signals[0].reason,
         Some(SignalReason::RootExitCleanup)
     );
+    assert_eq!(report.to_json_pretty().unwrap(), json);
+}
+
+#[test]
+fn parent_fields_round_trip_byte_exact() {
+    // Catches dropping on_parent_exit, parent_watch, a parent_exit signal reason, or
+    // parent_exited_at_ms on either side of JSON serialization.
+    let json = include_str!("fixtures/report-v1-parent.json");
+    let report = ReportV1::from_json(json).unwrap();
+    assert_eq!(
+        report.configuration.on_parent_exit,
+        Some(OnParentExit::Terminate)
+    );
+    assert_eq!(report.configuration.parent_watch, Some(ParentWatch::Active));
+    assert_eq!(report.signals[0].reason, Some(SignalReason::ParentExit));
+    assert_eq!(report.outcome.parent_exited_at_ms, Some(120));
     assert_eq!(report.to_json_pretty().unwrap(), json);
 }

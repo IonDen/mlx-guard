@@ -191,6 +191,8 @@ fn oversized_record_is_rejected_before_any_bytes_are_appended() {
             max_sample_window_ms: 10,
             checkpoint_timeout_ms: None,
             term_grace_ms: 100,
+            on_parent_exit: None,
+            parent_watch: None,
         },
         privacy: PrivacyDefaults::default(),
     };

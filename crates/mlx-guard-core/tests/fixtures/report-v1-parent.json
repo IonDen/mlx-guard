@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "package_version": "0.1.0",
+  "run": {
+    "run_id": "run_0123456789abcdef0123456789abcdef",
+    "executable_basename": "python",
+    "argument_count": 1,
+    "correlation_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  },
+  "capabilities": {
+    "darwin_footprint": {
+      "status": "available",
+      "value": true
+    },
+    "owned_process_group": {
+      "status": "available",
+      "value": true
+    },
+    "checkpoint_channel": {
+      "status": "unavailable",
+      "reason": "not_negotiated"
+    }
+  },
+  "configuration": {
+    "mode": "enforce",
+    "max_footprint_bytes": 100,
+    "warning_footprint_bytes": 90,
+    "recovery_footprint_bytes": 80,
+    "emergency_footprint_bytes": 150,
+    "required_breach_samples": 2,
+    "max_missing_samples": 3,
+    "wall_time_ms": 1000,
+    "sample_interval_ms": 50,
+    "max_sample_age_ms": 100,
+    "max_sample_window_ms": 10,
+    "checkpoint_timeout_ms": 50,
+    "term_grace_ms": 100,
+    "on_parent_exit": "terminate",
+    "parent_watch": "active"
+  },
+  "samples": [
+    {
+      "captured_at_ms": 10,
+      "processed_at_ms": 11,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 90
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "stale",
+          "last_seen_at_ms": 5
+        },
+        "compressor_bytes": {
+          "status": "unavailable",
+          "reason": "not_supported"
+        },
+        "wired_bytes": {
+          "status": "error",
+          "code": "permission_denied"
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 20
+        }
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "at_ms": 12,
+      "from": "normal",
+      "to": "warning",
+      "aggregate_footprint_bytes": 100
+    }
+  ],
+  "signals": [
+    {
+      "at_ms": 13,
+      "signal": 15,
+      "target": "owned_process_group",
+      "result": "delivered",
+      "reason": "parent_exit"
+    }
+  ],
+  "checkpoint": {
+    "status": "requested_unverified",
+    "at_ms": 12
+  },
+  "escape": {
+    "detected": {
+      "status": "available",
+      "value": false
+    }
+  },
+  "artifact_errors": [
+    {
+      "at_ms": 14,
+      "code": "sync_failed"
+    }
+  ],
+  "outcome": {
+    "at_ms": 120,
+    "kind": "child_exited",
+    "code": 23,
+    "final_footprint_bytes": {
+      "status": "unknown"
+    },
+    "child_status": {
+      "status": "exited",
+      "code": 23
+    },
+    "owned_group_survivors": true,
+    "parent_exited_at_ms": 120
+  },
+  "privacy": {
+    "redacted_before_persistence": true,
+    "file_mode": "0600",
+    "upload": "disabled",
+    "retention": "user_managed",
+    "capture": "redacted_metadata_with_correlation_hash"
+  }
+}

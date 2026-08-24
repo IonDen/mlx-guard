@@ -475,6 +475,7 @@ impl RunRuntime<'_> {
             final_footprint_bytes: self.final_footprint.clone(),
             child_status,
             owned_group_survivors: None,
+            parent_exited_at_ms: None,
         };
         self.record_terminal(terminal);
         let notice = self.journal.stderr_notice();
@@ -867,6 +868,7 @@ impl ObserveRuntime {
             final_footprint_bytes: self.final_footprint.clone(),
             child_status,
             owned_group_survivors,
+            parent_exited_at_ms: None,
         };
         Self::record_terminal(
             &mut self.journal,
@@ -1143,6 +1145,7 @@ fn finalize_without_worker(
         final_footprint_bytes: Observed::Unknown,
         child_status,
         owned_group_survivors: None,
+        parent_exited_at_ms: None,
     };
     let is_child_exit = matches!(
         outcome,
@@ -1265,6 +1268,8 @@ fn observe_configuration(common: &CommonOptions) -> ReportConfiguration {
         max_sample_window_ms: duration_ms(common.sample_interval),
         checkpoint_timeout_ms: None,
         term_grace_ms: duration_ms(TERM_GRACE),
+        on_parent_exit: None,
+        parent_watch: None,
     }
 }
 
@@ -1284,6 +1289,8 @@ fn run_configuration(options: &RunOptions) -> ReportConfiguration {
         max_sample_window_ms: duration_ms(policy.max_sample_window),
         checkpoint_timeout_ms: policy.checkpoint_timeout.map(duration_ms),
         term_grace_ms: duration_ms(policy.term_grace),
+        on_parent_exit: None,
+        parent_watch: None,
     }
 }
 
