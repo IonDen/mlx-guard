@@ -13,6 +13,7 @@ use mlx_guard_cli::{execute, parse_cli};
 use mlx_guard_core::{
     CheckpointStatus, ChildStatus, PolicyState, ReportV1, SignalResult, SignalTarget,
     SupervisorOutcome, TerminalKind, TerminalSignalMonitor, checkpoint_signal_usr1,
+    hangup_is_ignored,
 };
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
@@ -318,4 +319,41 @@ fn escaped_descendant_is_reported_as_containment_uncertainty() {
         mlx_guard_core::Observed::Available { value: true }
     );
     assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
+}
+
+struct HangupDispositionGuard;
+impl Drop for HangupDispositionGuard {
+    fn drop(&mut self) {
+        // SAFETY: restores the test-owned SIGHUP disposition even when an assertion panics.
+        unsafe { libc::signal(libc::SIGHUP, libc::SIG_DFL) };
+    }
+}
+
+#[test]
+fn sighup_is_captured_unless_the_caller_already_ignored_it() {
+    let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    let _guard = HangupDispositionGuard;
+    // Phase 1: default disposition → captured and polled.
+    {
+        assert!(!hangup_is_ignored().unwrap());
+        let monitor = TerminalSignalMonitor::install().unwrap();
+        assert!(!monitor.hangup_ignored());
+        // SAFETY: raising a captured signal in-process only exercises the installed handler.
+        unsafe { libc::raise(libc::SIGHUP) };
+        let signals = monitor.poll().unwrap();
+        assert!(signals.iter().any(|s| s.get() == 1), "{signals:?}");
+    }
+    // Phase 2: SIG_IGN before install → probe reports it, capture skipped, drop preserves it.
+    unsafe { libc::signal(libc::SIGHUP, libc::SIG_IGN) };
+    {
+        assert!(hangup_is_ignored().unwrap());
+        let monitor = TerminalSignalMonitor::install().unwrap();
+        assert!(monitor.hangup_ignored());
+        unsafe { libc::raise(libc::SIGHUP) };
+        assert!(monitor.poll().unwrap().is_empty());
+    }
+    assert!(
+        hangup_is_ignored().unwrap(),
+        "drop must not clobber the caller's SIG_IGN"
+    );
 }

@@ -56,7 +56,8 @@ pub use policy::{
 pub use process_control::{
     CheckpointEndpoint, ClientReady, ControlError, ControlErrorKind, LaunchError, LaunchErrorKind,
     LaunchOptions, OwnedProcess, ProcessControlHandle, RootOutcome, StdioMode,
-    TerminalSignalMonitor, checkpoint_signal_usr1, validate_noninteractive_terminal,
+    TerminalSignalMonitor, checkpoint_signal_usr1, hangup_is_ignored,
+    validate_noninteractive_terminal,
 };
 pub use report::{
     AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
