@@ -30,6 +30,10 @@ An escape remains evidence for the whole run. Later group cleanup cannot turn th
 that an arbitrary daemon was contained. Discovery can still miss a process that forks, escapes, and
 exits entirely between snapshots.
 
+An exited process reports no process group, so it is never recorded as an escape. Each escaped
+identity contributes one increment to the escape count for the whole run, however many samples
+observe it.
+
 ## Aggregation
 
 Only live observations with validated identities and the owned PGID enter the aggregate. If any

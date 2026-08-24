@@ -186,6 +186,104 @@ fn tracker_revalidates_identity_and_types_reparent_escape_and_missing_data() {
 }
 
 #[test]
+fn seventy_synthetic_escapees_count_seventy_not_thousands() {
+    // Catches recounting an escapee on every sample once the bounded evidence cap is full.
+    let root = ProcessIdentity {
+        pid: 100,
+        start_abstime: 1,
+    };
+    let mut tracker = IdentityTracker::new(root, 100).unwrap();
+    let root_member = observation(100, 1, 1, 100, Some(1));
+    let owned: Vec<_> = (0..70)
+        .map(|index| {
+            observation(
+                200 + index,
+                u64::try_from(index).unwrap() + 2,
+                100,
+                100,
+                Some(1),
+            )
+        })
+        .collect();
+
+    let mut bound = vec![root_member];
+    bound.extend(owned.iter().copied());
+    let first = tracker.update(snapshot(bound));
+    assert_eq!(first.owned_members.len(), 71);
+    assert_eq!(tracker.escaped_count(), 0);
+    assert!(!first.escape_observed);
+
+    for _round in 0..4 {
+        let mut escaping = vec![root_member];
+        escaping.extend(owned.iter().map(|member| ProcessObservation {
+            process_group_id: 900,
+            ..*member
+        }));
+        let frame = tracker.update(snapshot(escaping));
+        assert!(frame.escape_observed);
+        assert_eq!(tracker.escaped_count(), 70);
+    }
+}
+
+#[test]
+fn a_reobserved_escapee_is_never_recounted() {
+    // Catches an escapee inside the evidence cap contributing one increment per sample.
+    let root = ProcessIdentity {
+        pid: 100,
+        start_abstime: 1,
+    };
+    let mut tracker = IdentityTracker::new(root, 100).unwrap();
+    let bound = tracker.update(snapshot(vec![
+        observation(100, 1, 1, 100, Some(1)),
+        observation(201, 2, 100, 100, Some(4)),
+    ]));
+    assert_eq!(bound.owned_members.len(), 2);
+    assert_eq!(tracker.escaped_count(), 0);
+
+    for _sample in 0..3 {
+        let frame = tracker.update(snapshot(vec![
+            observation(100, 1, 1, 100, Some(1)),
+            observation(201, 2, 100, 900, Some(4)),
+        ]));
+        assert!(frame.escape_observed);
+        assert_eq!(tracker.escaped_count(), 1);
+    }
+}
+
+#[test]
+fn an_exited_child_is_not_an_escape() {
+    // Catches an exited child, which reports group zero, being counted as containment escape.
+    let root = ProcessIdentity {
+        pid: 100,
+        start_abstime: 1,
+    };
+    let mut tracker = IdentityTracker::new(root, 100).unwrap();
+    let bound = tracker.update(snapshot(vec![
+        observation(100, 1, 1, 100, Some(1)),
+        observation(201, 2, 100, 100, Some(4)),
+    ]));
+    assert_eq!(bound.owned_members.len(), 2);
+
+    let frame = tracker.update(snapshot(vec![
+        observation(100, 1, 1, 100, Some(1)),
+        ProcessObservation {
+            parent_pid: 0,
+            process_group_id: 0,
+            exited: true,
+            ..observation(201, 2, 100, 100, Some(4))
+        },
+    ]));
+    assert_eq!(tracker.escaped_count(), 0);
+    assert!(!frame.escape_observed);
+    assert!(
+        !frame
+            .events
+            .iter()
+            .any(|event| matches!(event, ContainmentEvent::LeftOwnedGroup { .. }))
+    );
+}
+
+#[test]
 fn native_inventory_binds_start_time_and_refuses_a_stale_direct_signal() {
     // Catches treating a live PID alone as identity before direct action.
     let inventory = NativeProcessInventory::new();

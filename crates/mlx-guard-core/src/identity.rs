@@ -138,6 +138,11 @@ pub struct TrackingFrame {
 struct TrackedProcess {
     identity: ProcessIdentity,
     parent_pid: i32,
+    /// Sticky per-identity mark that an escape was already counted for this identity.
+    ///
+    /// The mark rides on the per-sample tracked set, so it stays bounded by the live members
+    /// while remaining independent of the capped `escaped` evidence list.
+    escaped: bool,
 }
 
 const MAX_ESCAPED_EVIDENCE: usize = 64;
@@ -173,6 +178,15 @@ impl IdentityTracker {
             escaped_count: 0,
             root_exit_observed: false,
         })
+    }
+
+    /// Count of distinct identities observed outside the owned group, counted once each.
+    ///
+    /// The count is not bounded by the retained escape evidence: identities past the evidence
+    /// cap are still counted, but each identity contributes exactly one increment.
+    #[must_use]
+    pub const fn escaped_count(&self) -> u64 {
+        self.escaped_count
     }
 
     /// Revalidate a non-atomic snapshot and derive only currently bound live members.
@@ -212,24 +226,29 @@ impl IdentityTracker {
                 });
             }
 
+            // An exited process reports group zero, so it must never read as an escape.
+            let escaping = !is_root && !in_owned_group && !observation.exited;
+            let counted_before = was_tracked.is_some_and(|tracked| tracked.escaped)
+                || self.escaped.contains(&observation.identity);
             next_tracked.insert(
                 observation.identity,
                 TrackedProcess {
                     identity: observation.identity,
                     parent_pid: observation.parent_pid,
+                    escaped: counted_before || escaping,
                 },
             );
-            if !is_root && !in_owned_group {
-                if self.escaped.len() < MAX_ESCAPED_EVIDENCE {
-                    if self.escaped.insert(observation.identity) {
-                        self.escaped_count = self.escaped_count.saturating_add(1);
-                        events.push(ContainmentEvent::LeftOwnedGroup {
-                            identity: observation.identity,
-                            observed_group: observation.process_group_id,
-                        });
-                    }
-                } else if !self.escaped.contains(&observation.identity) {
+            if escaping {
+                if !counted_before {
                     self.escaped_count = self.escaped_count.saturating_add(1);
+                }
+                if self.escaped.len() < MAX_ESCAPED_EVIDENCE
+                    && self.escaped.insert(observation.identity)
+                {
+                    events.push(ContainmentEvent::LeftOwnedGroup {
+                        identity: observation.identity,
+                        observed_group: observation.process_group_id,
+                    });
                 }
             } else if !observation.exited {
                 owned_members.push(observation);
