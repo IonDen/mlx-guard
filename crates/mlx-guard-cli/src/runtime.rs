@@ -888,12 +888,13 @@ impl RunRuntime<'_> {
             }),
             JournalDurability::Sync,
         );
+        let escaped_count = self.sampler.escaped_count();
         self.record(
             JournalEntry::Escape(EscapeEvidence {
                 detected: Observed::Available {
                     value: self.escape_detected,
                 },
-                escaped_count: None,
+                escaped_count: (escaped_count > 0).then_some(escaped_count),
             }),
             JournalDurability::Buffered,
         );
@@ -1264,6 +1265,7 @@ impl ObserveRuntime {
             }),
             JournalDurability::Sync,
         );
+        let escaped_count = sampler.escaped_count();
         record_resilient(
             journal,
             sequence,
@@ -1271,7 +1273,7 @@ impl ObserveRuntime {
                 detected: Observed::Available {
                     value: escape_detected,
                 },
-                escaped_count: None,
+                escaped_count: (escaped_count > 0).then_some(escaped_count),
             }),
             JournalDurability::Buffered,
         );

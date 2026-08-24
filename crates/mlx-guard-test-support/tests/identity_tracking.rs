@@ -422,6 +422,7 @@ fn setsid_escape_and_cleanup_survivors_are_reported_without_unrelated_signals() 
         event,
         ContainmentEvent::LeftOwnedGroup { identity, .. } if *identity == escaped_identity
     )));
+    assert_eq!(tracker.escaped_count(), 1);
     drop(escaped);
     assert!(process_exists(escaped_pid));
     let report = wait_for_owned_group_empty(

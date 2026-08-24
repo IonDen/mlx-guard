@@ -324,4 +324,10 @@ impl FootprintSampler {
     pub fn history(&self) -> impl ExactSizeIterator<Item = &FootprintSample> {
         self.history.iter()
     }
+
+    /// Number of distinct identities observation has counted as having left the owned group.
+    #[must_use]
+    pub fn escaped_count(&self) -> u64 {
+        self.tracker.escaped_count()
+    }
 }
