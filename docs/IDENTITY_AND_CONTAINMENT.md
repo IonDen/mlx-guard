@@ -33,7 +33,9 @@ group, not merely under a different parent.
 An escape remains evidence for the whole run once a sample observes it. Later group cleanup cannot
 turn that run into a claim that an arbitrary daemon was contained. Escape detection happens only on
 the sample that catches it, so detection latency is bounded by the configured `--sample-interval`,
-and a descendant that escapes and exits again between two samples leaves no evidence at all.
+and a descendant that escapes and exits again between two samples leaves no evidence at all. A child
+that leaves both the owned process group and its parent link before observation first sees it — a
+daemonizer that detaches faster than one sample interval — is never recognized as an escape at all.
 
 An exited process reports no process group, so it is never recorded as an escape. Each distinct
 escaped identity contributes at least one increment to the escape count for the run. Above the
