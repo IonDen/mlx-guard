@@ -41,8 +41,9 @@ machine. Sampling continues after TERM or KILL is requested until process exit i
 
 The supervisor's own footprint scales with the number of currently live processes in the owned group,
 not with the total number of distinct pids ever observed. Per-sample cost is independent of run
-duration. Escape evidence retains at most 64 identities plus a total count; the per-sample frame
-carries only a boolean.
+duration. Escape evidence retains at most 64 identities plus a bounded count of distinct escapes; the
+count is not capped by that list and keeps incrementing past it, so truncation is counted rather than
+silent. The per-sample frame carries only a boolean.
 
 ## Interpretation limits
 

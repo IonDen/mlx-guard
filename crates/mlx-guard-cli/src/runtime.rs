@@ -888,11 +888,13 @@ impl RunRuntime<'_> {
             }),
             JournalDurability::Sync,
         );
+        let escaped_count = self.sampler.escaped_count();
         self.record(
             JournalEntry::Escape(EscapeEvidence {
                 detected: Observed::Available {
                     value: self.escape_detected,
                 },
+                escaped_count: (escaped_count > 0).then_some(escaped_count),
             }),
             JournalDurability::Buffered,
         );
@@ -1263,6 +1265,7 @@ impl ObserveRuntime {
             }),
             JournalDurability::Sync,
         );
+        let escaped_count = sampler.escaped_count();
         record_resilient(
             journal,
             sequence,
@@ -1270,6 +1273,7 @@ impl ObserveRuntime {
                 detected: Observed::Available {
                     value: escape_detected,
                 },
+                escaped_count: (escaped_count > 0).then_some(escaped_count),
             }),
             JournalDurability::Buffered,
         );
@@ -1455,6 +1459,8 @@ fn append_terminal(
             detected: Observed::Available {
                 value: escape_detected,
             },
+            // No sampler in scope on this pre-launch failure path: nothing was ever observed.
+            escaped_count: None,
         }),
         JournalDurability::Buffered,
     )?;

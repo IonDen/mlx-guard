@@ -26,9 +26,22 @@ identities tracked in earlier frames. This lets the tracker record:
 - a same-group grandchild observed after its intermediate parent exited;
 - a descendant that left the owned group with `setsid`.
 
-An escape remains evidence for the whole run. Later group cleanup cannot turn that run into a claim
-that an arbitrary daemon was contained. Discovery can still miss a process that forks, escapes, and
-exits entirely between snapshots.
+A changed parent alone is reparent evidence, not an escape: a double-forked descendant that keeps the
+owned process group is recorded only as `Reparented`, because escape requires being outside that
+group, not merely under a different parent.
+
+An escape remains evidence for the whole run once a sample observes it. Later group cleanup cannot
+turn that run into a claim that an arbitrary daemon was contained. Escape detection happens only on
+the sample that catches it, so detection latency is bounded by the configured `--sample-interval`,
+and a descendant that escapes and exits again between two samples leaves no evidence at all. A child
+that leaves both the owned process group and its parent link before observation first sees it — a
+daemonizer that detaches faster than one sample interval — is never recognized as an escape at all.
+
+An exited process reports no process group, so it is never recorded as an escape. Each distinct
+escaped identity contributes at least one increment to the escape count for the run. Above the
+retained-evidence cap the counted mark lives only on the tracked set, so an identity that a sample
+misses and later re-observes can add a further increment. The count is bounded evidence of distinct
+escapes, not an exact census. The report persists this count, never the escaped identities' pids.
 
 ## Aggregation
 
@@ -47,10 +60,14 @@ claim about all machine memory.
 
 Cleanup polling combines identity-bound snapshots with a direct nonzero PGID existence check. It
 reports the bound survivors at the deadline. An owned group is empty only when no live validated
-member is observed and the operating system reports no such group. Enumeration uncertainty prevents
+member is observed and the operating system reports no such group. An empty owned group is not
+containment: an escaped descendant sits outside the group by definition, so neither the cleanup TERM
+nor an escalated KILL, both scoped to the owned group, can reach it. Enumeration uncertainty prevents
 a complete result. Any observed escape also keeps the overall cleanup result incomplete, even if the
-owned group itself becomes empty.
+owned group itself becomes empty. Because an exited child is never recorded as an escape, an ordinary
+child that exits before cleanup polls no longer marks that result incomplete on its own.
 
-Real-process tests exercise child churn, same-group double-fork reparenting, live `setsid` escape,
-retained root zombies, TERM-resistant survivors, exact-start direct signalling, and protection of an
-unrelated or reused PID.
+Real-process tests exercise child churn, same-group double-fork reparenting, live `setsid` escape, a
+daemonized grandchild counted as an escape, flooding past the evidence cap while still counting every
+escape exactly, retained root zombies, TERM-resistant survivors, exact-start direct signalling, and
+protection of an unrelated or reused PID.

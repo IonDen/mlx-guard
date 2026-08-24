@@ -25,6 +25,20 @@ const FIXTURE_EXIT: u8 = 70;
 const ARTIFACT_EXIT: u8 = 74;
 const TIMEOUT_EXIT: i32 = 124;
 
+/// Wall time each `escape-flood` member gets after it announces its own escape.
+///
+/// Long enough that every member overlaps hundreds of the escape tests' sampling intervals, and
+/// far inside the fixture crate's own hard ceiling.
+const FLOOD_MEMBER_WALL_MS: u64 = 2_000;
+
+/// How long a daemonizing intermediate stays alive after its grandchild announces a new session.
+///
+/// The grandchild is reachable as a descendant only through this parent link, and a fixture cannot
+/// observe the supervisor's sampler, so this is the window in which the escape can be seen. It is
+/// twenty times the 10 ms sampling interval the escape tests use, which keeps several samples in
+/// the window even on a starved machine whose sampling loop runs far slower than it asked to.
+const DAEMONIZE_OBSERVATION_HOLD: Duration = Duration::from_millis(200);
+
 static CHECKPOINT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 fn main() -> ExitCode {
@@ -61,6 +75,9 @@ fn run() -> Result<(), RunError> {
         "spawn-churn" => run_spawn_churn(),
         "double-fork" => run_double_fork(limits),
         "double-fork-intermediate" => run_double_fork_intermediate(limits),
+        "daemonize" => run_daemonize(limits),
+        "daemonize-intermediate" => run_daemonize_intermediate(limits),
+        "escape-flood" => run_escape_flood(limits),
         "setsid-parent" => run_setsid_parent(limits),
         "setsid-stall" => run_setsid_stall(),
         "fast-root-exit" => run_fast_root_exit(limits),
@@ -316,6 +333,139 @@ fn run_double_fork_intermediate(limits: FixtureLimits) -> Result<(), RunError> {
     write_phase(&format!("GRANDCHILD pid={}", child.id()))
 }
 
+fn run_daemonize(limits: FixtureLimits) -> Result<(), RunError> {
+    // The `double-fork` scaffolding, except the grandchild also opens its own session: it leaves
+    // the owned process group instead of only losing its parent.
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let wall_ms = limits.wall_time().as_millis().to_string();
+    let intermediate = Command::new(executable)
+        .args(["daemonize-intermediate", "1", &wall_ms])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| RunError::fixture(format!("intermediate failed: {error}")))?;
+    let intermediate_pid = intermediate.id();
+    let output = intermediate
+        .wait_with_output()
+        .map_err(|error| RunError::fixture(format!("intermediate wait failed: {error}")))?;
+    if !output.status.success() {
+        return Err(RunError::fixture("intermediate did not exit normally"));
+    }
+    let output = String::from_utf8(output.stdout)
+        .map_err(|_| RunError::fixture("intermediate output was not UTF-8"))?;
+    let child_pid = output
+        .trim()
+        .strip_prefix("GRANDCHILD pid=")
+        .ok_or_else(|| RunError::fixture("intermediate omitted grandchild PID"))?
+        .parse::<u32>()
+        .map_err(|_| RunError::fixture("grandchild PID was not numeric"))?;
+    publish_pids(&[child_pid])?;
+    write_phase(&format!(
+        "DAEMONIZED pid={child_pid} intermediate_pid={intermediate_pid}"
+    ))?;
+    loop {
+        thread::park();
+    }
+}
+
+fn run_daemonize_intermediate(limits: FixtureLimits) -> Result<(), RunError> {
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let wall_ms = limits.wall_time().as_millis().to_string();
+    let mut child = Command::new(executable)
+        .args(["setsid-stall", "1", &wall_ms])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| RunError::fixture(format!("daemon failed: {error}")))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| RunError::fixture("daemon stdout was not piped"))?;
+    // Wait for the daemon's own announcement instead of sleeping: only after it returns is the
+    // new session real, so the escape this fixture exists to produce has actually happened.
+    let announcement = io::BufReader::new(stdout)
+        .lines()
+        .next()
+        .ok_or_else(|| RunError::fixture("daemon omitted its escape announcement"))?
+        .map_err(|error| RunError::fixture(format!("daemon output failed: {error}")))?;
+    if !announcement.starts_with("ESCAPED ") {
+        return Err(RunError::fixture(format!(
+            "daemon announcement was unexpected: {announcement:?}"
+        )));
+    }
+    thread::sleep(DAEMONIZE_OBSERVATION_HOLD);
+    write_phase(&format!("GRANDCHILD pid={}", child.id()))
+}
+
+fn run_escape_flood(limits: FixtureLimits) -> Result<(), RunError> {
+    let member_count = usize::try_from(limits.allocation_bytes())
+        .map_err(|_| RunError::fixture("member count does not fit usize"))?;
+    if !(1..=100).contains(&member_count) {
+        return Err(RunError::usage("escape flood count must be within 1..=100"));
+    }
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let member_wall_ms = FLOOD_MEMBER_WALL_MS.to_string();
+    // One shared announcement pipe for every member, so this root learns that all of them have
+    // left the owned group by reading their announcements rather than by sleeping.
+    let (announcements, writer) = io::pipe()
+        .map_err(|error| RunError::fixture(format!("announcement pipe failed: {error}")))?;
+    for _ in 0..member_count {
+        let announcement = writer
+            .try_clone()
+            .map_err(|error| RunError::fixture(format!("announcement handle failed: {error}")))?;
+        // The handle is dropped straight away: it neither kills nor waits for the member, and
+        // this root learns every identity it needs from the shared announcement pipe instead.
+        Command::new(&executable)
+            .args(["setsid-stall", "1", &member_wall_ms])
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(announcement))
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| RunError::fixture(format!("flood member failed: {error}")))?;
+    }
+    // This root holds no writer of its own, so a member that dies before announcing closes the
+    // pipe and ends the read below instead of stalling it until the wall-time ceiling.
+    drop(writer);
+    let mut pids = Vec::with_capacity(member_count);
+    let mut lines = io::BufReader::new(announcements).lines();
+    while pids.len() < member_count {
+        let announcement = lines
+            .next()
+            .ok_or_else(|| RunError::fixture("flood announcements ended early"))?
+            .map_err(|error| RunError::fixture(format!("flood announcement failed: {error}")))?;
+        pids.push(parse_escaped_pid(&announcement)?);
+    }
+    publish_pids(&pids)?;
+    let listed = pids
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    write_phase(&format!("FLOODED n={member_count} pids={listed}"))?;
+    loop {
+        thread::park();
+    }
+}
+
+fn parse_escaped_pid(announcement: &str) -> Result<u32, RunError> {
+    announcement
+        .trim()
+        .strip_prefix("ESCAPED pid=")
+        .and_then(|rest| rest.split_whitespace().next())
+        .ok_or_else(|| {
+            RunError::fixture(format!(
+                "flood announcement was unexpected: {announcement:?}"
+            ))
+        })?
+        .parse()
+        .map_err(|_| RunError::fixture("flood announcement PID was not numeric"))
+}
+
 fn run_setsid_parent(limits: FixtureLimits) -> Result<(), RunError> {
     let executable = env::current_exe()
         .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
@@ -336,6 +486,7 @@ fn run_setsid_parent(limits: FixtureLimits) -> Result<(), RunError> {
         .next()
         .ok_or_else(|| RunError::fixture("setsid child omitted identity"))?
         .map_err(|error| RunError::fixture(format!("setsid output failed: {error}")))?;
+    publish_pids(&[child.id()])?;
     write_phase(&ready)?;
     loop {
         thread::park();
@@ -404,12 +555,7 @@ fn run_fast_root_exit(limits: FixtureLimits) -> Result<(), RunError> {
         }
     }
     write_phase(&format!("CHILD pid={}", child.id()))?;
-    if let Some(pid_file) = env::var_os("MLX_GUARD_FIXTURE_PID_FILE") {
-        let mut file = File::create(&pid_file)
-            .map_err(|error| RunError::fixture(format!("pid file create failed: {error}")))?;
-        writeln!(file, "{}", child.id())
-            .map_err(|error| RunError::fixture(format!("pid file write failed: {error}")))?;
-    }
+    publish_pids(&[child.id()])?;
     std::process::exit(23);
 }
 
@@ -676,6 +822,25 @@ where
             "expected {expected:?}, got EOF"
         ))),
     }
+}
+
+/// Hand the harness the PIDs it has to clean up itself, when it asked to be told.
+///
+/// A supervised fixture writes its phases to an inherited stdout the harness cannot read back, so
+/// a process the owned group can no longer reach is published through a harness-named file
+/// instead. Without that variable the fixture publishes nothing.
+fn publish_pids(pids: &[u32]) -> Result<(), RunError> {
+    let Some(path) = env::var_os("MLX_GUARD_FIXTURE_PID_FILE") else {
+        return Ok(());
+    };
+    let mut file = File::create(&path)
+        .map_err(|error| RunError::fixture(format!("pid file create failed: {error}")))?;
+    for pid in pids {
+        writeln!(file, "{pid}")
+            .map_err(|error| RunError::fixture(format!("pid file write failed: {error}")))?;
+    }
+    file.flush()
+        .map_err(|error| RunError::fixture(format!("pid file flush failed: {error}")))
 }
 
 fn write_phase(value: &str) -> Result<(), RunError> {

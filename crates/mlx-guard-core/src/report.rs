@@ -357,6 +357,14 @@ pub struct CheckpointRecord {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct EscapeEvidence {
     pub detected: Observed<bool>,
+    /// Escapes observation counted: at least one increment per distinct escaped identity, and
+    /// independent of the bounded in-memory evidence list, so truncation is counted rather than
+    /// silent. Above that cap the counted mark lives only on the tracked set, so an identity a
+    /// sample misses and later re-observes can add a further increment; this is bounded evidence
+    /// of distinct escapes, not an exact census. Present only when nonzero. Only the count is
+    /// persisted, never the escapees' pids.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escaped_count: Option<u64>,
 }
 
 /// Redacted persistence failures.
@@ -647,6 +655,9 @@ impl ReportV1 {
             .outcome
             .parent_exited_at_ms
             .is_none_or(|at_ms| at_ms <= self.outcome.at_ms);
+        let escaped_count_agrees_with_detection = self.escape.escaped_count.is_none_or(|count| {
+            count > 0 && matches!(self.escape.detected, Observed::Available { value: true })
+        });
         let last_event = self
             .samples
             .iter()
@@ -670,6 +681,7 @@ impl ReportV1 {
             || !child_status_signal_valid
             || !child_status_agrees
             || !parent_exit_evidence_before_the_outcome
+            || !escaped_count_agrees_with_detection
             || self.outcome.at_ms < last_event
         {
             return Err(ReportError::InvalidEventOrder);

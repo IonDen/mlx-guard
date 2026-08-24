@@ -93,6 +93,7 @@ fn report() -> ReportV1 {
         },
         escape: EscapeEvidence {
             detected: Observed::Available { value: false },
+            escaped_count: None,
         },
         artifact_errors: vec![ArtifactErrorRecord {
             at_ms: 14,
@@ -133,13 +134,14 @@ fn unavailable_unknown_stale_and_error_are_not_serialized_as_zero() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Keeping the evidence matrix linear makes omissions auditable.
 fn validator_rejects_each_unsafe_field_through_its_own_check() {
     // Catches callers bypassing defaults or smuggling sensitive strings through correlation data,
     // and catches a validator whose checks are miswired so a bad field is rejected for the wrong
     // reason (or accepted once the check that happened to catch it changes).
     type Corrupt = fn(&mut ReportV1);
     type Expected = fn(&ReportError) -> bool;
-    let cases: [(&str, Corrupt, Expected); 15] = [
+    let cases: [(&str, Corrupt, Expected); 17] = [
         (
             "unredacted persistence",
             |r| r.privacy.redacted_before_persistence = false,
@@ -221,6 +223,22 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
             |r| {
                 r.configuration.parent_watch = Some(ParentWatch::Active);
                 r.outcome.parent_exited_at_ms = Some(r.outcome.at_ms + 1);
+            },
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "escaped count positive without an observed detection",
+            |r| {
+                r.escape.detected = Observed::Available { value: false };
+                r.escape.escaped_count = Some(3);
+            },
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "escaped count present but zero",
+            |r| {
+                r.escape.detected = Observed::Available { value: true };
+                r.escape.escaped_count = Some(0);
             },
             |e| matches!(e, ReportError::InvalidEventOrder),
         ),
@@ -319,12 +337,26 @@ fn a_pre_0_2_report_parses_with_the_new_optional_fields_absent() {
     assert_eq!(report.configuration.on_parent_exit, None);
     assert_eq!(report.configuration.parent_watch, None);
     assert_eq!(report.outcome.parent_exited_at_ms, None);
+    assert_eq!(report.escape.escaped_count, None);
     assert!(report.signals.iter().all(|signal| signal.reason.is_none()));
     let encoded = report.to_json_pretty().unwrap();
     assert!(!encoded.contains("child_status"));
     assert!(!encoded.contains("on_parent_exit"));
     assert!(!encoded.contains("parent_watch"));
     assert!(!encoded.contains("parent_exited_at_ms"));
+    assert!(!encoded.contains("escaped_count"));
+}
+
+#[test]
+fn escaped_count_round_trips_when_present() {
+    // Catches escaped_count being dropped or miscoded on either side of JSON serialization.
+    let mut with_escapes = report();
+    with_escapes.escape.detected = Observed::Available { value: true };
+    with_escapes.escape.escaped_count = Some(65);
+    let encoded = with_escapes.to_json_pretty().unwrap();
+    assert!(encoded.contains("\"escaped_count\": 65"));
+    let parsed = ReportV1::from_json(&encoded).unwrap();
+    assert_eq!(parsed.escape.escaped_count, Some(65));
 }
 
 #[test]
