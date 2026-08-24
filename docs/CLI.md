@@ -26,6 +26,22 @@ Common options:
 - `--clear-env` starts the child without inherited environment entries.
 - `--env KEY=VALUE` sets one UTF-8 child environment value and may be repeated. Keys must be nonempty
   and unique. Values may contain `=`.
+- `--on-parent-exit terminate|detach`, default `terminate`. `terminate` watches the process that
+  launched `mlx-guard` and terminates the owned group when it is confirmed gone; `detach` leaves the
+  group running and only records the evidence. The watch is checked once per sampling-loop wake-up,
+  so detection latency is bounded by `--sample-interval` — up to 10s at the maximum. A launcher that
+  re-parents `mlx-guard` away from itself right after starting it — a double-fork daemonizer, or a
+  shell that backgrounds `mlx-guard` and then exits — looks the same to an already-established watch
+  as a parent dying unexpectedly, and the default terminates the group anyway. Pass
+  `--on-parent-exit=detach` for a launcher that intends `mlx-guard` to outlive it.
+
+The watch is not established for every run. Under the default `terminate` behavior, a launch whose
+immediate parent is already `launchd` (`parent_is_launchd`) or whose launcher had already disposed
+SIGHUP to `SIG_IGN` before `mlx-guard` started — the `nohup` convention (`hangup_ignored`) — skips the
+watch entirely, and `terminate` has nothing to act on; `--on-parent-exit=detach` establishes the
+watch in both cases anyway, since it only ever collects evidence and never acts on it. A parent whose
+identity could not be established at launch (`parent_unobservable`) is never checked either way. Use
+`--wall-time` as an independent backstop for a `run` whose parent watch may be off.
 
 `run` also accepts `--wall-time DURATION`, capped at 30 days. When present, it is an enforcement
 limit independent of memory.
@@ -74,14 +90,22 @@ reaches KILL through its own deadline, 75 owns the result even if the command en
 command ended by a forwarded terminal signal keeps `128+n`. When the root exits while owned-group
 members survive, `run` terminates them (TERM, one-second grace, KILL) and reports the root's own
 status unless KILL was needed; `observe` ends at root exit, leaves survivors running, and reports
-it.
+it. When the launching parent exits under the default `--on-parent-exit=terminate`, both modes treat
+that the same as a forwarded terminal signal: TERM, one-second grace, KILL if still alive, and the
+result is a policy intervention (75). `--on-parent-exit=detach` never opens this path.
 
 ## Signals, terminal, and stdio
 
-The native parent handles SIGINT and SIGTERM. The first terminal signal is forwarded unchanged to
-the validated owned process group. A second terminal signal skips any remaining checkpoint or TERM
-grace and requests immediate KILL. The parent continues sampling and writes the final result before
-it exits when storage and scheduling remain available.
+The native parent handles SIGHUP, SIGINT, and SIGTERM. The first terminal signal is forwarded
+unchanged to the validated owned process group. A second terminal signal skips any remaining
+checkpoint or TERM grace and requests immediate KILL. The parent continues sampling and writes the
+final result before it exits when storage and scheduling remain available.
+
+SIGHUP is captured only when it was not already disposed to `SIG_IGN` before `mlx-guard` started. A
+launcher that used the `nohup` convention (`trap '' HUP`, which survives `exec`) keeps that
+disposition: `mlx-guard` queries it once at startup and, if already ignored, never installs its own
+handler and never forwards a SIGHUP it did not itself receive because the shell already turned it
+into a no-op.
 
 Terminal signals are checked at sampler/policy wake-ups, so forwarding latency can approach the
 configured `--sample-interval`. If a child ignores the first SIGINT and remains alive through the

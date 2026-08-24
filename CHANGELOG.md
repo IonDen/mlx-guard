@@ -16,6 +16,17 @@ versions follow Semantic Versioning.
 - Each recorded signal now carries a `reason` describing why it was sent.
 - The policy state machine gained a `RootExited` event and a `SkippedRootExited` checkpoint
   disposition to support cleanup after the root command exits early.
+- `mlx-guard run` and `observe` accept `--on-parent-exit terminate|detach` (default `terminate`) to
+  control what happens to the owned group when the process that launched `mlx-guard` exits. The
+  policy state machine gained a matching `ParentExited` event and `SkippedParentExited` checkpoint
+  disposition; unlike root-exit cleanup, a parent exit does not cancel an in-flight checkpoint
+  request. Python's `ObserveConfig` and `RunConfig` gained a matching keyword-only `on_parent_exit`.
+- The native parent now captures SIGHUP as a third terminal signal alongside SIGINT and SIGTERM,
+  forwarding it to the owned group, unless the launching process had already disposed SIGHUP to
+  `SIG_IGN` (the `nohup` convention), in which case that disposition is left alone.
+- Reports record `configuration.on_parent_exit`, `configuration.parent_watch`, and
+  `outcome.parent_exited_at_ms`, and signal records gained the `parent_exit` reason — whether, and
+  how, a run watched for its launching parent's exit, and when that exit was confirmed.
 
 ### Changed
 
@@ -31,6 +42,12 @@ versions follow Semantic Versioning.
   survivors running, and marks them in the report (`owned_group_survivors`).
 - A run that loses measurement while enforcement is active now reports process exit code 70 with
   the signals it sent recorded in the report, instead of 75.
+- Before this release, a supervisor whose launching parent exited — its shell was killed, its
+  terminal closed, or the Python process that started it crashed — kept supervising the orphaned
+  command indefinitely. `run` and `observe` now terminate the owned group by default (TERM, a
+  one-second grace, KILL if needed) when that happens, and report a policy intervention (exit 75).
+  Pass `--on-parent-exit=detach` (or `on_parent_exit="detach"` from Python) to keep the previous
+  behavior.
 
 ### Fixed
 
@@ -39,6 +56,13 @@ versions follow Semantic Versioning.
 - Supervisor memory no longer grows with every distinct child process observed during a long
   run: containment-escape evidence is bounded to 64 identities, and the per-sample identity copy
   was removed. An opt-in pid-churn endurance test pins the bound.
+- Before this release, sending SIGHUP to the supervisor killed it outright with no final report.
+  It is now captured the same way as SIGINT and SIGTERM: forwarded to the owned group and recorded
+  as a signal.
+- Before this release, writing the final result summary panicked and exited 101 whenever whoever
+  held the supervisor's stdout had already gone away (for example, a client that closed the read
+  end of a piped stdout). The write now tolerates a broken pipe silently instead of panicking; any
+  other write or flush error still panics.
 
 ## [0.1.0] - 2026-08-12
 
