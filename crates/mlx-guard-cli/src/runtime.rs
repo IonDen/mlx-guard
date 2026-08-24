@@ -1378,6 +1378,10 @@ fn actuation_reason(
                 Some(SignalReason::ObservationFailure)
             }
             CheckpointDisposition::SkippedSupervisorFailure => Some(SignalReason::SupervisorFault),
+            // Task 6 flips this to the parent-exit reason once the schema variant exists
+            // (`SignalReason::ParentExit` isn't added until Task 2, and nothing constructs
+            // `Event::ParentExited` until Task 6, so this arm is unreachable in this commit).
+            CheckpointDisposition::SkippedParentExited => None,
             CheckpointDisposition::AcknowledgedUnverifiedDurability
             | CheckpointDisposition::TimedOut
             | CheckpointDisposition::SkippedCheckpointFailure
@@ -1412,7 +1416,10 @@ fn checkpoint_progress(
             | CheckpointDisposition::SkippedCheckpointFailure
             | CheckpointDisposition::SkippedObservationFailure
             | CheckpointDisposition::SkippedSupervisorFailure
-            | CheckpointDisposition::SkippedNotNegotiated => None,
+            | CheckpointDisposition::SkippedNotNegotiated
+            // A parent's death says nothing about the cooperative endpoint either, so the
+            // negotiated status stays unchanged — this is the final value, not a placeholder.
+            | CheckpointDisposition::SkippedParentExited => None,
         },
         Actuation::Kill | Actuation::ForwardSignal(_) => None,
     }
