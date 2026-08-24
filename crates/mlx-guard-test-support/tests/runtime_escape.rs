@@ -12,7 +12,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mlx_guard_cli::{RuntimeResult, execute, parse_cli};
 use mlx_guard_core::{
-    Observed, PolicyState, ReportV1, SignalReason, SignalTarget, SupervisorOutcome, TerminalKind,
+    Observed, PolicyState, ReportV1, SignalReason, SignalResult, SignalTarget, SupervisorOutcome,
+    TerminalKind,
 };
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
@@ -58,12 +59,12 @@ fn process_exists(pid: i32) -> bool {
     }
 }
 
-/// Wait until the pid names nothing, bounded by a deadline rather than a fixed sleep.
+/// Wait until the pid names nothing, bounded by a shared deadline rather than a fixed sleep.
 ///
 /// An escapee this test kills is an orphan, so `launchd` reaps its zombie; the wait therefore
-/// polls for the reaped state instead of stopping at the kill.
-fn wait_until_gone(pid: i32) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(5);
+/// polls for the reaped state instead of stopping at the kill. The deadline is an argument so a
+/// sweep over seventy escapees is bounded once in total rather than once per pid.
+fn wait_until_gone(pid: i32, deadline: Instant) -> bool {
     while process_exists(pid) && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
@@ -82,10 +83,11 @@ impl Drop for EscapeeCleanup {
             // SAFETY: the pid names an escapee this test's own fixture published.
             unsafe { libc::kill(*pid, libc::SIGKILL) };
         }
+        let deadline = Instant::now() + Duration::from_secs(5);
         for pid in &self.0 {
             // A failed wait must not panic here: unwinding out of a drop during another panic
             // aborts the whole test binary and hides the real assertion.
-            let gone = wait_until_gone(*pid);
+            let gone = wait_until_gone(*pid, deadline);
             assert!(
                 gone || thread::panicking(),
                 "escapee {pid} outlived cleanup"
@@ -109,7 +111,11 @@ fn published_pids(path: &Path) -> Vec<i32> {
     };
     contents
         .lines()
-        .map(|line| line.trim().parse().unwrap())
+        .map(|line| {
+            line.trim()
+                .parse()
+                .unwrap_or_else(|error| panic!("published pid line {line:?} was unusable: {error}"))
+        })
         .collect()
 }
 
@@ -169,8 +175,18 @@ fn a_setsid_escape_is_counted_once_and_an_empty_group_is_not_containment() {
         "{report:#?}"
     );
     assert_eq!(report.escape.escaped_count, Some(1), "{report:#?}");
-    // Every signal this run sent aimed at the owned group; no signal ever aimed at the escapee,
-    // which is exactly why the group going quiet is not containment.
+    // The wall's TERM really was delivered to the owned group, and every signal this run sent
+    // aimed there: none ever aimed at the escapee, which is exactly why the group going quiet is
+    // not containment. The `any` is what keeps the `all` from passing over an empty list.
+    assert!(
+        report.signals.iter().any(|signal| {
+            signal.signal == 15
+                && signal.target == SignalTarget::OwnedProcessGroup
+                && signal.reason == Some(SignalReason::WallTime)
+                && signal.result == SignalResult::Delivered
+        }),
+        "{report:#?}"
+    );
     assert!(
         report
             .signals
@@ -190,10 +206,11 @@ fn a_daemonized_grandchild_is_a_counted_escape() {
     // that exited intermediate as a second escape.
     //
     // The wall is what ends this run, not what it measures: daemonizing costs three sequential
-    // process launches plus the fixture's observation hold, so the run gets room for all of them
-    // on a machine whose scheduler is under pressure.
+    // process launches plus the fixture's 200 ms observation hold, about 230 ms on an idle
+    // machine. Both cushions stay above a second for a starved runner: the run outlasts the
+    // daemonizing by ~1.8 s, and the fixture's own watchdog outlasts the run by 2 s.
     let (_runtime_lock, result, report, escapees) =
-        run_escape_scenario("800ms", &[FIXTURE, "daemonize", "1", "2000"]);
+        run_escape_scenario("2s", &[FIXTURE, "daemonize", "1", "4000"]);
     let _cleanup = EscapeeCleanup(escapees.clone());
 
     assert_eq!(escapees.len(), 1, "the fixture published {escapees:?}");
@@ -225,12 +242,14 @@ fn a_plain_double_fork_reparents_without_escaping() {
     );
     assert_eq!(report.escape.escaped_count, None, "{report:#?}");
     // The reparented grandchild kept the owned PGID, so the group signal reached it and this test
-    // has nothing of its own to clean up.
+    // has nothing of its own to clean up. `Delivered` is load-bearing here: a signal the
+    // supervisor recorded as `ProcessMissing` would prove the opposite of containment.
     assert!(
         report.signals.iter().any(|signal| {
             signal.signal == 15
                 && signal.target == SignalTarget::OwnedProcessGroup
                 && signal.reason == Some(SignalReason::WallTime)
+                && signal.result == SignalResult::Delivered
         }),
         "{report:#?}"
     );
@@ -240,11 +259,13 @@ fn a_plain_double_fork_reparents_without_escaping() {
 fn a_flood_past_the_evidence_cap_counts_every_escape_exactly() {
     // Catches a count bounded by the 64-identity evidence cap, and catches a count that grows per
     // sample instead of per distinct escaped identity.
+    // Measured spawn ramp for all seventy members on an idle M1 Max: 45-50 ms to the published
+    // announcement. The run outlasts that by ~3 s and the fixture's own watchdog outlasts the run
+    // by 2 s, so neither ceiling closes on a starved runner's slower burst. Members still live
+    // 2 s each, which is hundreds of overlapping samples per member either way.
     let members = FLOOD_MEMBERS.to_string();
-    let (_runtime_lock, result, report, escapees) = run_escape_scenario(
-        "2500ms",
-        &[FIXTURE, "escape-flood", members.as_str(), "3000"],
-    );
+    let (_runtime_lock, result, report, escapees) =
+        run_escape_scenario("3s", &[FIXTURE, "escape-flood", members.as_str(), "5000"]);
     let _cleanup = EscapeeCleanup(escapees.clone());
 
     assert_eq!(
@@ -257,6 +278,11 @@ fn a_flood_past_the_evidence_cap_counts_every_escape_exactly() {
         Observed::Available { value: true },
         "{report:#?}"
     );
+    // Exact equality on purpose. Members 65-70 sit above the 64-identity evidence cap, where the
+    // counted mark lives only on the per-sample tracked set, so the counting contract in
+    // `identity.rs` allows a single observation gap to surface 71. A 71 in CI is a ruling to
+    // escalate against that contract, never a licence to widen this bound: an inexact bound would
+    // also stop catching a count that grows per sample instead of per distinct escaped identity.
     assert_eq!(
         report.escape.escaped_count,
         Some(FLOOD_MEMBERS),
@@ -277,6 +303,7 @@ fn a_flood_past_the_evidence_cap_counts_every_escape_exactly() {
             signal.signal == 15
                 && signal.target == SignalTarget::OwnedProcessGroup
                 && signal.reason == Some(SignalReason::WallTime)
+                && signal.result == SignalResult::Delivered
         }),
         "{report:#?}"
     );

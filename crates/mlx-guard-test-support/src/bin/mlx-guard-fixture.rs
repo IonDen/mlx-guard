@@ -414,19 +414,19 @@ fn run_escape_flood(limits: FixtureLimits) -> Result<(), RunError> {
     // left the owned group by reading their announcements rather than by sleeping.
     let (announcements, writer) = io::pipe()
         .map_err(|error| RunError::fixture(format!("announcement pipe failed: {error}")))?;
-    let mut members = Vec::with_capacity(member_count);
     for _ in 0..member_count {
         let announcement = writer
             .try_clone()
             .map_err(|error| RunError::fixture(format!("announcement handle failed: {error}")))?;
-        let member = Command::new(&executable)
+        // The handle is dropped straight away: it neither kills nor waits for the member, and
+        // this root learns every identity it needs from the shared announcement pipe instead.
+        Command::new(&executable)
             .args(["setsid-stall", "1", &member_wall_ms])
             .stdin(Stdio::null())
             .stdout(Stdio::from(announcement))
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| RunError::fixture(format!("flood member failed: {error}")))?;
-        members.push(member);
     }
     // This root holds no writer of its own, so a member that dies before announcing closes the
     // pipe and ends the read below instead of stalling it until the wall-time ceiling.
@@ -440,7 +440,6 @@ fn run_escape_flood(limits: FixtureLimits) -> Result<(), RunError> {
             .map_err(|error| RunError::fixture(format!("flood announcement failed: {error}")))?;
         pids.push(parse_escaped_pid(&announcement)?);
     }
-    black_box(&members);
     publish_pids(&pids)?;
     let listed = pids
         .iter()
