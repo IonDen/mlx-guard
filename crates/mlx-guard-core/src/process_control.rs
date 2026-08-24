@@ -82,11 +82,33 @@ impl Drop for ClientReady {
     }
 }
 
-/// Installed nonblocking capture of SIGINT and SIGTERM for one supervisor process.
+/// Query the current SIGHUP disposition without changing it (models `nohup` intent).
+///
+/// # Errors
+///
+/// Returns `ControlError` when the sigaction query itself fails.
+pub fn hangup_is_ignored() -> Result<bool, ControlError> {
+    // SAFETY: output is initialized by the successful query below; passing a null new-action
+    // pointer makes this a query that does not alter the current disposition.
+    let mut current = unsafe { std::mem::zeroed::<libc::sigaction>() };
+    // SAFETY: the output pointer is valid for the duration of the call and no new action is
+    // installed.
+    if unsafe { libc::sigaction(libc::SIGHUP, std::ptr::null(), &raw mut current) } == -1 {
+        return Err(ControlError::from_io(
+            ControlErrorKind::TerminalSignalMonitorUnavailable,
+            io::Error::last_os_error(),
+        ));
+    }
+    Ok(current.sa_sigaction == libc::SIG_IGN)
+}
+
+/// Installed nonblocking capture of SIGHUP (when not already ignored), SIGINT, and SIGTERM for one
+/// supervisor process.
 #[derive(Debug)]
 pub struct TerminalSignalMonitor {
     read: OwnedFd,
     _write: OwnedFd,
+    previous_hangup: Option<libc::sigaction>,
     previous_interrupt: libc::sigaction,
     previous_terminate: libc::sigaction,
 }
@@ -94,10 +116,15 @@ pub struct TerminalSignalMonitor {
 impl TerminalSignalMonitor {
     /// Install process-wide handlers that enqueue terminal signals without performing policy work.
     ///
+    /// A caller that already disposed SIGHUP to `SIG_IGN` (the `nohup` convention) keeps that
+    /// disposition: the monitor probes it via [`hangup_is_ignored`] and skips installing its own
+    /// handler for SIGHUP in that case, so it never overrides deliberate `nohup` intent.
+    ///
     /// # Errors
     ///
     /// Returns a redacted process-control error if another monitor is active or setup fails.
     pub fn install() -> Result<Self, ControlError> {
+        let hangup_ignored = hangup_is_ignored()?;
         let mut descriptors = [-1; 2];
         // SAFETY: `descriptors` points to two writable integers as required by `pipe`.
         if unsafe { libc::pipe(descriptors.as_mut_ptr()) } == -1 {
@@ -131,12 +158,40 @@ impl TerminalSignalMonitor {
                 io::Error::last_os_error(),
             ));
         }
+        // SIGHUP is installed only when the caller has not already disposed it to `SIG_IGN`; a
+        // `nohup`-launched supervisor keeps that disposition instead of overriding it.
+        let previous_hangup = if hangup_ignored {
+            None
+        } else {
+            // SAFETY: output is initialized by the successful call below.
+            let mut previous = unsafe { std::mem::zeroed::<libc::sigaction>() };
+            // SAFETY: the action and output pointers are valid for the duration of the call.
+            if unsafe { libc::sigaction(libc::SIGHUP, &raw const action, &raw mut previous) } == -1
+            {
+                TERMINAL_SIGNAL_WRITE_FD.store(-1, Ordering::Release);
+                return Err(ControlError::from_io(
+                    ControlErrorKind::TerminalSignalMonitorUnavailable,
+                    io::Error::last_os_error(),
+                ));
+            }
+            Some(previous)
+        };
         // SAFETY: output values are fully initialized by successful `sigaction` calls.
         let mut previous_interrupt = unsafe { std::mem::zeroed::<libc::sigaction>() };
         // SAFETY: the action and output pointers are valid for the duration of the call.
         if unsafe { libc::sigaction(libc::SIGINT, &raw const action, &raw mut previous_interrupt) }
             == -1
         {
+            if let Some(previous_hangup) = previous_hangup {
+                // SAFETY: `previous_hangup` came from the successful installation above.
+                unsafe {
+                    libc::sigaction(
+                        libc::SIGHUP,
+                        &raw const previous_hangup,
+                        std::ptr::null_mut(),
+                    );
+                }
+            }
             TERMINAL_SIGNAL_WRITE_FD.store(-1, Ordering::Release);
             return Err(ControlError::from_io(
                 ControlErrorKind::TerminalSignalMonitorUnavailable,
@@ -162,6 +217,16 @@ impl TerminalSignalMonitor {
                     std::ptr::null_mut(),
                 );
             }
+            if let Some(previous_hangup) = previous_hangup {
+                // SAFETY: `previous_hangup` came from the successful installation above.
+                unsafe {
+                    libc::sigaction(
+                        libc::SIGHUP,
+                        &raw const previous_hangup,
+                        std::ptr::null_mut(),
+                    );
+                }
+            }
             TERMINAL_SIGNAL_WRITE_FD.store(-1, Ordering::Release);
             return Err(ControlError::from_io(
                 ControlErrorKind::TerminalSignalMonitorUnavailable,
@@ -172,9 +237,17 @@ impl TerminalSignalMonitor {
         Ok(Self {
             read,
             _write: write,
+            previous_hangup,
             previous_interrupt,
             previous_terminate,
         })
+    }
+
+    /// Report whether this monitor skipped installing its own SIGHUP handler because the caller
+    /// had already disposed it to `SIG_IGN` before install (the `nohup` convention).
+    #[must_use]
+    pub const fn hangup_ignored(&self) -> bool {
+        self.previous_hangup.is_none()
     }
 
     /// Drain all currently queued terminal signals in arrival order without blocking.
@@ -199,7 +272,7 @@ impl TerminalSignalMonitor {
                     ControlError::new(ControlErrorKind::TerminalSignalMonitorUnavailable)
                 })?;
                 signals.extend(buffer[..count].iter().filter_map(|value| {
-                    matches!(*value, 2 | 15)
+                    matches!(*value, 1 | 2 | 15)
                         .then(|| SignalNumber::new(*value))
                         .flatten()
                 }));
@@ -239,6 +312,20 @@ impl Drop for TerminalSignalMonitor {
                 &raw const self.previous_terminate,
                 std::ptr::null_mut(),
             );
+        }
+        // SIGHUP is restored only when this monitor actually installed a handler for it. An
+        // unconditional restore would write a zeroed `sigaction` (`SIG_DFL`) over a caller's
+        // deliberate `SIG_IGN` when the install was skipped.
+        if let Some(previous_hangup) = self.previous_hangup {
+            // SAFETY: `previous_hangup` came from a successful `sigaction` installation for
+            // SIGHUP. Restoration is best effort during teardown.
+            unsafe {
+                libc::sigaction(
+                    libc::SIGHUP,
+                    &raw const previous_hangup,
+                    std::ptr::null_mut(),
+                );
+            }
         }
         TERMINAL_SIGNAL_WRITE_FD.store(-1, Ordering::Release);
     }
@@ -454,7 +541,7 @@ impl fmt::Display for ControlError {
             ControlErrorKind::WaitFailed => "waiting for the root process failed",
             ControlErrorKind::InvalidRootStatus => "root process returned an invalid Unix status",
             ControlErrorKind::UnsupportedExternalSignal => {
-                "only SIGINT and SIGTERM can be forwarded as terminal signals"
+                "only SIGHUP, SIGINT, and SIGTERM can be forwarded as terminal signals"
             }
             ControlErrorKind::InvalidCheckpointEndpoint => {
                 "checkpoint endpoint is not a live member of the owned process group"
@@ -531,7 +618,7 @@ impl ProcessControlHandle {
         self,
         signal: SignalNumber,
     ) -> Result<SignalResult, ControlError> {
-        if !matches!(signal.get(), 2 | 15) {
+        if !matches!(signal.get(), 1 | 2 | 15) {
             return Err(ControlError::new(
                 ControlErrorKind::UnsupportedExternalSignal,
             ));

@@ -107,12 +107,54 @@ class InstalledPackageTests(unittest.TestCase):
                 time.sleep(0.01)
             self.assertTrue(report.exists(), "supervisor did not finalize after client crash")
             payload = json.loads(report.read_text(encoding="utf-8"))
-            self.assertEqual(payload["outcome"]["kind"], "child_exited")
-            self.assertEqual(payload["outcome"]["code"], 0)
+            # The default on-parent-exit policy is "terminate": the supervisor notices
+            # its launching client died, terminates the owned worker group, and reports
+            # the intervention rather than the worker's own (would-be) natural exit.
+            self.assertEqual(payload["outcome"]["kind"], "policy_intervention")
+            reasons = {record.get("reason") for record in payload["signals"]}
+            self.assertIn("parent_exit", reasons)
 
             while _process_exists(supervisor_pid) and time.monotonic() < deadline:
                 time.sleep(0.01)
             self.assertFalse(_process_exists(supervisor_pid))
+
+    def test_python_client_crash_with_detach_leaves_supervision_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            report = Path(temporary, "report.json")
+            client = subprocess.Popen(
+                [sys.executable, __file__, "--crash-probe", str(report), "detach"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            assert client.stdout is not None
+            supervisor_pid = int(client.stdout.readline().strip())
+            os.kill(client.pid, signal.SIGKILL)
+            # A detached supervisor keeps the launcher's inherited stdout pipe open
+            # for as long as it (and its worker) stay alive, so communicate() would
+            # block on the very survival this test is proving; wait() only reaps the
+            # launcher's own exit code.
+            client.wait(timeout=5)
+            client.stdout.close()
+            self.assertEqual(client.returncode, -signal.SIGKILL)
+
+            try:
+                # A window well inside the worker's own sleep: if "detach" acted like
+                # "terminate" the supervisor would already be gone by now.
+                time.sleep(1.0)
+                self.assertTrue(
+                    _process_exists(supervisor_pid),
+                    "detached supervision must survive the client's death",
+                )
+                self.assertFalse(report.exists(), "detached supervision must not finalize early")
+            finally:
+                # Detach leaves the tree running with no owning parent left; the test
+                # tears it down itself so no supervised process survives the test.
+                os.kill(supervisor_pid, signal.SIGTERM)
+                deadline = time.monotonic() + 5
+                while _process_exists(supervisor_pid) and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(_process_exists(supervisor_pid))
 
     def test_tampered_packaged_binary_is_rejected(self) -> None:
         binary = mlx_guard.binary_path()
@@ -139,13 +181,21 @@ def _process_exists(pid: int) -> bool:
     return True
 
 
-def _run_crash_probe(report: str) -> None:
+def _run_crash_probe(report: str, on_parent_exit: str | None) -> None:
+    # Both paths use a long-sleep worker (well past the test's own patience window):
+    # a detached run must outlive it, and the terminate run ends at TERM/KILL
+    # detection rather than the worker's natural exit, so a long sleep costs no wall
+    # time there either — it just closes a race where a starved CI runner could let
+    # the worker exit naturally before detection, flipping the outcome to
+    # child_exited instead of policy_intervention.
+    duration = "5"
     supervisor = mlx_guard.start(
         mlx_guard.RunConfig(
-            command=("/bin/sleep", "0.25"),
+            command=("/bin/sleep", duration),
             report=Path(report),
             max_footprint_bytes=1024**4,
             sample_interval_ms=10,
+            on_parent_exit=on_parent_exit,
         )
     )
     print(supervisor.pid, flush=True)
@@ -153,7 +203,7 @@ def _run_crash_probe(report: str) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--crash-probe":
-        _run_crash_probe(sys.argv[2])
+    if len(sys.argv) >= 3 and sys.argv[1] == "--crash-probe":
+        _run_crash_probe(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
     else:
         unittest.main()

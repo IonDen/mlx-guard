@@ -8,6 +8,7 @@ import traceback
 import unittest
 from collections.abc import Mapping
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 import mlx_guard
@@ -130,6 +131,111 @@ class ClientTests(unittest.TestCase):
                     max_footprint_bytes=2,
                     wall_time_ms=wall_time,
                 )
+
+    def test_on_parent_exit_config_accepts_detach_and_rejects_other_values(self) -> None:
+        observe = mlx_guard.ObserveConfig(
+            command=("/bin/true",),
+            report=Path("report.json"),
+            on_parent_exit="detach",
+        )
+        self.assertEqual(observe.on_parent_exit, "detach")
+        run = mlx_guard.RunConfig(
+            command=("/bin/true",),
+            report=Path("report.json"),
+            max_footprint_bytes=2,
+            on_parent_exit="terminate",
+        )
+        self.assertEqual(run.on_parent_exit, "terminate")
+
+        for config_cls, kwargs in (
+            (
+                mlx_guard.ObserveConfig,
+                {"command": ("/bin/true",), "report": Path("report.json")},
+            ),
+            (
+                mlx_guard.RunConfig,
+                {
+                    "command": ("/bin/true",),
+                    "report": Path("report.json"),
+                    "max_footprint_bytes": 2,
+                },
+            ),
+        ):
+            with (
+                self.subTest(config_cls=config_cls),
+                self.assertRaisesRegex(
+                    mlx_guard.ConfigurationError,
+                    "^on_parent_exit must be 'terminate' or 'detach'$",
+                ),
+            ):
+                config_cls(on_parent_exit="never", **kwargs)  # type: ignore[arg-type]
+
+    def test_on_parent_exit_argv_emits_the_flag_for_both_configs(self) -> None:
+        observe_argv = mlx_guard.supervisor_argv(
+            mlx_guard.ObserveConfig(
+                command=("/bin/true",),
+                report=Path("report.json"),
+                on_parent_exit="detach",
+            )
+        )
+        self.assertIn("--on-parent-exit", observe_argv)
+        self.assertEqual(observe_argv[observe_argv.index("--on-parent-exit") + 1], "detach")
+
+        run_argv = mlx_guard.supervisor_argv(
+            mlx_guard.RunConfig(
+                command=("/bin/true",),
+                report=Path("report.json"),
+                max_footprint_bytes=2,
+                on_parent_exit="terminate",
+            )
+        )
+        self.assertIn("--on-parent-exit", run_argv)
+        self.assertEqual(run_argv[run_argv.index("--on-parent-exit") + 1], "terminate")
+
+        default_argv = mlx_guard.supervisor_argv(
+            mlx_guard.ObserveConfig(command=("/bin/true",), report=Path("report.json"))
+        )
+        self.assertNotIn("--on-parent-exit", default_argv)
+
+    def test_on_parent_exit_values_match_the_native_grammar(self) -> None:
+        # Verifies Python's own accept/reject list for on_parent_exit is internally
+        # consistent with the documented grammar strings — exactly "terminate" and
+        # "detach" accepted, everything else rejected. This does not invoke the
+        # native binary, so it cannot catch the native `parse_on_parent_exit` match
+        # arms (`crates/mlx-guard-cli/src/lib.rs`) drifting from these values on
+        # their own.
+        for accepted in ("terminate", "detach"):
+            config = mlx_guard.ObserveConfig(
+                command=("/bin/true",),
+                report=Path("report.json"),
+                on_parent_exit=accepted,
+            )
+            self.assertEqual(config.on_parent_exit, accepted)
+        for rejected in ("", "Terminate", "DETACH", "kill", "ignore"):
+            with (
+                self.subTest(on_parent_exit=rejected),
+                self.assertRaisesRegex(
+                    mlx_guard.ConfigurationError,
+                    "^on_parent_exit must be 'terminate' or 'detach'$",
+                ),
+            ):
+                mlx_guard.ObserveConfig(
+                    command=("/bin/true",),
+                    report=Path("report.json"),
+                    on_parent_exit=rejected,
+                )
+
+    def test_expected_exit_code_types_an_unmapped_kind_from_a_parent_exit_report(self) -> None:
+        # Bundled into this task's RED gate: guards the frozen outcome-to-status table
+        # lookup so a future OutcomeKind addition (e.g. one describing a parent-exit
+        # variant not yet in the table) raises the typed reader error instead of
+        # leaking a raw KeyError past the client boundary.
+        stub = mlx_guard.Outcome(kind=cast(mlx_guard.OutcomeKind, "unknown_kind"), at_ms=1)
+        with self.assertRaisesRegex(
+            mlx_guard.InvalidReportError,
+            "^native supervisor report has an unknown outcome kind$",
+        ):
+            _expected_exit_code(stub)
 
     def test_mutable_runtime_inputs_are_copied_into_frozen_config(self) -> None:
         command = ["/bin/echo", "first"]

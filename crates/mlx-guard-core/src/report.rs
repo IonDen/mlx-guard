@@ -172,6 +172,33 @@ pub struct ReportConfiguration {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint_timeout_ms: Option<u64>,
     pub term_grace_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_parent_exit: Option<OnParentExit>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_watch: Option<ParentWatch>,
+}
+
+/// The requested behavior when the supervisor's own parent process exits.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnParentExit {
+    Terminate,
+    Detach,
+}
+
+/// Whether, and how, the supervisor is watching for its parent's exit.
+///
+/// `active` = watching and enforcing; `detach` = watching for evidence only;
+/// `parent_is_launchd` / `hangup_ignored` = never checked; `parent_unobservable` = the
+/// launch-time parent inspection failed, never checked.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ParentWatch {
+    Active,
+    ParentIsLaunchd,
+    HangupIgnored,
+    Detach,
+    ParentUnobservable,
 }
 
 /// Advisory values stored beside, but never used as, v0.1 policy input.
@@ -291,6 +318,7 @@ pub enum SignalReason {
     WallTime,
     ExternalSignal,
     RootExitCleanup,
+    ParentExit,
     ObservationFailure,
     SupervisorFault,
 }
@@ -394,6 +422,8 @@ pub struct TerminalOutcome {
     pub child_status: Option<ChildStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owned_group_survivors: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_exited_at_ms: Option<u64>,
 }
 
 /// Upload behavior frozen for v0.1.
@@ -537,7 +567,19 @@ impl ReportV1 {
                 _ => false,
             },
         };
-        if !basic_values_valid || !mode_valid {
+        let parent_watch_agrees_with_option =
+            !matches!(self.configuration.parent_watch, Some(ParentWatch::Detach))
+                || self.configuration.on_parent_exit == Some(OnParentExit::Detach);
+        let parent_exit_evidence_has_a_watch = self.outcome.parent_exited_at_ms.is_none()
+            || matches!(
+                self.configuration.parent_watch,
+                Some(ParentWatch::Active | ParentWatch::Detach)
+            );
+        if !basic_values_valid
+            || !mode_valid
+            || !parent_watch_agrees_with_option
+            || !parent_exit_evidence_has_a_watch
+        {
             return Err(ReportError::InvalidConfiguration);
         }
         Ok(())
@@ -601,6 +643,10 @@ impl ReportV1 {
             }
             _ => true,
         };
+        let parent_exit_evidence_before_the_outcome = self
+            .outcome
+            .parent_exited_at_ms
+            .is_none_or(|at_ms| at_ms <= self.outcome.at_ms);
         let last_event = self
             .samples
             .iter()
@@ -623,6 +669,7 @@ impl ReportV1 {
             || !terminal_signal_valid
             || !child_status_signal_valid
             || !child_status_agrees
+            || !parent_exit_evidence_before_the_outcome
             || self.outcome.at_ms < last_event
         {
             return Err(ReportError::InvalidEventOrder);

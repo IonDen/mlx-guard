@@ -10,19 +10,22 @@ use mlx_guard_core::{
     CheckpointWorkerEndpoint, ChildStatus, ClientReady, EscapeEvidence, Event, FootprintSampler,
     IdentityTracker, InterventionEngine, InterventionRecord, JournalDurability, JournalEntry,
     JournalHeader, JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver,
-    NativeProcessInventory, ObserveCalibration, Observed, OwnedProcess, PersistenceAttempt,
-    PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults,
-    ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode,
-    ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal, SignalReason,
-    SignalRecord, SignalResult, SignalTarget, StdioMode, SupervisorOutcome, TerminalKind,
-    TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason, VERSION,
-    checkpoint_signal_usr1, platform_support,
+    NativeProcessInventory, ObserveCalibration, Observed, OnParentExit, OwnedProcess, ParentWatch,
+    PersistenceAttempt, PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults,
+    ProcessIdentity, ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration,
+    ReportMode, ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal,
+    SignalReason, SignalRecord, SignalResult, SignalTarget, StdioMode, SupervisorOutcome,
+    TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason,
+    VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
 };
 
 use crate::completion::{
     Completion, CompletionInputs, complete, supervisor_outcome, terminal_kind,
 };
-use crate::{CommandMode, CommonOptions, ObserveOptions, ParsedCli, RunOptions, policy_band_step};
+use crate::{
+    CommandMode, CommonOptions, ObserveOptions, OnParentExitOption, ParsedCli, RunOptions,
+    policy_band_step,
+};
 
 const REQUIRED_BREACH_SAMPLES: u32 = 2;
 const MAX_MISSING_SAMPLES: u32 = 3;
@@ -79,7 +82,10 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
         Ok(config) => config,
         Err(result) => return result,
     };
-    let (inventory, journal, sequence) = match initialize_observe(&options.common) {
+    // The journal header carries the parent watch, so the watch is decided before the header is
+    // written and never revised afterwards.
+    let parent_watch = parent_watch_state(options.common.on_parent_exit);
+    let (inventory, journal, sequence) = match initialize_observe(&options.common, &parent_watch) {
         Ok(values) => values,
         Err(result) => return result,
     };
@@ -125,6 +131,8 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
         observation_failed: false,
         terminal_signals,
         terminal_signal_count: 0,
+        parent_watch,
+        parent_shutdown_deadline: None,
         started: Instant::now(),
         root_outcome: None,
         final_footprint: Observed::Unknown,
@@ -136,8 +144,9 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
 
 fn initialize_observe(
     common: &CommonOptions,
+    parent_watch: &ParentWatchState,
 ) -> Result<(NativeProcessInventory, SecureJournal, u64), RuntimeResult> {
-    initialize(common, observe_configuration(common), false)
+    initialize(common, observe_configuration(common, parent_watch), false)
 }
 
 fn initialize(
@@ -231,11 +240,17 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
         Ok(config) => config,
         Err(result) => return result,
     };
-    let (inventory, journal, sequence) =
-        match initialize(&options.common, run_configuration(options), true) {
-            Ok(values) => values,
-            Err(result) => return result,
-        };
+    // The journal header carries the parent watch, so the watch is decided before the header is
+    // written and never revised afterwards.
+    let parent_watch = parent_watch_state(options.common.on_parent_exit);
+    let (inventory, journal, sequence) = match initialize(
+        &options.common,
+        run_configuration(options, &parent_watch),
+        true,
+    ) {
+        Ok(values) => values,
+        Err(result) => return result,
+    };
     let terminal_signals = match TerminalSignalMonitor::install() {
         Ok(monitor) => monitor,
         Err(error) => {
@@ -282,6 +297,7 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
         checkpoint_status: CheckpointStatus::NotNegotiated,
         checkpoint_at_ms: None,
         terminal_signals,
+        parent_watch,
         started: Instant::now(),
         root_outcome: None,
         final_footprint: Observed::Unknown,
@@ -312,6 +328,116 @@ struct PreparedObserve {
 struct RunLaunchFailure {
     outcome: SupervisorOutcome,
     diagnostic: String,
+}
+
+/// Launch-time parent identity and the decision whether to watch it.
+///
+/// `parent` is `Some` exactly for the two watching states (`Active` enforces, `Detach` collects
+/// evidence only); the three never-checked states carry `None`.
+struct ParentWatchState {
+    parent: Option<ProcessIdentity>,
+    watch: ParentWatch,
+    on_parent_exit: OnParentExit,
+    exited_at_ms: Option<u64>,
+}
+
+impl ParentWatchState {
+    /// A watch that is never checked, because there is no parent identity worth binding.
+    const fn unwatched(watch: ParentWatch, on_parent_exit: OnParentExit) -> Self {
+        Self {
+            parent: None,
+            watch,
+            on_parent_exit,
+            exited_at_ms: None,
+        }
+    }
+}
+
+/// Decide one run's parent watch, querying the SIGHUP disposition the decision depends on.
+///
+/// The disposition is queried, never installed: a `nohup`-style launcher that already disposed
+/// SIGHUP to `SIG_IGN` asked, by that convention, for the run to outlive it. A failed query
+/// establishes no watch at all, and the same failing system call ends this run moments later when
+/// the terminal-signal monitor is installed.
+fn parent_watch_state(option: OnParentExitOption) -> ParentWatchState {
+    match hangup_is_ignored() {
+        Ok(hangup_ignored) => {
+            establish_parent_watch(NativeProcessInventory::new(), hangup_ignored, option)
+        }
+        Err(_) => ParentWatchState::unwatched(ParentWatch::ParentUnobservable, option.into()),
+    }
+}
+
+/// Bind the launching parent's exact identity, or record why no watch was established.
+fn establish_parent_watch(
+    inventory: NativeProcessInventory,
+    hangup_ignored: bool,
+    option: OnParentExitOption,
+) -> ParentWatchState {
+    let on_parent_exit = OnParentExit::from(option);
+    let ppid = i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0);
+    // Detach collects evidence and enforces nothing, so neither an already-orphaned run nor a
+    // `nohup` intent is a reason to skip its watch: both only rule out enforcement.
+    let wants_detach = matches!(option, OnParentExitOption::Detach);
+    if ppid <= 1 && !wants_detach {
+        return ParentWatchState::unwatched(ParentWatch::ParentIsLaunchd, on_parent_exit);
+    }
+    if hangup_ignored && !wants_detach {
+        return ParentWatchState::unwatched(ParentWatch::HangupIgnored, on_parent_exit);
+    }
+    match inventory.inspect(ppid) {
+        Ok(observation) if !observation.exited => ParentWatchState {
+            parent: Some(observation.identity),
+            watch: if wants_detach {
+                ParentWatch::Detach
+            } else {
+                ParentWatch::Active
+            },
+            on_parent_exit,
+            exited_at_ms: None,
+        },
+        // Typed honesty: a watch that could not be established is never reported as active.
+        _ => ParentWatchState::unwatched(ParentWatch::ParentUnobservable, on_parent_exit),
+    }
+}
+
+/// Report the first time the recorded parent is confirmed gone; never reports it twice.
+///
+/// The caller passes the one clock read it also gives the policy event, so the recorded orphan
+/// time and the event that acts on it never disagree.
+fn parent_has_exited(
+    state: &mut ParentWatchState,
+    inventory: NativeProcessInventory,
+    now: Duration,
+) -> bool {
+    if state.exited_at_ms.is_some() {
+        return false;
+    }
+    let Some(parent) = state.parent else {
+        return false;
+    };
+    // On macOS a changed `getppid()` is itself the evidence of the parent's death: reparenting to
+    // pid 1 happens only once the real parent has exited (there is no subreaper that could reparent
+    // it earlier), so a still-matching pid is conclusive proof the parent is alive and needs no
+    // inspection at all — return immediately. Confirmation only ever runs after that pre-filter
+    // fires (the pid changed), and it exists purely as a hedge on top of the pid evidence: it treats
+    // exactly one outcome as inconclusive — the recorded `(pid, start_abstime)` identity provably
+    // still alive — and latches the exit on every other outcome, including exited, disappeared,
+    // stale, or an inspection error (after a pid change, a recycled pid may not even be inspectable,
+    // e.g. owned by another user).
+    if i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0) == parent.pid {
+        return false;
+    }
+    if inventory
+        .inspect_expected(parent)
+        .is_ok_and(|observation| !observation.exited)
+    {
+        // The recorded identity is still observably alive despite the pid change: retry on the
+        // next tick instead of latching a false exit off one inconclusive read.
+        return false;
+    }
+    state.exited_at_ms = Some(duration_ms(now));
+    true
 }
 
 fn prepare_observe_worker(
@@ -428,6 +554,8 @@ struct RunRuntime<'a> {
     checkpoint_status: CheckpointStatus,
     checkpoint_at_ms: Option<u64>,
     terminal_signals: TerminalSignalMonitor,
+    /// The launching parent's identity, the watch decision, and the orphan time once observed.
+    parent_watch: ParentWatchState,
     started: Instant,
     root_outcome: Option<RootOutcome>,
     final_footprint: Observed<u64>,
@@ -475,6 +603,7 @@ impl RunRuntime<'_> {
             final_footprint_bytes: self.final_footprint.clone(),
             child_status,
             owned_group_survivors: None,
+            parent_exited_at_ms: self.parent_watch.exited_at_ms,
         };
         self.record_terminal(terminal);
         let notice = self.journal.stderr_notice();
@@ -518,6 +647,14 @@ impl RunRuntime<'_> {
                 && !group_exists
             {
                 return RunCompletion::Root(outcome);
+            }
+            // Deliberately after the completion check above: a run whose work has already finished
+            // must not manufacture a termination for a parent that died alongside it.
+            let now = self.started.elapsed();
+            if parent_has_exited(&mut self.parent_watch, self.inventory, now)
+                && matches!(self.parent_watch.on_parent_exit, OnParentExit::Terminate)
+            {
+                self.apply_event(Event::ParentExited { at: now });
             }
             // The root command is gone but the group it owns is not. Drain the checkpoint socket
             // first so an acknowledgement already in flight is not lost, then ask the policy
@@ -638,14 +775,10 @@ impl RunRuntime<'_> {
     }
 
     fn apply_event(&mut self, event: Event) {
-        // A forwarded terminal signal and post-exit survivor cleanup are both asked for by the
-        // world rather than chosen by the footprint or wall policy, so neither may claim the run's
-        // exit status. Anything they later escalate into still counts.
-        let uncounted = matches!(
-            event,
-            Event::ExternalSignal { .. } | Event::RootExited { .. }
-        );
-        if let Some(reason) = shutdown_reason_for(&event) {
+        let uncounted = opens_an_uncounted_shutdown(&event);
+        if may_label_shutdown(&event, self.engine.policy().state())
+            && let Some(reason) = shutdown_reason_for(&event)
+        {
             self.shutdown_reason = Some(reason);
         }
         if let Event::CheckpointAck {
@@ -811,6 +944,11 @@ struct ObserveRuntime {
     observation_failed: bool,
     terminal_signals: TerminalSignalMonitor,
     terminal_signal_count: u32,
+    /// The launching parent's identity, the watch decision, and the orphan time once observed.
+    parent_watch: ParentWatchState,
+    /// When the TERM grace of a parent-exit shutdown ends, relative to `started`. `Some` exactly
+    /// while that shutdown is in flight, which is also what makes it own the completion.
+    parent_shutdown_deadline: Option<Duration>,
     started: Instant,
     root_outcome: Option<RootOutcome>,
     final_footprint: Observed<u64>,
@@ -837,6 +975,22 @@ impl ObserveRuntime {
                 // Observe never signals the command, so survivors must outlive the run instead
                 // of being killed when the owned process is dropped.
                 relinquish: survivors,
+            },
+            ObserveCompletion::ParentExit {
+                root_outcome,
+                survivors,
+            } => ObserveFinal {
+                outcome: SupervisorOutcome::PolicyIntervention,
+                kind: TerminalKind::PolicyIntervention,
+                // The root's own status is still reported, even though the shutdown above it owns
+                // the outcome; `None` only when the shutdown killed a root it never reaped.
+                child_status: root_outcome.map(ChildStatus::from),
+                owned_group_survivors: Some(survivors),
+                diagnostic: Some(OBSERVE_PARENT_EXIT_DIAGNOSTIC.to_owned()),
+                // The shutdown either killed the group or owns what is left of it, so cleanup on
+                // drop stays armed: relinquishing here would re-orphan the survivors this
+                // shutdown exists to remove.
+                relinquish: false,
             },
             ObserveCompletion::ObservationFailure => ObserveFinal {
                 outcome: SupervisorOutcome::SupervisorFailure,
@@ -867,6 +1021,7 @@ impl ObserveRuntime {
             final_footprint_bytes: self.final_footprint.clone(),
             child_status,
             owned_group_survivors,
+            parent_exited_at_ms: self.parent_watch.exited_at_ms,
         };
         Self::record_terminal(
             &mut self.journal,
@@ -917,14 +1072,53 @@ impl ObserveRuntime {
                     return ObserveCompletion::SupervisorFailure(error.to_string());
                 }
             };
-            // The root's own exit ends the observation, whether or not owned-group members are
-            // still running; observe reports the survivors rather than waiting for or signalling
-            // them.
-            if let Some(outcome) = self.root_outcome {
-                return ObserveCompletion::Root {
-                    outcome,
-                    survivors: group_exists,
-                };
+            // A parent-exit shutdown owns the completion for as long as it is in flight. The
+            // root's death is then this shutdown's own doing, so reporting it as the outcome
+            // would both hide the intervention and relinquish the survivors it exists to remove.
+            if let Some(deadline) = self.parent_shutdown_deadline {
+                if !group_exists {
+                    return ObserveCompletion::ParentExit {
+                        root_outcome: self.root_outcome,
+                        survivors: false,
+                    };
+                }
+                if self.started.elapsed() >= deadline {
+                    match self.process.kill_group() {
+                        Ok(result) => self.record_parent_exit_signal(9, result),
+                        Err(error) => {
+                            return ObserveCompletion::SupervisorFailure(error.to_string());
+                        }
+                    }
+                    return ObserveCompletion::ParentExit {
+                        root_outcome: self.root_outcome,
+                        survivors: true,
+                    };
+                }
+            } else {
+                // The root's own exit ends the observation, whether or not owned-group members are
+                // still running; observe reports the survivors rather than waiting for or
+                // signalling them.
+                if let Some(outcome) = self.root_outcome {
+                    return ObserveCompletion::Root {
+                        outcome,
+                        survivors: group_exists,
+                    };
+                }
+                // Deliberately after the completion check above: an observation whose command has
+                // already finished must not manufacture a termination for a parent that died
+                // alongside it.
+                let now = self.started.elapsed();
+                if parent_has_exited(&mut self.parent_watch, self.inventory, now)
+                    && matches!(self.parent_watch.on_parent_exit, OnParentExit::Terminate)
+                {
+                    match self.process.terminate_group() {
+                        Ok(result) => self.record_parent_exit_signal(15, result),
+                        Err(error) => {
+                            return ObserveCompletion::SupervisorFailure(error.to_string());
+                        }
+                    }
+                    self.parent_shutdown_deadline = Some(now.saturating_add(TERM_GRACE));
+                }
             }
             if let Err(diagnostic) = self.forward_terminal_signals() {
                 return ObserveCompletion::SupervisorFailure(diagnostic);
@@ -932,17 +1126,49 @@ impl ObserveRuntime {
             if !self.observation_failed {
                 self.sample_once();
             }
-            if self.observation_failed {
+            // Measurement loss cannot end a shutdown already in flight: that would relinquish the
+            // group mid-termination and report a supervisor failure for a run that intervened.
+            // The bounded deadline above still ends the loop, sampling or not.
+            if self.observation_failed && self.parent_shutdown_deadline.is_none() {
                 return ObserveCompletion::ObservationFailure;
             }
+            let now = self.started.elapsed();
+            // A latched observation failure stops `sample_once`, which freezes the sampler's last
+            // start: `delay_until_next` then saturates to zero for good, so honouring it would
+            // spin the loop at full speed until the deadline. The configured interval keeps the
+            // shutdown's remaining second at its normal cadence instead.
+            let sample_delay = if self.observation_failed {
+                self.sample_interval
+            } else {
+                self.sampler
+                    .delay_until_next(now)
+                    .unwrap_or(self.sample_interval)
+            };
             let delay = self
-                .sampler
-                .delay_until_next(self.started.elapsed())
-                .unwrap_or(self.sample_interval);
+                .parent_shutdown_deadline
+                .map_or(sample_delay, |deadline| {
+                    sample_delay.min(deadline.saturating_sub(now))
+                });
             if !delay.is_zero() {
                 thread::sleep(delay);
             }
         }
+    }
+
+    /// Record one signal the parent-exit shutdown delivered to the owned group.
+    fn record_parent_exit_signal(&mut self, signal: u8, result: SignalResult) {
+        record_resilient(
+            &mut self.journal,
+            &mut self.sequence,
+            JournalEntry::Signal(SignalRecord {
+                at_ms: duration_ms(self.started.elapsed()),
+                signal,
+                target: SignalTarget::OwnedProcessGroup,
+                result,
+                reason: Some(SignalReason::ParentExit),
+            }),
+            JournalDurability::Sync,
+        );
     }
 
     fn forward_terminal_signals(&mut self) -> Result<(), String> {
@@ -1093,6 +1319,14 @@ enum ObserveCompletion {
         /// Whether owned-group members were still running when the root exited.
         survivors: bool,
     },
+    /// The launching parent exited, so the run terminated the group it owns instead of going on
+    /// observing an orphan.
+    ParentExit {
+        /// The root's own status, absent only when the shutdown killed a root it never reaped.
+        root_outcome: Option<RootOutcome>,
+        /// Whether owned-group members were still alive when the KILL decision was reached.
+        survivors: bool,
+    },
     ObservationFailure,
     SupervisorFailure(String),
 }
@@ -1100,6 +1334,10 @@ enum ObserveCompletion {
 /// Stderr diagnostic for an observe run the root ended while owned-group members were alive.
 const OBSERVE_SURVIVORS_DIAGNOSTIC: &str =
     "observe ended at root exit; owned-group members were still running and were not signalled";
+
+/// Stderr diagnostic for an observe run the launching parent's exit ended.
+const OBSERVE_PARENT_EXIT_DIAGNOSTIC: &str =
+    "observe ended because the launching parent exited; the owned group was terminated";
 
 /// What an observe completion determines about the final report and process result.
 struct ObserveFinal {
@@ -1143,6 +1381,7 @@ fn finalize_without_worker(
         final_footprint_bytes: Observed::Unknown,
         child_status,
         owned_group_survivors: None,
+        parent_exited_at_ms: None,
     };
     let is_child_exit = matches!(
         outcome,
@@ -1250,7 +1489,10 @@ fn launch_options(common: &CommonOptions) -> mlx_guard_core::LaunchOptions {
     }
 }
 
-fn observe_configuration(common: &CommonOptions) -> ReportConfiguration {
+fn observe_configuration(
+    common: &CommonOptions,
+    parent_watch: &ParentWatchState,
+) -> ReportConfiguration {
     ReportConfiguration {
         mode: ReportMode::Observe,
         max_footprint_bytes: None,
@@ -1265,10 +1507,12 @@ fn observe_configuration(common: &CommonOptions) -> ReportConfiguration {
         max_sample_window_ms: duration_ms(common.sample_interval),
         checkpoint_timeout_ms: None,
         term_grace_ms: duration_ms(TERM_GRACE),
+        on_parent_exit: Some(parent_watch.on_parent_exit),
+        parent_watch: Some(parent_watch.watch),
     }
 }
 
-fn run_configuration(options: &RunOptions) -> ReportConfiguration {
+fn run_configuration(options: &RunOptions, parent_watch: &ParentWatchState) -> ReportConfiguration {
     let policy = run_policy_config(options);
     ReportConfiguration {
         mode: ReportMode::Enforce,
@@ -1284,6 +1528,8 @@ fn run_configuration(options: &RunOptions) -> ReportConfiguration {
         max_sample_window_ms: duration_ms(policy.max_sample_window),
         checkpoint_timeout_ms: policy.checkpoint_timeout.map(duration_ms),
         term_grace_ms: duration_ms(policy.term_grace),
+        on_parent_exit: Some(parent_watch.on_parent_exit),
+        parent_watch: Some(parent_watch.watch),
     }
 }
 
@@ -1338,8 +1584,39 @@ fn shutdown_reason_for(event: &Event) -> Option<SignalReason> {
     match event {
         Event::ExternalSignal { .. } => Some(SignalReason::ExternalSignal),
         Event::RootExited { .. } => Some(SignalReason::RootExitCleanup),
+        Event::ParentExited { .. } => Some(SignalReason::ParentExit),
         _ => None,
     }
+}
+
+/// Whether an event may name the shutdown in flight before the policy machine decides anything.
+///
+/// Labels follow the same state gate as their policy handler, so a suppressed event never relabels
+/// a shutdown already in flight: `apply_parent_exited` only acts from `Normal` or `Warning`,
+/// `apply_root_exited` only acts from `Normal`, `Warning`, or `CheckpointRequested`, and
+/// `apply_external_signal` acts from every state, so it stays unconditional here too.
+const fn may_label_shutdown(event: &Event, state: PolicyState) -> bool {
+    match event {
+        Event::ParentExited { .. } => matches!(state, PolicyState::Normal | PolicyState::Warning),
+        Event::RootExited { .. } => matches!(
+            state,
+            PolicyState::Normal | PolicyState::Warning | PolicyState::CheckpointRequested
+        ),
+        _ => true,
+    }
+}
+
+/// Whether an event opens a shutdown that must not claim the run's exit status.
+///
+/// A forwarded terminal signal and post-exit survivor cleanup are both asked for by the world
+/// rather than chosen by this supervisor, so neither counts as an intervention; anything they
+/// later escalate into still does. A parent exit is deliberately absent: acting on it is the
+/// supervisor's own decision, and the run reports it as the intervention it is.
+const fn opens_an_uncounted_shutdown(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::ExternalSignal { .. } | Event::RootExited { .. }
+    )
 }
 
 /// Return the explicit limit whose breach an event can open an intervention for.
@@ -1378,6 +1655,7 @@ fn actuation_reason(
                 Some(SignalReason::ObservationFailure)
             }
             CheckpointDisposition::SkippedSupervisorFailure => Some(SignalReason::SupervisorFault),
+            CheckpointDisposition::SkippedParentExited => Some(SignalReason::ParentExit),
             CheckpointDisposition::AcknowledgedUnverifiedDurability
             | CheckpointDisposition::TimedOut
             | CheckpointDisposition::SkippedCheckpointFailure
@@ -1412,7 +1690,10 @@ fn checkpoint_progress(
             | CheckpointDisposition::SkippedCheckpointFailure
             | CheckpointDisposition::SkippedObservationFailure
             | CheckpointDisposition::SkippedSupervisorFailure
-            | CheckpointDisposition::SkippedNotNegotiated => None,
+            | CheckpointDisposition::SkippedNotNegotiated
+            // A parent's death says nothing about the cooperative endpoint either, so the
+            // negotiated status stays unchanged — this is the final value, not a placeholder.
+            | CheckpointDisposition::SkippedParentExited => None,
         },
         Actuation::Kill | Actuation::ForwardSignal(_) => None,
     }
@@ -1539,15 +1820,19 @@ fn duration_ms(value: Duration) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
     use std::time::Duration;
 
     use mlx_guard_core::{
         Actuation, ActuationFailure, ActuationKind, ActuationOutcome, CheckpointDisposition,
-        CheckpointStatus, Event, SampleEvent, SignalNumber, SignalReason,
+        CheckpointStatus, Event, NativeProcessInventory, OnParentExit, ParentWatch, PolicyState,
+        SampleEvent, SignalNumber, SignalReason,
     };
 
     use super::{
-        actuation_reason, checkpoint_progress, intervention_cause_for, shutdown_reason_for,
+        OnParentExitOption, ParentWatchState, actuation_reason, checkpoint_progress,
+        establish_parent_watch, intervention_cause_for, may_label_shutdown,
+        opens_an_uncounted_shutdown, parent_has_exited, shutdown_reason_for,
         supervisor_error_diagnostic,
     };
 
@@ -1566,24 +1851,169 @@ mod tests {
         }
     }
 
+    fn root_exited() -> Event {
+        Event::RootExited {
+            at: Duration::from_millis(11),
+        }
+    }
+
+    fn parent_exited() -> Event {
+        Event::ParentExited {
+            at: Duration::from_millis(11),
+        }
+    }
+
+    fn external_signal() -> Event {
+        Event::ExternalSignal {
+            at: Duration::from_millis(11),
+            signal: SignalNumber::new(15).unwrap(),
+        }
+    }
+
     #[test]
-    fn only_an_external_signal_or_a_root_exit_opens_a_shutdown_before_the_policy_decides() {
-        // Catches a sample or tick pre-labelling a shutdown the policy machine has not chosen yet.
+    fn a_signal_a_root_exit_or_a_parent_exit_opens_a_shutdown_before_the_policy_decides() {
+        // Catches a sample or tick pre-labelling a shutdown the policy machine has not chosen yet,
+        // and a parent exit reaching the report as somebody else's reason.
         assert_eq!(
-            shutdown_reason_for(&Event::ExternalSignal {
-                at: Duration::from_millis(11),
-                signal: SignalNumber::new(15).unwrap(),
-            }),
+            shutdown_reason_for(&external_signal()),
             Some(SignalReason::ExternalSignal)
         );
         assert_eq!(
-            shutdown_reason_for(&Event::RootExited {
-                at: Duration::from_millis(11),
-            }),
+            shutdown_reason_for(&root_exited()),
             Some(SignalReason::RootExitCleanup)
+        );
+        assert_eq!(
+            shutdown_reason_for(&parent_exited()),
+            Some(SignalReason::ParentExit)
         );
         assert_eq!(shutdown_reason_for(&sample()), None);
         assert_eq!(shutdown_reason_for(&tick()), None);
+    }
+
+    #[test]
+    fn a_parent_exit_the_policy_machine_would_suppress_never_relabels_the_shutdown() {
+        // Catches a parent exit arriving mid-escalation overwriting the reason that opened it: the
+        // machine acts on it only from Normal or Warning, so only there may it name the shutdown.
+        for state in [PolicyState::Normal, PolicyState::Warning] {
+            assert!(may_label_shutdown(&parent_exited(), state), "{state:?}");
+        }
+        for state in [
+            PolicyState::Observe,
+            PolicyState::CheckpointRequested,
+            PolicyState::Terminating,
+            PolicyState::Emergency,
+            PolicyState::Exited,
+            PolicyState::SupervisorError,
+        ] {
+            assert!(!may_label_shutdown(&parent_exited(), state), "{state:?}");
+            // External signals and samples/ticks keep labelling from whatever state they arrive
+            // in; `RootExited` has its own narrower gate, checked separately below.
+            assert!(may_label_shutdown(&external_signal(), state), "{state:?}");
+            assert!(may_label_shutdown(&sample(), state), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn a_root_exit_the_policy_machine_would_suppress_never_relabels_the_shutdown() {
+        // Catches a no-op `RootExited` (the common shape: a compliant root already killed by a
+        // parent-exit TERM while a TERM-ignoring group member survives) relabelling a shutdown a
+        // different cause opened: `apply_root_exited` only acts from `Normal`, `Warning`, or
+        // `CheckpointRequested`, so only there may it name the shutdown.
+        for state in [
+            PolicyState::Normal,
+            PolicyState::Warning,
+            PolicyState::CheckpointRequested,
+        ] {
+            assert!(may_label_shutdown(&root_exited(), state), "{state:?}");
+        }
+        for state in [
+            PolicyState::Observe,
+            PolicyState::Terminating,
+            PolicyState::Emergency,
+            PolicyState::Exited,
+            PolicyState::SupervisorError,
+        ] {
+            assert!(!may_label_shutdown(&root_exited(), state), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn an_external_signal_always_labels_the_shutdown_even_mid_escalation() {
+        // `apply_external_signal` acts from every state (escalating straight to Emergency/KILL
+        // once already terminating), so the label gate never suppresses it either — including
+        // from `Terminating`, where a second forwarded signal is the common case.
+        for state in [
+            PolicyState::Observe,
+            PolicyState::Normal,
+            PolicyState::Warning,
+            PolicyState::CheckpointRequested,
+            PolicyState::Terminating,
+            PolicyState::Emergency,
+            PolicyState::Exited,
+            PolicyState::SupervisorError,
+        ] {
+            assert!(may_label_shutdown(&external_signal(), state), "{state:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_shutdown_the_world_asked_for_leaves_the_run_status_unclaimed() {
+        // Catches a parent exit being counted like a forwarded signal: the supervisor decides to
+        // act on it, so it owns the run's exit status, while signals and cleanup never do.
+        assert!(opens_an_uncounted_shutdown(&external_signal()));
+        assert!(opens_an_uncounted_shutdown(&root_exited()));
+        assert!(!opens_an_uncounted_shutdown(&parent_exited()));
+        assert!(!opens_an_uncounted_shutdown(&sample()));
+        assert!(!opens_an_uncounted_shutdown(&tick()));
+    }
+
+    #[test]
+    fn a_nohup_style_launcher_stops_enforcement_without_stopping_detach_evidence() {
+        // Catches the `!wants_detach` override disappearing from the hangup guard: detach enforces
+        // nothing, so an inherited SIG_IGN disposition is no reason to stop watching for evidence.
+        let inventory = NativeProcessInventory::new();
+
+        let ignored = establish_parent_watch(inventory, true, OnParentExitOption::Terminate);
+        assert_eq!(ignored.watch, ParentWatch::HangupIgnored);
+        assert!(
+            ignored.parent.is_none(),
+            "a watch that is never checked must bind no identity"
+        );
+        assert_eq!(ignored.on_parent_exit, OnParentExit::Terminate);
+
+        let detached = establish_parent_watch(inventory, true, OnParentExitOption::Detach);
+        assert_eq!(detached.watch, ParentWatch::Detach);
+        assert!(
+            detached.parent.is_some(),
+            "detach must bind the parent whose exit it records"
+        );
+        assert_eq!(detached.on_parent_exit, OnParentExit::Detach);
+    }
+
+    #[test]
+    fn an_observable_parent_arms_exactly_the_watch_the_option_asked_for() {
+        // Catches an enforcing watch that bound no identity — it could never fire — and either
+        // option arming the other one's watch.
+        //
+        // The two remaining arms cannot be driven from here: `establish_parent_watch` reads this
+        // process's real parent, and under a test runner that parent is neither pid 1 nor
+        // uninspectable, so `ParentIsLaunchd` and `ParentUnobservable` have no in-process input
+        // that reaches them.
+        let inventory = NativeProcessInventory::new();
+
+        let active = establish_parent_watch(inventory, false, OnParentExitOption::Terminate);
+        assert_eq!(active.watch, ParentWatch::Active);
+        assert!(
+            active.parent.is_some(),
+            "an enforcing watch must bind the identity it enforces against"
+        );
+        assert_eq!(active.on_parent_exit, OnParentExit::Terminate);
+        assert_eq!(active.exited_at_ms, None);
+
+        let detached = establish_parent_watch(inventory, false, OnParentExitOption::Detach);
+        assert_eq!(detached.watch, ParentWatch::Detach);
+        assert!(detached.parent.is_some());
+        assert_eq!(detached.exited_at_ms, None);
     }
 
     #[test]
@@ -1597,12 +2027,8 @@ mod tests {
             intervention_cause_for(&tick()),
             Some(SignalReason::WallTime)
         );
-        assert_eq!(
-            intervention_cause_for(&Event::RootExited {
-                at: Duration::from_millis(11),
-            }),
-            None
-        );
+        assert_eq!(intervention_cause_for(&root_exited()), None);
+        assert_eq!(intervention_cause_for(&parent_exited()), None);
         assert_eq!(
             intervention_cause_for(&Event::SupervisorFault {
                 at: Duration::from_millis(11),
@@ -1653,6 +2079,10 @@ mod tests {
             (
                 CheckpointDisposition::SkippedSupervisorFailure,
                 SignalReason::SupervisorFault,
+            ),
+            (
+                CheckpointDisposition::SkippedParentExited,
+                SignalReason::ParentExit,
             ),
         ];
         for (disposition, expected) in named {
@@ -1788,6 +2218,7 @@ mod tests {
             CheckpointDisposition::SkippedObservationFailure,
             CheckpointDisposition::SkippedSupervisorFailure,
             CheckpointDisposition::SkippedNotNegotiated,
+            CheckpointDisposition::SkippedParentExited,
         ];
         for disposition in unchanged {
             assert_eq!(
@@ -1813,6 +2244,124 @@ mod tests {
                 true,
             ),
             None
+        );
+    }
+
+    #[test]
+    fn a_ppid_match_alone_proves_the_parent_alive_without_inspecting_it() {
+        // Catches a transient inspection hiccup (rusage/proc_pidinfo failing for one tick) being
+        // read as the parent's death while `getppid()` still names it: on macOS reparenting only
+        // ever happens after the real parent has exited, so the pid match alone is conclusive and
+        // must short-circuit before any inspection, let alone latch a false exit off of one.
+        let inventory = NativeProcessInventory;
+        let real_parent_pid = i32::try_from(std::os::unix::process::parent_id())
+            .expect("this test process's real ppid must fit i32");
+        let parent = inventory
+            .inspect(real_parent_pid)
+            .expect("this test process's real, live parent must be inspectable")
+            .identity;
+        let mut state = ParentWatchState {
+            parent: Some(parent),
+            watch: ParentWatch::Active,
+            on_parent_exit: OnParentExit::Terminate,
+            exited_at_ms: None,
+        };
+
+        assert!(!parent_has_exited(
+            &mut state,
+            inventory,
+            Duration::from_millis(1)
+        ));
+        assert!(
+            state.exited_at_ms.is_none(),
+            "a live parent must never latch an exit"
+        );
+    }
+
+    #[test]
+    fn a_changed_ppid_only_latches_once_the_recorded_identity_is_confirmed_gone() {
+        // Catches the pre-filter's ppid mismatch alone being trusted as proof of death: it must
+        // only ever open a confirmation step, and only a recorded identity that confirmation can
+        // no longer see alive may latch the exit.
+        let inventory = NativeProcessInventory;
+        let mut child = Command::new("/bin/sleep")
+            .arg("5")
+            .spawn()
+            .expect("a throwaway child process must spawn");
+        let child_pid = i32::try_from(child.id()).expect("the throwaway child's pid must fit i32");
+        let recorded = inventory
+            .inspect(child_pid)
+            .expect("the live throwaway child must be inspectable")
+            .identity;
+        child
+            .kill()
+            .expect("the throwaway child must accept SIGKILL");
+        child.wait().expect("the throwaway child must be reaped");
+
+        // `child_pid` is a distinct, freshly spawned pid: it cannot equal this test process's
+        // real, unchanged ppid, so the pre-filter is guaranteed to fire and fall through to
+        // confirmation instead of returning early on a pid match.
+        let real_parent_pid = i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0);
+        assert_ne!(real_parent_pid, child_pid);
+
+        let mut state = ParentWatchState {
+            parent: Some(recorded),
+            watch: ParentWatch::Active,
+            on_parent_exit: OnParentExit::Terminate,
+            exited_at_ms: None,
+        };
+
+        assert!(parent_has_exited(
+            &mut state,
+            inventory,
+            Duration::from_millis(7)
+        ));
+        assert_eq!(state.exited_at_ms, Some(7));
+    }
+
+    #[test]
+    fn a_recorded_identity_still_alive_after_a_ppid_change_is_inconclusive_not_fatal() {
+        // Catches the confirmation step treating the pid change alone as proof of death: it must
+        // find the recorded identity provably still alive and retry, never latch a false exit off
+        // one inconclusive read.
+        let inventory = NativeProcessInventory;
+        let mut child = Command::new("/bin/sleep")
+            .arg("5")
+            .spawn()
+            .expect("a throwaway child process must spawn");
+        let child_pid = i32::try_from(child.id()).expect("the throwaway child's pid must fit i32");
+        let recorded = inventory
+            .inspect(child_pid)
+            .expect("the live throwaway child must be inspectable")
+            .identity;
+
+        // `child_pid` is a distinct, freshly spawned pid: it cannot equal this test process's
+        // real, unchanged ppid, so the pre-filter is guaranteed to fire and fall through to
+        // confirmation instead of returning early on a pid match.
+        let real_parent_pid = i32::try_from(std::os::unix::process::parent_id()).unwrap_or(0);
+        assert_ne!(real_parent_pid, child_pid);
+
+        let mut state = ParentWatchState {
+            parent: Some(recorded),
+            watch: ParentWatch::Active,
+            on_parent_exit: OnParentExit::Terminate,
+            exited_at_ms: None,
+        };
+
+        let result = parent_has_exited(&mut state, inventory, Duration::from_millis(9));
+
+        child
+            .kill()
+            .expect("the throwaway child must accept SIGKILL");
+        child.wait().expect("the throwaway child must be reaped");
+
+        assert!(
+            !result,
+            "a provably still-alive recorded identity must not latch an exit"
+        );
+        assert!(
+            state.exited_at_ms.is_none(),
+            "a provably still-alive recorded identity must never latch an exit"
         );
     }
 }

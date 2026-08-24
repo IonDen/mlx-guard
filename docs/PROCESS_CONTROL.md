@@ -46,10 +46,22 @@ went wrong.
 
 ## Signal routing
 
-Only SIGINT and SIGTERM are accepted as first external terminal signals. They are forwarded
+SIGHUP, SIGINT, and SIGTERM are accepted as first external terminal signals. They are forwarded
 unchanged to the validated owned group. The policy state machine maps a repeated terminal signal to
 the separate SIGKILL group action. SIGTSTP, SIGCONT, and foreground job-control transfer are not
 supported.
+
+SIGHUP capture is conditional. `hangup_is_ignored` queries the current SIGHUP disposition with a
+null new-action `sigaction` call — a read, never a write — before any handler is installed. When the
+disposition is already `SIG_IGN`, the process was launched under the `nohup` convention (a shell's
+`trap '' HUP` survives `exec` as `SIG_IGN`), and that is read as deliberate intent for the run to
+outlive its launcher. `TerminalSignalMonitor::install` honors it: it installs its own handler for
+SIGINT and SIGTERM as usual but skips installing one for SIGHUP, leaving the inherited `SIG_IGN` in
+place instead of overriding it. The same probe result also feeds the launching-parent watch
+described in the [CLI contract](CLI.md): under the default `terminate` behavior a `nohup`-style
+launcher disables the watch entirely (`parent_watch: hangup_ignored`), the same as it disables SIGHUP
+forwarding; under `--on-parent-exit=detach` the watch is established anyway, since detach only ever
+collects evidence and never acts on it.
 
 Checkpoint delivery has a different target type. A cooperative endpoint must be negotiated as a
 positive, live member of the owned group. Membership is checked when the endpoint is created and

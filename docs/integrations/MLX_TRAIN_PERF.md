@@ -27,6 +27,15 @@ passes the existing literal worker argument vector to `mlx_guard.RunConfig`, wit
 OS-accounted footprint limit and a report path beside the condition artifact. Worker internals and
 the `mlx-guard` policy engine remain application-neutral.
 
+The runner is the supervisor's launching parent for the lifetime of a supervised condition. Under
+`mlx-guard`'s default `on_parent_exit="terminate"`, a runner process that dies — a crash, an operator
+`kill`, a scheduler eviction — now takes the supervised worker down with it instead of leaving it
+running as an orphaned background process. The [evidence bundle](../../evidence/v0.1.0/mlx-train-perf/README.md)
+predates this default; none of its recorded scenarios (checkpoint acceptance, a missing
+acknowledgement, a callback error, client cancellation, or a report/persistence failure) involve the
+runner process itself exiting, so its measured numbers are unaffected by this change. A runner that
+deliberately wants a condition to outlive it needs `on_parent_exit="detach"`.
+
 The worker may connect `mlx_guard.CheckpointWorker` when the inherited checkpoint descriptor is
 present. It polls only at safe step or repetition boundaries. On a request, the callback writes and
 syncs a partial condition artifact under the existing identity, then returns a path-free artifact

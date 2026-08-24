@@ -443,6 +443,74 @@ fn root_exit_during_an_active_shutdown_is_a_no_op() {
 }
 
 #[test]
+fn parent_exit_from_normal_terms_with_the_skipped_parent_disposition() {
+    // Catches the parent-exit handler missing the escalation clock or the dedicated
+    // parent-exit disposition on the TERM it sends from a live, non-escalating state.
+    let mut machine = PolicyMachine::enforce(config(false)).unwrap();
+    let actions = machine.apply(Event::ParentExited { at: ms(50) });
+    assert_eq!(
+        actions,
+        [Action::SendTerm {
+            checkpoint: CheckpointDisposition::SkippedParentExited
+        }]
+    );
+    assert_eq!(machine.state(), PolicyState::Terminating);
+    let kill = machine.apply(Event::Tick { at: ms(200) });
+    assert_eq!(kill, [Action::SendKill]);
+}
+
+#[test]
+fn parent_exit_does_not_cancel_an_inflight_checkpoint() {
+    // Catches parent-exit cleanup being widened to act from CheckpointRequested like root-exit
+    // cleanup does: the worker was promised its acknowledgement window, so the parent's death
+    // alone must not cancel it.
+    let mut machine = PolicyMachine::enforce(config(true)).unwrap();
+    let _ = machine.apply(sample(0, Some(100)));
+    let _ = machine.apply(sample(10, Some(101))); // -> CheckpointRequested
+    let actions = machine.apply(Event::ParentExited { at: ms(300) });
+    assert_eq!(actions, []);
+    assert_eq!(machine.state(), PolicyState::CheckpointRequested);
+}
+
+#[test]
+fn parent_exit_is_a_no_op_in_every_non_live_state() {
+    // Catches parent-exit cleanup acting from a state where the machine already owns the
+    // shutdown, cancelling or restarting an escalation that should run its course.
+    let mut terminating = PolicyMachine::enforce(config(false)).unwrap();
+    let term = SignalNumber::new(15).unwrap();
+    let _ = terminating.apply(Event::ExternalSignal {
+        at: ms(1),
+        signal: term,
+    });
+    assert_eq!(terminating.state(), PolicyState::Terminating);
+    assert_eq!(terminating.apply(Event::ParentExited { at: ms(2) }), vec![]);
+    assert_eq!(terminating.state(), PolicyState::Terminating);
+
+    let mut emergency = PolicyMachine::enforce(config(false)).unwrap();
+    let _ = emergency.apply(sample(0, Some(151)));
+    assert_eq!(emergency.state(), PolicyState::Emergency);
+    assert_eq!(emergency.apply(Event::ParentExited { at: ms(1) }), vec![]);
+    assert_eq!(emergency.state(), PolicyState::Emergency);
+
+    let mut observed = PolicyMachine::observe(ms(100), ms(10), 3);
+    assert_eq!(observed.apply(Event::ParentExited { at: ms(1) }), vec![]);
+    assert_eq!(observed.state(), PolicyState::Observe);
+}
+
+#[test]
+fn parent_exit_shutdown_is_not_re_escalated_by_missing_samples() {
+    // Catches the parent-exit path leaving the intervention latch unset, which would let three
+    // missing samples send a second TERM and reset the grace (the clock-regression invariant).
+    let mut machine = PolicyMachine::enforce(config(false)).unwrap();
+    let _ = machine.apply(Event::ParentExited { at: ms(10) });
+    for at in [20, 30, 40] {
+        assert_eq!(machine.apply(sample(at, None)), vec![Action::RecordMissing]);
+    }
+    assert_eq!(machine.state(), PolicyState::Terminating);
+    assert_eq!(machine.next_deadline(), Some(ms(110)));
+}
+
+#[test]
 fn process_exit_overwrites_supervisor_error_so_the_runtime_must_latch_it() {
     // Documents why the exit-code helper cannot read the live state: ProcessExited always
     // lands in Exited, even from SupervisorError.

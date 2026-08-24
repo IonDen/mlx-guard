@@ -61,6 +61,7 @@ pub enum CheckpointDisposition {
     SkippedSupervisorFailure,
     SkippedNotNegotiated,
     SkippedRootExited,
+    SkippedParentExited,
 }
 
 /// The platform side effect whose execution failed.
@@ -123,6 +124,9 @@ pub enum Event {
     RootExited {
         at: Duration,
     },
+    ParentExited {
+        at: Duration,
+    },
 }
 
 impl Event {
@@ -135,7 +139,8 @@ impl Event {
             | Self::ActuationFailed { at, .. }
             | Self::SupervisorFault { at }
             | Self::ProcessExited { at, .. }
-            | Self::RootExited { at } => *at,
+            | Self::RootExited { at }
+            | Self::ParentExited { at } => *at,
         }
     }
 }
@@ -347,6 +352,7 @@ impl PolicyMachine {
             } => self.apply_actuation_failed(at, action, failure),
             Event::SupervisorFault { at } => self.apply_supervisor_fault(at),
             Event::RootExited { at } => self.apply_root_exited(at),
+            Event::ParentExited { at } => self.apply_parent_exited(at),
             Event::ProcessExited { .. } => unreachable!("process exit handled before dispatch"),
         }
     }
@@ -576,6 +582,26 @@ impl PolicyMachine {
         self.term_deadline = Some(at.saturating_add(self.config.term_grace));
         vec![Action::SendTerm {
             checkpoint: CheckpointDisposition::SkippedRootExited,
+        }]
+    }
+
+    /// Begin a supervisor-initiated shutdown because the launching parent has exited.
+    ///
+    /// Only a live, not-yet-escalating machine acts. Unlike root-exit cleanup, an in-flight
+    /// checkpoint request is NOT cancelled: the worker was promised its acknowledgement window,
+    /// and the parent's death does not change what the workload is doing. A suppressed event
+    /// produces no transition and no signal; the runtime's `parent_exited_at_ms` is the evidence.
+    fn apply_parent_exited(&mut self, at: Duration) -> Vec<Action> {
+        if !matches!(self.state, PolicyState::Normal | PolicyState::Warning) {
+            return Vec::new();
+        }
+        self.active_request_id = None;
+        self.checkpoint_deadline = None;
+        self.state = PolicyState::Terminating;
+        self.intervention_started = true;
+        self.term_deadline = Some(at.saturating_add(self.config.term_grace));
+        vec![Action::SendTerm {
+            checkpoint: CheckpointDisposition::SkippedParentExited,
         }]
     }
 

@@ -38,6 +38,7 @@ fn record(sequence: u64) -> JournalRecord {
             },
             child_status: None,
             owned_group_survivors: None,
+            parent_exited_at_ms: None,
         }),
     )
 }

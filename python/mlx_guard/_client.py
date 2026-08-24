@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 import os
@@ -73,6 +74,7 @@ class ObserveConfig:
     cwd: Path | None = None
     clear_env: bool = False
     env: tuple[tuple[str, str], ...] = ()
+    on_parent_exit: str | None = dataclasses.field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         _validate_common(self)
@@ -90,6 +92,7 @@ class RunConfig:
     cwd: Path | None = None
     clear_env: bool = False
     env: tuple[tuple[str, str], ...] = ()
+    on_parent_exit: str | None = dataclasses.field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         _validate_common(self)
@@ -459,6 +462,8 @@ def _validate_common(config: Config) -> None:
         keys.add(key)
         normalized.append((key, value))
     object.__setattr__(config, "env", tuple(sorted(normalized)))
+    if config.on_parent_exit is not None and config.on_parent_exit not in ("terminate", "detach"):
+        raise ConfigurationError("on_parent_exit must be 'terminate' or 'detach'")
 
 
 def _await_native_ready(descriptor: int, process: subprocess.Popen[bytes]) -> None:
@@ -526,6 +531,8 @@ def _argv_for(
         common.append("--clear-env")
     for key, value in config.env:
         common.extend(("--env", f"{key}={value}"))
+    if config.on_parent_exit is not None:
+        common.extend(("--on-parent-exit", config.on_parent_exit))
     common.append("--")
     common.extend(config.command)
     return tuple(common)
@@ -562,14 +569,17 @@ def _expected_exit_code(outcome: Outcome) -> int:
         if outcome.signal is None:
             raise ResultMismatchError("child signal report has no signal number")
         return 128 + outcome.signal
-    return {
-        OutcomeKind.INVALID_CONFIGURATION: 64,
-        OutcomeKind.SUPERVISOR_FAILURE: 70,
-        OutcomeKind.PARTIAL_ARTIFACT_FAILURE: 74,
-        OutcomeKind.POLICY_INTERVENTION: 75,
-        OutcomeKind.LAUNCH_NOT_EXECUTABLE: 126,
-        OutcomeKind.LAUNCH_NOT_FOUND: 127,
-    }[outcome.kind]
+    try:
+        return {
+            OutcomeKind.INVALID_CONFIGURATION: 64,
+            OutcomeKind.SUPERVISOR_FAILURE: 70,
+            OutcomeKind.PARTIAL_ARTIFACT_FAILURE: 74,
+            OutcomeKind.POLICY_INTERVENTION: 75,
+            OutcomeKind.LAUNCH_NOT_EXECUTABLE: 126,
+            OutcomeKind.LAUNCH_NOT_FOUND: 127,
+        }[outcome.kind]
+    except KeyError:
+        raise InvalidReportError("native supervisor report has an unknown outcome kind") from None
 
 
 def _required_int(value: Mapping[str, object], key: str) -> int:

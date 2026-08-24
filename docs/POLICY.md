@@ -1,9 +1,11 @@
 # Policy contract
 
 Policy contract version 1 is a pure state machine driven by ordered monotonic events. Only the sampled,
-OS-accounted aggregate footprint can trigger a memory intervention. An optional wall-time limit is
-the only other destructive input. Pressure, swap, compressor, wired-memory, and growth-rate metrics
-are advisory and cannot change state. MLX's own counters are not read at all in v0.1.
+OS-accounted aggregate footprint can trigger a memory intervention. An optional wall-time limit, a
+forwarded terminal signal, the root command exiting with owned-group survivors, and the launching
+parent exiting are the machine's other destructive inputs. Pressure, swap, compressor, wired-memory,
+and growth-rate metrics are advisory and cannot change state. MLX's own counters are not read at all
+in v0.1.
 
 ## States and transitions
 
@@ -25,6 +27,15 @@ are advisory and cannot change state. MLX's own counters are not read at all in 
 | any active state | process exit | always | exited | report observed result |
 | normal, warning, or checkpoint-requested | root exited with owned-group survivors | always | terminating | send TERM (cleanup) |
 | observe, terminating, emergency, supervisor-error, or exited | root exited | always | unchanged | none |
+| normal or warning | launching parent exited | always | terminating | send TERM (parent-exit shutdown) |
+| checkpoint-requested | launching parent exited | always | unchanged | none (checkpoint continues) |
+| observe, terminating, emergency, supervisor-error, or exited | launching parent exited | always | unchanged | none |
+
+Root-exit cleanup acts from `checkpoint-requested` because the worker that would have acknowledged
+the request is already gone. Parent-exit shutdown deliberately does not: from `checkpoint-requested`
+it is a no-op, because the worker is still running and was promised its acknowledgement window, and
+the parent's death does not change what that workload is doing. A suppressed `ParentExited` produces
+no transition and no signal; the evidence that it happened is `outcome.parent_exited_at_ms`.
 
 Values between recovery and warning retain the previous normal or warning state. A sample at or
 above the ordinary limit contributes to the consecutive-breach count. A sample below that limit
