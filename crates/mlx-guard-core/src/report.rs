@@ -6,6 +6,8 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::PolicyState;
+#[cfg(unix)]
+use crate::process_control::RootOutcome;
 
 /// The only report schema major understood by this package.
 pub const REPORT_SCHEMA_VERSION: u32 = 1;
@@ -281,6 +283,18 @@ pub enum SignalResult {
     Failed,
 }
 
+/// Why the supervisor sent one signal record.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalReason {
+    Footprint,
+    WallTime,
+    ExternalSignal,
+    RootExitCleanup,
+    ObservationFailure,
+    SupervisorFault,
+}
+
 /// One signal attempt and its observed system-call result.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SignalRecord {
@@ -288,6 +302,8 @@ pub struct SignalRecord {
     pub signal: u8,
     pub target: SignalTarget,
     pub result: SignalResult,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<SignalReason>,
 }
 
 /// Worker checkpoint evidence, not a durability assertion.
@@ -347,6 +363,26 @@ pub enum TerminalKind {
     PartialArtifactFailure,
 }
 
+/// The root command's own exit status, recorded independently of the supervisor outcome.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum ChildStatus {
+    Exited { code: u8 },
+    Signaled { signal: u8 },
+}
+
+#[cfg(unix)]
+impl From<RootOutcome> for ChildStatus {
+    fn from(outcome: RootOutcome) -> Self {
+        match outcome {
+            RootOutcome::Exited(code) => Self::Exited { code },
+            RootOutcome::Signaled(signal) => Self::Signaled {
+                signal: signal.get(),
+            },
+        }
+    }
+}
+
 /// Final observed outcome and footprint availability.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TerminalOutcome {
@@ -354,6 +390,10 @@ pub struct TerminalOutcome {
     #[serde(flatten)]
     pub kind: TerminalKind,
     pub final_footprint_bytes: Observed<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_status: Option<ChildStatus>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_group_survivors: Option<bool>,
 }
 
 /// Upload behavior frozen for v0.1.
@@ -548,6 +588,19 @@ impl ReportV1 {
             TerminalKind::ChildSignaled { signal } => (1..=127).contains(&signal),
             _ => true,
         };
+        let child_status_signal_valid = !matches!(
+            self.outcome.child_status,
+            Some(ChildStatus::Signaled { signal }) if !(1..=127).contains(&signal)
+        );
+        let child_status_agrees = match (&self.outcome.kind, self.outcome.child_status) {
+            (TerminalKind::ChildExited { code }, Some(status)) => {
+                status == ChildStatus::Exited { code: *code }
+            }
+            (TerminalKind::ChildSignaled { signal }, Some(status)) => {
+                status == ChildStatus::Signaled { signal: *signal }
+            }
+            _ => true,
+        };
         let last_event = self
             .samples
             .iter()
@@ -568,6 +621,8 @@ impl ReportV1 {
             || !artifacts_ordered
             || !checkpoint_valid
             || !terminal_signal_valid
+            || !child_status_signal_valid
+            || !child_status_agrees
             || self.outcome.at_ms < last_event
         {
             return Err(ReportError::InvalidEventOrder);
@@ -678,5 +733,28 @@ impl Error for ReportError {
             Self::Json(error) => Some(error),
             _ => None,
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::{ChildStatus, RootOutcome};
+    use crate::SignalNumber;
+
+    #[test]
+    fn from_root_outcome_maps_an_exited_root_to_the_exited_arm() {
+        assert_eq!(
+            ChildStatus::from(RootOutcome::Exited(3)),
+            ChildStatus::Exited { code: 3 }
+        );
+    }
+
+    #[test]
+    fn from_root_outcome_maps_a_signaled_root_to_the_signaled_arm() {
+        let signal = SignalNumber::new(9).unwrap();
+        assert_eq!(
+            ChildStatus::from(RootOutcome::Signaled(signal)),
+            ChildStatus::Signaled { signal: 9 }
+        );
     }
 }

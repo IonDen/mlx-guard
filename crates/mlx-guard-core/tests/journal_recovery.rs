@@ -60,6 +60,7 @@ fn signal(sequence: u64) -> JournalRecord {
             signal: SignalNumber::new(15).unwrap().get(),
             target: SignalTarget::OwnedProcessGroup,
             result: SignalResult::Delivered,
+            reason: None,
         }),
     )
 }

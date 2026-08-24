@@ -11,6 +11,8 @@ use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
 
 #[cfg(unix)]
+mod completion;
+#[cfg(unix)]
 mod runtime;
 
 #[cfg(unix)]

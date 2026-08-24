@@ -9,6 +9,13 @@ versions follow Semantic Versioning.
 
 - `mlx-guard run` accepts `--checkpoint-timeout DURATION` (`10ms..=60s`) to bound how long a
   requested cooperative checkpoint waits for the worker's authenticated acknowledgement.
+- Reports record `outcome.child_status`, the root command's own exit status, independently of
+  whichever result ends up owning the process exit code.
+- Observe reports record `outcome.owned_group_survivors`, whether owned-group members were still
+  running when observation ended at root exit.
+- Each recorded signal now carries a `reason` describing why it was sent.
+- The policy state machine gained a `RootExited` event and a `SkippedRootExited` checkpoint
+  disposition to support cleanup after the root command exits early.
 
 ### Changed
 
@@ -16,6 +23,14 @@ versions follow Semantic Versioning.
   on a loaded 3-CPU machine missed the former window, and interventions happen under exactly that
   kind of pressure. The timeout still fails closed: an unresponsive worker receives TERM when it
   expires. Pass `--checkpoint-timeout 100ms` to keep the previous behavior.
+- When the root command exits while other members of its owned group are still running, `run` now
+  sends a cleanup TERM, waits the usual one-second grace period, and escalates to KILL if needed.
+  The root's own exit status is still reported unless KILL was required, in which case the process
+  exit code is 75. `observe` previously reported a root exit with surviving group members as
+  measurement loss (exit 70); it now ends at root exit, reports the root's own status, leaves
+  survivors running, and marks them in the report (`owned_group_survivors`).
+- A run that loses measurement while enforcement is active now reports process exit code 70 with
+  the signals it sent recorded in the report, instead of 75.
 
 ### Fixed
 

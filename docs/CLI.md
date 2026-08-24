@@ -66,7 +66,15 @@ invocation. `--env` and `--clear-env` affect only the child.
 
 A child may return a number also used by the supervisor. The typed final report distinguishes those
 cases; preserving the child's actual status takes priority over making every process code unique.
-Once a policy intervention begins, exit 75 owns the result even if TERM or KILL ends the child.
+Exit 70 outranks an intervention: if observation was lost, or the KILL signal itself could not be
+delivered, the result is 70 even though TERM or KILL may have been sent — check the report's
+signals. A TERM (or forwarded) signal that fails to deliver escalates automatically to KILL instead
+and does not by itself force 70. Otherwise, once the policy requests a checkpoint or sends TERM, or
+reaches KILL through its own deadline, 75 owns the result even if the command ends on its own; a
+command ended by a forwarded terminal signal keeps `128+n`. When the root exits while owned-group
+members survive, `run` terminates them (TERM, one-second grace, KILL) and reports the root's own
+status unless KILL was needed; `observe` ends at root exit, leaves survivors running, and reports
+it.
 
 ## Signals, terminal, and stdio
 

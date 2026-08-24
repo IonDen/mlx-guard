@@ -64,6 +64,7 @@ fn run() -> Result<(), RunError> {
         "setsid-parent" => run_setsid_parent(limits),
         "setsid-stall" => run_setsid_stall(),
         "fast-root-exit" => run_fast_root_exit(limits),
+        "term-then-exit" => run_term_then_exit(limits),
         "checkpoint-parent" => run_checkpoint_parent(limits),
         "checkpoint-success" => run_checkpoint_worker("success", limits),
         "checkpoint-blocked" => run_checkpoint_worker("blocked", limits),
@@ -71,6 +72,8 @@ fn run() -> Result<(), RunError> {
         "checkpoint-cancel" => run_checkpoint_worker("cancel", limits),
         "checkpoint-allocate" => run_checkpoint_worker("allocate", limits),
         "checkpoint-spoof" => run_checkpoint_worker("spoof", limits),
+        "checkpoint-exit-before-ready" => run_checkpoint_worker("exit-before-ready", limits),
+        "checkpoint-hang-before-ready" => run_checkpoint_worker("hang-before-ready", limits),
         "short-exit" => Ok(()),
         "setsid" => run_setsid(),
         "ignore-term" => run_ignore_term(),
@@ -362,15 +365,81 @@ fn run_fast_root_exit(limits: FixtureLimits) -> Result<(), RunError> {
     let executable = env::current_exe()
         .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
     let child_wall_ms = limits.wall_time().as_millis().to_string();
-    let child = Command::new(executable)
-        .args(["cpu-stall", "1", &child_wall_ms])
+    let child_mode = if limits.allocation_bytes() == 2 {
+        "ignore-term"
+    } else {
+        "cpu-stall"
+    };
+    let mut command = Command::new(executable);
+    command
+        .args([child_mode, "1", &child_wall_ms])
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    if child_mode == "ignore-term" {
+        // The child installs SIG_IGN after exec; the root must observe its readiness before
+        // exiting so a SIGTERM sent immediately afterward cannot race the handler installation.
+        command.stdout(Stdio::piped());
+    } else {
+        command.stdout(Stdio::null());
+    }
+    let mut child = command
         .spawn()
         .map_err(|error| RunError::fixture(format!("fast-exit child failed: {error}")))?;
+    if child_mode == "ignore-term" {
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| RunError::fixture("ignore-term child stdout was not piped"))?;
+        let ready = io::BufReader::new(stdout)
+            .lines()
+            .next()
+            .ok_or_else(|| RunError::fixture("ignore-term child omitted readiness"))?
+            .map_err(|error| {
+                RunError::fixture(format!("ignore-term child output failed: {error}"))
+            })?;
+        if !ready.starts_with("READY ") {
+            return Err(RunError::fixture(format!(
+                "ignore-term child readiness was unexpected: {ready:?}"
+            )));
+        }
+    }
     write_phase(&format!("CHILD pid={}", child.id()))?;
+    if let Some(pid_file) = env::var_os("MLX_GUARD_FIXTURE_PID_FILE") {
+        let mut file = File::create(&pid_file)
+            .map_err(|error| RunError::fixture(format!("pid file create failed: {error}")))?;
+        writeln!(file, "{}", child.id())
+            .map_err(|error| RunError::fixture(format!("pid file write failed: {error}")))?;
+    }
     std::process::exit(23);
+}
+
+static TERM_RECEIVED: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn term_then_exit_signal_handler(_signal: libc::c_int) {
+    TERM_RECEIVED.store(true, Ordering::SeqCst);
+}
+
+fn run_term_then_exit(limits: FixtureLimits) -> Result<(), RunError> {
+    // SAFETY: the handler only stores to a process-local atomic flag and SIGTERM is a valid signal
+    // number with a well-defined default disposition that this call replaces exactly once.
+    if unsafe {
+        libc::signal(
+            libc::SIGTERM,
+            term_then_exit_signal_handler as *const () as libc::sighandler_t,
+        )
+    } == libc::SIG_ERR
+    {
+        return Err(RunError::fixture(format!(
+            "term-then-exit signal setup failed: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    write_phase("READY mode=term-then-exit")?;
+    while !TERM_RECEIVED.load(Ordering::SeqCst) {
+        thread::park_timeout(Duration::from_millis(1));
+    }
+    thread::sleep(Duration::from_millis(limits.allocation_bytes()));
+    std::process::exit(3);
 }
 
 fn run_checkpoint_parent(limits: FixtureLimits) -> Result<(), RunError> {
@@ -408,6 +477,14 @@ fn run_checkpoint_worker(mode: &str, limits: FixtureLimits) -> Result<(), RunErr
         .ok_or_else(|| RunError::protocol("checkpoint hello ended before a frame"))?;
     let hello = CheckpointHello::decode(&hello_frame)
         .map_err(|error| RunError::protocol(error.to_string()))?;
+    if mode == "exit-before-ready" {
+        return Ok(());
+    }
+    if mode == "hang-before-ready" {
+        loop {
+            thread::park();
+        }
+    }
     CHECKPOINT_REQUESTED.store(false, Ordering::SeqCst);
     // SAFETY: the handler only stores to a process-local atomic flag and SIGUSR1 is validated by the
     // checkpoint protocol configuration.

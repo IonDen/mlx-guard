@@ -3,11 +3,11 @@ use std::time::Duration;
 
 use mlx_guard_core::{
     AdvisoryMetrics, AdvisoryScope, AdvisorySnapshot, ArtifactErrorCode, ArtifactErrorRecord,
-    Capabilities, CheckpointRecord, CheckpointStatus, EscapeEvidence, MemoryPressureLevel,
-    ObservationError, Observed, PolicyState, PrivacyDefaults, REPORT_SCHEMA_VERSION,
-    ReportConfiguration, ReportError, ReportMode, ReportV1, RunIdentity, SampleWindow,
-    SignalRecord, SignalResult, SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord,
-    UnavailableReason,
+    Capabilities, CheckpointRecord, CheckpointStatus, ChildStatus, EscapeEvidence,
+    MemoryPressureLevel, ObservationError, Observed, PolicyState, PrivacyDefaults,
+    REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1, RunIdentity,
+    SampleWindow, SignalReason, SignalRecord, SignalResult, SignalTarget, TerminalKind,
+    TerminalOutcome, TransitionRecord, UnavailableReason,
 };
 
 fn identity() -> RunIdentity {
@@ -83,6 +83,7 @@ fn report() -> ReportV1 {
             signal: 15,
             target: SignalTarget::OwnedProcessGroup,
             result: SignalResult::Delivered,
+            reason: None,
         }],
         checkpoint: CheckpointRecord {
             status: CheckpointStatus::RequestedUnverified,
@@ -99,6 +100,8 @@ fn report() -> ReportV1 {
             at_ms: 15,
             kind: TerminalKind::PolicyIntervention,
             final_footprint_bytes: Observed::Unknown,
+            child_status: None,
+            owned_group_survivors: None,
         },
         privacy,
     }
@@ -133,7 +136,7 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
     // reason (or accepted once the check that happened to catch it changes).
     type Corrupt = fn(&mut ReportV1);
     type Expected = fn(&ReportError) -> bool;
-    let cases: [(&str, Corrupt, Expected); 9] = [
+    let cases: [(&str, Corrupt, Expected); 12] = [
         (
             "unredacted persistence",
             |r| r.privacy.redacted_before_persistence = false,
@@ -177,6 +180,27 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
         (
             "zero sample window",
             |r| r.samples[0].window_ms = 0,
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "child status signal out of range",
+            |r| r.outcome.child_status = Some(ChildStatus::Signaled { signal: 200 }),
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "child status disagrees with the outcome kind",
+            |r| {
+                r.outcome.kind = TerminalKind::ChildExited { code: 0 };
+                r.outcome.child_status = Some(ChildStatus::Exited { code: 3 });
+            },
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "child status disagrees with a signaled outcome",
+            |r| {
+                r.outcome.kind = TerminalKind::ChildSignaled { signal: 9 };
+                r.outcome.child_status = Some(ChildStatus::Signaled { signal: 15 });
+            },
             |e| matches!(e, ReportError::InvalidEventOrder),
         ),
     ];
@@ -263,4 +287,33 @@ fn schema_v1_json_matches_the_committed_golden() {
         report().to_json_pretty().unwrap(),
         include_str!("fixtures/report-v1.json")
     );
+}
+
+#[test]
+fn a_pre_0_2_report_parses_with_the_new_optional_fields_absent() {
+    // Catches a new field that is not optional or not defaulted on deserialization.
+    let report = ReportV1::from_json(include_str!("fixtures/report-v1.json")).unwrap();
+    assert_eq!(report.outcome.child_status, None);
+    assert_eq!(report.outcome.owned_group_survivors, None);
+    assert!(report.signals.iter().all(|signal| signal.reason.is_none()));
+    assert!(!report.to_json_pretty().unwrap().contains("child_status"));
+}
+
+#[test]
+fn awkward_exit_fields_round_trip_byte_exact() {
+    // Catches dropping child_status, owned_group_survivors, or a signal reason on either side of
+    // JSON serialization. This is a schema-level round trip; it does not exercise
+    // `From<RootOutcome> for ChildStatus` (see `report::tests` for that direct coverage).
+    let json = include_str!("fixtures/report-v1-awkward.json");
+    let report = ReportV1::from_json(json).unwrap();
+    assert_eq!(
+        report.outcome.child_status,
+        Some(ChildStatus::Exited { code: 23 })
+    );
+    assert_eq!(report.outcome.owned_group_survivors, Some(true));
+    assert_eq!(
+        report.signals[0].reason,
+        Some(SignalReason::RootExitCleanup)
+    );
+    assert_eq!(report.to_json_pretty().unwrap(), json);
 }

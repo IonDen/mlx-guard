@@ -24,6 +24,13 @@ they do not include a path or raw operating-system message. Checkpoint request d
 `requested_unverified`. A nonce- and request-matching worker response is
 `acknowledged_unverified_durability`, which still does not prove durable bytes.
 
+`outcome.child_status` records the root command's own exit code or signal whenever it was observed,
+under every outcome kind, so an intervention or supervisor failure never hides how the command
+ended. `outcome.owned_group_survivors` is `true` when observe ended at root exit with owned-group
+members still running (they are not signalled). Each signal record carries `reason`: `footprint`,
+`wall_time`, `external_signal`, `root_exit_cleanup`, `observation_failure`, or `supervisor_fault`.
+All three fields are absent from reports written before they existed.
+
 Advisory values retain their original schema-v1 fields. New writers may also add `pressure_level`
 and per-field `metadata` with the metric scope, public API source, observation timestamp, and
 freshness. Readers remain compatible with earlier schema-v1 reports where those additive fields are

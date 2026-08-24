@@ -25,6 +25,25 @@ This is an owned-group boundary, not arbitrary daemon containment. A descendant 
 and escape. PID reuse and descendant identity evidence require the additional identity tracker.
 Group signal delivery does not prove process exit or memory reclamation.
 
+## Root exit with survivors
+
+When the root command's own process exits while other members of its owned group are still
+running, the supervisor no longer treats that as an unexplained loss of the thing it is watching.
+`run` sends SIGTERM to the group with reason `root_exit_cleanup`, waits the usual one-second grace
+period, and escalates to SIGKILL if a member is still alive once that grace period ends. The root's
+own exit status is still the reported result unless KILL was needed, in which case the run is
+reported as a policy intervention.
+
+This is a real behavior change to plan around: a command that intentionally starts background work
+and exits while leaving it running will now have that work terminated. Keep the launching process
+alive for as long as its children should keep running, or supervise it with `mlx-guard observe`,
+which ends at root exit and leaves any survivors alone.
+
+The cleanup TERM can race an owned-group member that is already exiting on its own. When the kernel
+no longer has a target by the time the signal is sent, the supervisor records that attempt with
+result `process_missing` rather than treating it as a failure; it is not evidence that anything
+went wrong.
+
 ## Signal routing
 
 Only SIGINT and SIGTERM are accepted as first external terminal signals. They are forwarded

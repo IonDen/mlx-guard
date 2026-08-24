@@ -23,6 +23,8 @@ are advisory and cannot change state. MLX's own counters are not read at all in 
 | emergency | KILL delivery failure | always | supervisor-error | report typed failure |
 | any active state | repeated terminal signal | intervention already started | emergency | send KILL |
 | any active state | process exit | always | exited | report observed result |
+| normal, warning, or checkpoint-requested | root exited with owned-group survivors | always | terminating | send TERM (cleanup) |
+| observe, terminating, emergency, supervisor-error, or exited | root exited | always | unchanged | none |
 
 Values between recovery and warning retain the previous normal or warning state. A sample at or
 above the ordinary limit contributes to the consecutive-breach count. A sample below that limit
@@ -74,6 +76,9 @@ non-matching acknowledgement cannot delay TERM beyond the checkpoint timeout.
 Checkpoint setup, channel, endpoint, or worker failures are distinct from a command that never
 negotiated checkpoint support. Both paths proceed to TERM, but the recorded disposition remains
 different.
+
+A root that exits mid-request abandons the request; its status stays `requested_unverified` and
+the cleanup TERM carries reason `root_exit_cleanup`.
 
 The supervisor continues sampling after TERM or KILL when possible. The final report counts these
 post-signal observations and records a final footprint only when one was actually measured. Signal

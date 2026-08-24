@@ -2,7 +2,11 @@
 
 Use `mlx-guard observe` to measure a workload without enforcing a limit. It reads from the same
 bounded process and footprint sampler as enforcement. It never builds a memory or wall-time policy,
-requests a checkpoint, or sends TERM/KILL because of footprint. If three consecutive samples are
+requests a checkpoint, or sends TERM/KILL because of footprint. Observe ends when the root command
+exits and reports its status. Owned-group members still running at that point are neither signalled
+nor waited for; the report marks `owned_group_survivors` and stderr says so. Because observe stops
+at root exit, the reported final footprint is the last sample taken before the root exited, not a
+fresh measurement of whatever survivors are left running. If three consecutive samples are
 unusable, observe writes a supervisor-error report and stops without signalling the command.
 
 ## Advisory measurements

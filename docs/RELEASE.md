@@ -23,6 +23,9 @@ the version in one commit and refreshes, by hand:
 - Evidence: re-run and commit reference measurements only when runtime, timing, policy, or
   measurement code changed since the last release; when a new bundle lands, move the links in
   `README.md` and `docs/integrations/MLX_TRAIN_PERF.md` to it.
+- If a prior evidence bundle's README notes a supervision-behavior discontinuity and points ahead
+  to this version (for example, "see the 0.2.0 bundle"), regenerate the reference-host bundle for
+  this version so that reference does not linger unfulfilled.
 
 The tag workflow installs its own locked `cargo-audit` version instead of relying on the mutable
 runner image; artifact checks otherwise use baseline macOS command-line tools.

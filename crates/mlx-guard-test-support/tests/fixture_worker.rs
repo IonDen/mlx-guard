@@ -1,5 +1,7 @@
 #![allow(unsafe_code)]
 
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::Read;
 use std::io::{BufRead, BufReader, Write};
@@ -7,9 +9,31 @@ use std::os::fd::{AsRawFd, FromRawFd};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+use mlx_guard_core::{
+    CheckpointChannel, CheckpointChannelError, CheckpointNonce, LaunchOptions, OwnedProcess,
+    RootOutcome, StdioMode,
+};
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
+
+fn checkpoint_launch_options(mode: &str, value: u64, wall_ms: u64) -> LaunchOptions {
+    LaunchOptions {
+        command: vec![
+            OsString::from(FIXTURE),
+            OsString::from(mode),
+            OsString::from(value.to_string()),
+            OsString::from(wall_ms.to_string()),
+        ],
+        cwd: None,
+        clear_env: false,
+        env: BTreeMap::new(),
+        stdin: StdioMode::Null,
+        stdout: StdioMode::Null,
+        stderr: StdioMode::Null,
+    }
+}
 
 struct Session {
     child: Child,
@@ -282,4 +306,131 @@ fn parse_field(fields: &[&str], name: &str) -> i32 {
         .expect("expected field must be present")
         .parse()
         .expect("identity field must be numeric")
+}
+
+#[test]
+fn checkpoint_worker_exiting_before_ready_never_completes_negotiation() {
+    // Catches treating a worker that exits before installing its handler as a false-ready state.
+    let (mut channel, inherited) =
+        CheckpointChannel::pair(CheckpointNonce::from_bytes([3; 32])).unwrap();
+    let options = checkpoint_launch_options("checkpoint-exit-before-ready", 1, 2_000);
+    let mut process = OwnedProcess::launch_with_checkpoint(&options, inherited).unwrap();
+    channel.begin_negotiation().unwrap();
+
+    // The worker's socket EOF (visible to `poll_ready` as `Err(NegotiationFailed)`) and its exit
+    // status (visible to `try_wait_root`) are two independent kernel events with no ordering
+    // guarantee between them, so both are read on every pass. Either outcome is consistent with
+    // "negotiation never completed"; only an `Ok(true)` readiness would be the real bug.
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let outcome = loop {
+        match channel.poll_ready() {
+            Ok(ready) => assert!(!ready),
+            Err(CheckpointChannelError::NegotiationFailed) => {}
+            Err(error) => panic!("unexpected checkpoint channel error: {error}"),
+        }
+        if let Some(outcome) = process.try_wait_root().unwrap() {
+            break outcome;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "worker must exit within the wait budget"
+        );
+        thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(outcome, RootOutcome::Exited(0));
+}
+
+#[test]
+fn checkpoint_worker_hanging_before_ready_is_killable() {
+    // Catches losing control of a worker that never installs a handler or becomes ready.
+    let (mut channel, inherited) =
+        CheckpointChannel::pair(CheckpointNonce::from_bytes([9; 32])).unwrap();
+    let options = checkpoint_launch_options("checkpoint-hang-before-ready", 1, 2_000);
+    let mut process = OwnedProcess::launch_with_checkpoint(&options, inherited).unwrap();
+    channel.begin_negotiation().unwrap();
+
+    let deadline = Instant::now() + Duration::from_millis(200);
+    while Instant::now() < deadline {
+        assert!(!channel.poll_ready().unwrap());
+        assert_eq!(process.try_wait_root().unwrap(), None);
+        thread::sleep(Duration::from_millis(1));
+    }
+    process.kill_group().unwrap();
+    process.wait_root().unwrap();
+}
+
+#[test]
+fn term_then_exit_worker_exits_with_grace_after_sigterm() {
+    // Catches ignoring SIGTERM or reporting the wrong exit status once it is delivered.
+    let mut session = Session::spawn("term-then-exit", 1, 5_000);
+    session.expect_line("READY mode=term-then-exit");
+    assert_eq!(
+        unsafe { libc::kill(session.child.id().cast_signed(), libc::SIGTERM) },
+        0
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let status = loop {
+        if let Some(status) = session.child.try_wait().expect("wait must work") {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "worker must exit after SIGTERM within the wait budget"
+        );
+        thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(status.code(), Some(3));
+}
+
+#[test]
+fn fast_root_exit_reports_a_term_ignoring_survivor_by_pid_file() {
+    // Catches losing track of a survivor once its parent has already exited.
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock must follow the Unix epoch")
+        .as_nanos();
+    let pid_path = std::env::temp_dir().join(format!(
+        "mlx-guard-fast-root-exit-pid-{}-{unique}",
+        std::process::id(),
+    ));
+
+    let output = Command::new(FIXTURE)
+        .args(["fast-root-exit", "2", "5000"])
+        .env("MLX_GUARD_FIXTURE_PID_FILE", &pid_path)
+        .output()
+        .expect("fast-exit fixture must run");
+    assert_eq!(output.status.code(), Some(23));
+    assert!(
+        pid_path.exists(),
+        "the root must not exit before the survivor pid file exists"
+    );
+
+    let child_pid: i32 = fs::read_to_string(&pid_path)
+        .expect("pid file must be readable")
+        .trim()
+        .parse()
+        .expect("pid file must contain a numeric pid");
+    fs::remove_file(&pid_path).ok();
+
+    assert_eq!(unsafe { libc::kill(child_pid, libc::SIGTERM) }, 0);
+    thread::sleep(Duration::from_millis(20));
+    assert_eq!(
+        unsafe { libc::kill(child_pid, 0) },
+        0,
+        "a TERM-ignoring survivor must remain alive after one try_wait-sized pause"
+    );
+
+    assert_eq!(unsafe { libc::kill(child_pid, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if unsafe { libc::kill(child_pid, 0) } != 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "survivor must be gone within the wait budget after SIGKILL"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
 }
