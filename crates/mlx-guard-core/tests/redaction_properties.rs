@@ -11,8 +11,10 @@
 //! `basename_projection` that independently mirrors `RunIdentity::from_argv`'s own basename
 //! derivation (`Path::file_name()`, `<non-utf8>` substitution). Recomputing independently, rather
 //! than reading back `identity.executable_basename`, is what lets this suite catch a mutated
-//! `from_argv` that computes the wrong basename (see the mutation-sweep notes in the SDD
-//! workspace) — reading the field back would be tautological.
+//! `from_argv` that computes the wrong basename — reading the field back would be tautological.
+//! The committed `corpus()` rows additionally carry a hand-pinned expected answer, checked
+//! against their own construction before they run, so a shared mistake between the mirror and
+//! the implementation can't silently cancel out.
 
 use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::OsStringExt;
@@ -23,9 +25,9 @@ use mlx_guard_core::{
     AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
     AdvisorySource, CapturePolicy, CheckpointRecord, CheckpointStatus, ChildStatus, EscapeEvidence,
     MemoryPressureLevel, ObservationError, Observed, OnParentExit, ParentWatch, PolicyState,
-    PrivacyDefaults, ReportError, ReportMode, ReportV1, RetentionPolicy, RunIdentity, SampleWindow,
-    SignalReason, SignalRecord, SignalResult, SignalTarget, TerminalKind, TerminalOutcome,
-    TransitionRecord, UnavailableReason, UploadPolicy,
+    PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportError, ReportMode, ReportV1, RetentionPolicy,
+    RunIdentity, SampleWindow, SignalReason, SignalRecord, SignalResult, SignalTarget,
+    TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason, UploadPolicy,
 };
 
 const MAX_CASE_RUNTIME: Duration = Duration::from_secs(10);
@@ -38,6 +40,10 @@ const SEED_PROPERTY_1: u64 = 0x6172_6776_7072_6f6a; // "argvproj"
 const SEED_PROPERTY_2: u64 = 0x636f_7272_6861_7368; // "corrhash"
 const SEED_PROPERTY_3: u64 = 0x7275_6e69_6461_6476; // "runidadv"
 const SEED_PROPERTY_4: u64 = 0x6669_656c_6461_6476; // "fieldadv"
+const SEED_PROPERTY_4_EARLY_GATE: u64 = 0x6669_656c_6467_6174; // "fieldgat"
+
+/// Case volume for property 4's early-gate lane (see `adversarial_field_values_never_panic_validation`).
+const EARLY_GATE_CASES: usize = 128;
 
 /// Property 1's Ok-yield floor. Calibrated once against `corpus()` (10 rows, 7 Ok / 3 Err) plus
 /// 512 randomized cases (`adversarial_argv0`/`adversarial_args`, biased ~80% toward a valid final
@@ -132,6 +138,13 @@ struct CorpusCase {
     argv0: OsString,
     args: Vec<OsString>,
     marker: String,
+    /// Hand-pinned answer, independent of `basename_projection`/`from_argv`: `Some(n)` — this
+    /// row is expected to project successfully with exactly `n` marker occurrences in the
+    /// basename; `None` — this row is expected to be rejected. `assert_pinned_corpus_expectation`
+    /// checks this against the row's own construction before `exercise_case` runs, so a bug that
+    /// made the mirror and the real implementation silently agree on the wrong answer would still
+    /// be caught here.
+    expected: Option<usize>,
 }
 
 /// Ten committed, hand-picked adversarial rows, one per class named in the plan brief. Corpus
@@ -150,6 +163,7 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: benign_argv0(),
         args: vec![OsString::from(format!("--token={marker}"))],
         marker,
+        expected: Some(0),
     });
 
     // 2: marker followed by a trailing newline, still just an arg.
@@ -159,6 +173,7 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: benign_argv0(),
         args: vec![OsString::from(format!("{marker}\n"))],
         marker,
+        expected: Some(0),
     });
 
     // 3: marker wrapped in an ANSI color escape, still just an arg.
@@ -168,6 +183,7 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: benign_argv0(),
         args: vec![OsString::from(format!("\x1b[31m{marker}m"))],
         marker,
+        expected: Some(0),
     });
 
     // 4: the final path component is invalid UTF-8 (marker bytes plus a lone 0xFF byte), so
@@ -183,6 +199,7 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: OsString::from_vec(raw),
         args: Vec::new(),
         marker,
+        expected: Some(0),
     });
 
     // 5: marker lives in a *directory* component; the basename ("python") is innocent. Only the
@@ -193,6 +210,7 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: OsString::from(format!("/tmp/{marker}dir/python")),
         args: Vec::new(),
         marker,
+        expected: Some(0),
     });
 
     // 6: the marker IS the entire basename — the one legal channel. expected == 1.
@@ -202,6 +220,7 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: OsString::from(format!("/tmp/RDCT_corpus_dir/{marker}")),
         args: Vec::new(),
         marker,
+        expected: Some(1),
     });
 
     // 7: the marker is a substring of an otherwise-ordinary basename (the I1 false-positive
@@ -213,6 +232,7 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: OsString::from(format!("/tmp/RDCT_corpus_dir/py{marker}thon")),
         args: Vec::new(),
         marker,
+        expected: Some(1),
     });
 
     // 8/9: argv0 exactly "." / "..". `Path::file_name()` never yields a Normal component for a
@@ -223,12 +243,14 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: OsString::from("."),
         args: Vec::new(),
         marker: "RDCT_CORPUS_8_c4n4ry".to_owned(),
+        expected: None,
     });
     rows.push(CorpusCase {
         name: "argv0_dotdot",
         argv0: OsString::from(".."),
         args: Vec::new(),
         marker: "RDCT_CORPUS_9_c4n4ry".to_owned(),
+        expected: None,
     });
 
     // 10: a 256-byte basename (over the validator's 255-byte cap), embedding the marker for good
@@ -240,9 +262,38 @@ fn corpus() -> Vec<CorpusCase> {
         argv0: OsString::from(format!("/tmp/RDCT_corpus_dir/{oversized_basename}")),
         args: Vec::new(),
         marker,
+        expected: None,
     });
 
     rows
+}
+
+/// Assert each corpus row's hand-pinned answer (see `CorpusCase::expected`'s doc) against the
+/// row's own bytes, independent of `exercise_case`'s Ok/Err bookkeeping.
+fn assert_pinned_corpus_expectation(case: &CorpusCase) {
+    let projected = basename_projection(&case.argv0);
+    if let Some(pinned_count) = case.expected {
+        let name = projected.unwrap_or_else(|| {
+            panic!(
+                "case {}: pinned Ok({pinned_count}) but no basename projected at all",
+                case.name
+            )
+        });
+        assert_eq!(
+            occurrences(&case.marker, &name),
+            pinned_count,
+            "case {}: pinned expected occurrence count does not match basename_projection",
+            case.name
+        );
+    } else {
+        let mut full_argv = vec![case.argv0.clone()];
+        full_argv.extend(case.args.iter().cloned());
+        assert!(
+            RunIdentity::from_argv(PINNED_RUN_ID, &full_argv, None).is_err(),
+            "case {}: pinned Err expectation did not hold",
+            case.name
+        );
+    }
 }
 
 /// Shared exercise body for both corpus rows and randomized cases: build `argv`, project the
@@ -394,6 +445,7 @@ fn argv_markers_never_survive_projection() {
 
     for case in corpus() {
         assert!(started.elapsed() < MAX_CASE_RUNTIME);
+        assert_pinned_corpus_expectation(&case);
         exercise_case(
             &base,
             case.name,
@@ -411,9 +463,10 @@ fn argv_markers_never_survive_projection() {
         let marker = format!("RDCT_P1_{case}_c4n4ry");
         let argv0 = adversarial_argv0(&mut generator, &marker);
         let args = adversarial_args(&mut generator, &marker);
+        let case_label = format!("{case} of {PROPERTY_CASES}");
         exercise_case(
             &base,
-            "random",
+            &case_label,
             &argv0,
             &args,
             &marker,
@@ -751,13 +804,23 @@ fn adversarial_child_status(generator: &mut Generator) -> ChildStatus {
 
 type FieldMutation = fn(&mut Generator, &mut ReportV1);
 
+/// Guaranteed-invalid by construction (never left to chance): bumps past `REPORT_SCHEMA_VERSION`
+/// on the rare collision so the early-gate lane's positive `Err` assertion never flakes.
 fn mutate_schema_version(generator: &mut Generator, report: &mut ReportV1) {
-    report.schema_version = generator.u32();
+    let mut version = generator.u32();
+    if version == REPORT_SCHEMA_VERSION {
+        version = version.wrapping_add(1);
+    }
+    report.schema_version = version;
 }
 
+/// Guaranteed-invalid by construction: a trailing space is never in `valid_package_version`'s
+/// allowed charset, so this always fails regardless of the random prefix.
 fn mutate_package_version(generator: &mut Generator, report: &mut ReportV1) {
-    let length = generator.index(72);
-    report.package_version = adversarial_string(generator, length);
+    let length = 1 + generator.index(30);
+    let mut value = adversarial_string(generator, length);
+    value.push(' ');
+    report.package_version = value;
 }
 
 fn mutate_run_identity(generator: &mut Generator, report: &mut ReportV1) {
@@ -881,6 +944,14 @@ fn mutate_outcome(generator: &mut Generator, report: &mut ReportV1) {
     };
 }
 
+/// `UploadPolicy` and `RetentionPolicy` are single-variant enums frozen for v0.1. `unsafe_code` is
+/// denied workspace-wide, so no safely-typed `ReportV1` can ever hold a value other than
+/// `Disabled`/`UserManaged` for these two fields — `validate_privacy`'s corresponding checks
+/// (`upload != Disabled`, `retention != UserManaged`) are structurally unreachable via any real
+/// construction path, not just this test, so there is nothing adversarial to mutate them to. The
+/// other three `validate_privacy` invariants (`redacted_before_persistence`, `file_mode`, and
+/// `capture` agreeing with `run.correlation_hash`'s presence) ARE exercised below, and
+/// `adversarial_field_values_never_panic_validation` asserts `invalid_privacy > 0` as evidence.
 fn mutate_privacy(generator: &mut Generator, report: &mut ReportV1) {
     report.privacy = PrivacyDefaults {
         redacted_before_persistence: generator.bool(),
@@ -900,9 +971,11 @@ fn mutate_privacy(generator: &mut Generator, report: &mut ReportV1) {
     };
 }
 
+/// The 12 "deep" mutators — deliberately excludes `mutate_schema_version`/`mutate_package_version`
+/// (`validate()`'s first two gates; exercised in their own early-gate lane below) so a mutation from
+/// this pool can't be masked behind an early rejection before reaching the cross-field invariants
+/// in `validate_configuration`/`validate_privacy`/`validate_events`.
 const FIELD_MUTATIONS: &[FieldMutation] = &[
-    mutate_schema_version,
-    mutate_package_version,
     mutate_run_identity,
     mutate_configuration_mode,
     mutate_configuration_thresholds,
@@ -917,17 +990,76 @@ const FIELD_MUTATIONS: &[FieldMutation] = &[
     mutate_privacy,
 ];
 
+/// Per-`ReportError`-variant rejection counts for the main mutation pool, so a coverage claim
+/// ("this reaches the events/configuration layer") is backed by which variant actually fired, not
+/// just that *some* `Err(_)` occurred.
+#[derive(Debug, Default)]
+struct ErrorTally {
+    invalid_identity: usize,
+    unsupported_schema: usize,
+    invalid_package_version: usize,
+    invalid_configuration: usize,
+    invalid_privacy: usize,
+    invalid_event_order: usize,
+    invalid_advisory_metrics: usize,
+    json: usize,
+}
+
+impl ErrorTally {
+    fn record(&mut self, error: &ReportError) {
+        match error {
+            ReportError::InvalidIdentity => self.invalid_identity += 1,
+            ReportError::UnsupportedSchema => self.unsupported_schema += 1,
+            ReportError::InvalidPackageVersion => self.invalid_package_version += 1,
+            ReportError::InvalidConfiguration => self.invalid_configuration += 1,
+            ReportError::InvalidPrivacy => self.invalid_privacy += 1,
+            ReportError::InvalidEventOrder => self.invalid_event_order += 1,
+            ReportError::InvalidAdvisoryMetrics => self.invalid_advisory_metrics += 1,
+            ReportError::Json(_) => self.json += 1,
+        }
+    }
+}
+
 /// Structurally valid reports carrying adversarial TYPED field values through `validate()` must
-/// return `Ok` or a typed `Err` — never panic. `ok_count`/`err_count` > 0 proves the mutation set
-/// actually exercises both outcomes rather than trivially landing on one side every time.
+/// return `Ok` or a typed `Err` — never panic. Two lanes: an EARLY-GATE lane exercises
+/// `schema_version`/`package_version` (`validate()`'s first two gates) in isolation with a
+/// positive typed-`Err` assertion each, since mixing them into the main pool would mask every
+/// deeper mutation behind an early rejection. The MAIN pool (the 12 deep mutators) is tallied by
+/// `ReportError` variant, so this property proves — rather than just claims — that it reaches the
+/// events/configuration cross-field invariants `parser_fuzz.rs`'s byte-mutation fuzz rarely does.
 #[test]
 fn adversarial_field_values_never_panic_validation() {
     let started = Instant::now();
-    let mut generator = Generator(SEED_PROPERTY_4);
     let base = base_report();
-    let mut ok_count = 0usize;
-    let mut err_count = 0usize;
 
+    let mut early_gate_generator = Generator(SEED_PROPERTY_4_EARLY_GATE);
+    for case in 0..EARLY_GATE_CASES {
+        assert!(started.elapsed() < MAX_CASE_RUNTIME);
+        let mut candidate = base.clone();
+        if case % 2 == 0 {
+            mutate_schema_version(&mut early_gate_generator, &mut candidate);
+            assert!(
+                matches!(candidate.validate(), Err(ReportError::UnsupportedSchema)),
+                "early-gate case {case} of {EARLY_GATE_CASES}: mutated schema_version must be \
+                 rejected as UnsupportedSchema"
+            );
+        } else {
+            mutate_package_version(&mut early_gate_generator, &mut candidate);
+            assert!(
+                matches!(
+                    candidate.validate(),
+                    Err(ReportError::InvalidPackageVersion)
+                ),
+                "early-gate case {case} of {EARLY_GATE_CASES}: mutated package_version must be \
+                 rejected as InvalidPackageVersion"
+            );
+        }
+    }
+    assert!(started.elapsed() < MAX_CASE_RUNTIME);
+
+    let mut generator = Generator(SEED_PROPERTY_4);
+    let mut ok_count = 0usize;
+    let mut tally = ErrorTally::default();
     for _ in 0..PROPERTY_CASES {
         assert!(started.elapsed() < MAX_CASE_RUNTIME);
         let mut candidate = base.clone();
@@ -938,7 +1070,7 @@ fn adversarial_field_values_never_panic_validation() {
         }
         match candidate.validate() {
             Ok(()) => ok_count += 1,
-            Err(_) => err_count += 1,
+            Err(error) => tally.record(&error),
         }
     }
 
@@ -947,8 +1079,20 @@ fn adversarial_field_values_never_panic_validation() {
         ok_count > 0,
         "no mutated case ever validated (weak mutation coverage)"
     );
+    assert_eq!(
+        tally.unsupported_schema + tally.invalid_package_version,
+        0,
+        "the main mutation pool must never touch the early-gate fields: {tally:?}"
+    );
+    let events_or_configuration =
+        tally.invalid_configuration + tally.invalid_event_order + tally.invalid_advisory_metrics;
     assert!(
-        err_count > 0,
-        "no mutated case was ever rejected (weak mutation coverage)"
+        events_or_configuration > 0,
+        "no rejection reached the events/configuration cross-field invariants — this property's \
+         claimed delta over parser_fuzz.rs's byte-mutation fuzz: {tally:?}"
+    );
+    assert!(
+        tally.invalid_privacy > 0,
+        "no rejection reached validate_privacy's achievable invariants: {tally:?}"
     );
 }
