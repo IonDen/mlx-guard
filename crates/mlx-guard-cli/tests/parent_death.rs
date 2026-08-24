@@ -125,6 +125,25 @@ fn wait_until_gone(pid: i32) {
     assert!(!process_exists(pid));
 }
 
+/// Read the supervisor's single direct child — the worker it launched — from `pgrep -P`.
+///
+/// Called once the first sample proves the worker is running, so exactly one child must exist.
+fn only_child_of(parent: i32) -> i32 {
+    let output = Command::new("/usr/bin/pgrep")
+        .args(["-P", &parent.to_string()])
+        .output()
+        .expect("pgrep must run");
+    let listing = String::from_utf8_lossy(&output.stdout);
+    let pids = listing
+        .lines()
+        .map(|line| line.trim().parse::<i32>().expect("pgrep must print pids"))
+        .collect::<Vec<_>>();
+    let [pid] = pids[..] else {
+        panic!("the supervisor must own exactly one child, got {pids:?}");
+    };
+    pid
+}
+
 /// Poll the run's journal until its first `Sample` record exists — the gate that makes killing
 /// the launcher race-free (the supervisor must have observed the child at least once first).
 fn wait_for_first_sample(journal_path: &Path) {
@@ -459,6 +478,83 @@ fn a_launcher_that_ignored_sighup_disables_the_watch_and_says_so() {
             .map(|signal| (signal.signal, signal.reason))
             .collect::<Vec<_>>(),
         [(15, Some(mlx_guard_core::SignalReason::WallTime))],
+        "{report:#?}"
+    );
+}
+
+#[test]
+fn observe_terminates_the_group_when_the_parent_dies() {
+    // Catches an observe run that goes on supervising an orphan, and one that reports the root's
+    // own death as the outcome when the shutdown it started is what killed the root.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let journal_path = directory.0.join(".report.json.journal");
+    let script = write_launcher_script(&directory.0, false);
+    let (mut launcher, supervisor) = spawn_via_launcher(
+        &script,
+        &[
+            "observe",
+            "--sample-interval",
+            "10ms",
+            "--report",
+            report_path.to_str().unwrap(),
+            "--",
+            "/bin/sleep",
+            "30",
+        ],
+    );
+    wait_for_first_sample(&journal_path);
+    let worker = only_child_of(supervisor);
+
+    kill_and_reap(&mut launcher);
+
+    let report = read_report_within(&report_path, Duration::from_secs(5));
+    wait_until_gone(supervisor);
+    // Observe signals nothing of its own accord, so the worker outliving this is the whole
+    // failure this shutdown exists to prevent.
+    wait_until_gone(worker);
+    assert_eq!(
+        report.outcome.kind,
+        mlx_guard_core::TerminalKind::PolicyIntervention
+    );
+    // `sleep` obeys TERM, so the shutdown never escalates to KILL.
+    assert_eq!(
+        report
+            .signals
+            .iter()
+            .map(|signal| (signal.signal, signal.reason, signal.result))
+            .collect::<Vec<_>>(),
+        [(
+            15,
+            Some(mlx_guard_core::SignalReason::ParentExit),
+            mlx_guard_core::SignalResult::Delivered,
+        )],
+        "{report:#?}"
+    );
+    // The root's observed status is still reported, even though the intervention above it owns
+    // the outcome.
+    assert_eq!(
+        report.outcome.child_status,
+        Some(mlx_guard_core::ChildStatus::Signaled { signal: 15 })
+    );
+    let parent_exited_at_ms = report
+        .outcome
+        .parent_exited_at_ms
+        .expect("the orphan time must be recorded");
+    assert!(
+        parent_exited_at_ms <= report.signals[0].at_ms,
+        "the parent must die before the TERM it causes: {report:#?}"
+    );
+    assert_eq!(
+        report.configuration.parent_watch,
+        Some(mlx_guard_core::ParentWatch::Active)
+    );
+    // A terminated observation is an intervention, never a measurement failure.
+    assert!(
+        report
+            .transitions
+            .iter()
+            .all(|transition| transition.to != mlx_guard_core::PolicyState::SupervisorError),
         "{report:#?}"
     );
 }

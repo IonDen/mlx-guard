@@ -131,6 +131,8 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
         observation_failed: false,
         terminal_signals,
         terminal_signal_count: 0,
+        parent_watch,
+        parent_shutdown_deadline: None,
         started: Instant::now(),
         root_outcome: None,
         final_footprint: Observed::Unknown,
@@ -931,6 +933,11 @@ struct ObserveRuntime {
     observation_failed: bool,
     terminal_signals: TerminalSignalMonitor,
     terminal_signal_count: u32,
+    /// The launching parent's identity, the watch decision, and the orphan time once observed.
+    parent_watch: ParentWatchState,
+    /// When the TERM grace of a parent-exit shutdown ends, relative to `started`. `Some` exactly
+    /// while that shutdown is in flight, which is also what makes it own the completion.
+    parent_shutdown_deadline: Option<Duration>,
     started: Instant,
     root_outcome: Option<RootOutcome>,
     final_footprint: Observed<u64>,
@@ -957,6 +964,22 @@ impl ObserveRuntime {
                 // Observe never signals the command, so survivors must outlive the run instead
                 // of being killed when the owned process is dropped.
                 relinquish: survivors,
+            },
+            ObserveCompletion::ParentExit {
+                root_outcome,
+                survivors,
+            } => ObserveFinal {
+                outcome: SupervisorOutcome::PolicyIntervention,
+                kind: TerminalKind::PolicyIntervention,
+                // The root's own status is still reported, even though the shutdown above it owns
+                // the outcome; `None` only when the shutdown killed a root it never reaped.
+                child_status: root_outcome.map(ChildStatus::from),
+                owned_group_survivors: Some(survivors),
+                diagnostic: Some(OBSERVE_PARENT_EXIT_DIAGNOSTIC.to_owned()),
+                // The shutdown either killed the group or owns what is left of it, so cleanup on
+                // drop stays armed: relinquishing here would re-orphan the survivors this
+                // shutdown exists to remove.
+                relinquish: false,
             },
             ObserveCompletion::ObservationFailure => ObserveFinal {
                 outcome: SupervisorOutcome::SupervisorFailure,
@@ -987,7 +1010,7 @@ impl ObserveRuntime {
             final_footprint_bytes: self.final_footprint.clone(),
             child_status,
             owned_group_survivors,
-            parent_exited_at_ms: None,
+            parent_exited_at_ms: self.parent_watch.exited_at_ms,
         };
         Self::record_terminal(
             &mut self.journal,
@@ -1038,14 +1061,53 @@ impl ObserveRuntime {
                     return ObserveCompletion::SupervisorFailure(error.to_string());
                 }
             };
-            // The root's own exit ends the observation, whether or not owned-group members are
-            // still running; observe reports the survivors rather than waiting for or signalling
-            // them.
-            if let Some(outcome) = self.root_outcome {
-                return ObserveCompletion::Root {
-                    outcome,
-                    survivors: group_exists,
-                };
+            // A parent-exit shutdown owns the completion for as long as it is in flight. The
+            // root's death is then this shutdown's own doing, so reporting it as the outcome
+            // would both hide the intervention and relinquish the survivors it exists to remove.
+            if let Some(deadline) = self.parent_shutdown_deadline {
+                if !group_exists {
+                    return ObserveCompletion::ParentExit {
+                        root_outcome: self.root_outcome,
+                        survivors: false,
+                    };
+                }
+                if self.started.elapsed() >= deadline {
+                    match self.process.kill_group() {
+                        Ok(result) => self.record_parent_exit_signal(9, result),
+                        Err(error) => {
+                            return ObserveCompletion::SupervisorFailure(error.to_string());
+                        }
+                    }
+                    return ObserveCompletion::ParentExit {
+                        root_outcome: self.root_outcome,
+                        survivors: true,
+                    };
+                }
+            } else {
+                // The root's own exit ends the observation, whether or not owned-group members are
+                // still running; observe reports the survivors rather than waiting for or
+                // signalling them.
+                if let Some(outcome) = self.root_outcome {
+                    return ObserveCompletion::Root {
+                        outcome,
+                        survivors: group_exists,
+                    };
+                }
+                // Deliberately after the completion check above: an observation whose command has
+                // already finished must not manufacture a termination for a parent that died
+                // alongside it.
+                let now = self.started.elapsed();
+                if parent_has_exited(&mut self.parent_watch, self.inventory, now)
+                    && matches!(self.parent_watch.on_parent_exit, OnParentExit::Terminate)
+                {
+                    match self.process.terminate_group() {
+                        Ok(result) => self.record_parent_exit_signal(15, result),
+                        Err(error) => {
+                            return ObserveCompletion::SupervisorFailure(error.to_string());
+                        }
+                    }
+                    self.parent_shutdown_deadline = Some(now.saturating_add(TERM_GRACE));
+                }
             }
             if let Err(diagnostic) = self.forward_terminal_signals() {
                 return ObserveCompletion::SupervisorFailure(diagnostic);
@@ -1053,17 +1115,42 @@ impl ObserveRuntime {
             if !self.observation_failed {
                 self.sample_once();
             }
-            if self.observation_failed {
+            // Measurement loss cannot end a shutdown already in flight: that would relinquish the
+            // group mid-termination and report a supervisor failure for a run that intervened.
+            // The bounded deadline above still ends the loop, sampling or not.
+            if self.observation_failed && self.parent_shutdown_deadline.is_none() {
                 return ObserveCompletion::ObservationFailure;
             }
-            let delay = self
+            let now = self.started.elapsed();
+            let sample_delay = self
                 .sampler
-                .delay_until_next(self.started.elapsed())
+                .delay_until_next(now)
                 .unwrap_or(self.sample_interval);
+            let delay = self
+                .parent_shutdown_deadline
+                .map_or(sample_delay, |deadline| {
+                    sample_delay.min(deadline.saturating_sub(now))
+                });
             if !delay.is_zero() {
                 thread::sleep(delay);
             }
         }
+    }
+
+    /// Record one signal the parent-exit shutdown delivered to the owned group.
+    fn record_parent_exit_signal(&mut self, signal: u8, result: SignalResult) {
+        record_resilient(
+            &mut self.journal,
+            &mut self.sequence,
+            JournalEntry::Signal(SignalRecord {
+                at_ms: duration_ms(self.started.elapsed()),
+                signal,
+                target: SignalTarget::OwnedProcessGroup,
+                result,
+                reason: Some(SignalReason::ParentExit),
+            }),
+            JournalDurability::Sync,
+        );
     }
 
     fn forward_terminal_signals(&mut self) -> Result<(), String> {
@@ -1214,6 +1301,14 @@ enum ObserveCompletion {
         /// Whether owned-group members were still running when the root exited.
         survivors: bool,
     },
+    /// The launching parent exited, so the run terminated the group it owns instead of going on
+    /// observing an orphan.
+    ParentExit {
+        /// The root's own status, absent only when the shutdown killed a root it never reaped.
+        root_outcome: Option<RootOutcome>,
+        /// Whether owned-group members were still alive when the KILL decision was reached.
+        survivors: bool,
+    },
     ObservationFailure,
     SupervisorFailure(String),
 }
@@ -1221,6 +1316,10 @@ enum ObserveCompletion {
 /// Stderr diagnostic for an observe run the root ended while owned-group members were alive.
 const OBSERVE_SURVIVORS_DIAGNOSTIC: &str =
     "observe ended at root exit; owned-group members were still running and were not signalled";
+
+/// Stderr diagnostic for an observe run the launching parent's exit ended.
+const OBSERVE_PARENT_EXIT_DIAGNOSTIC: &str =
+    "observe ended because the launching parent exited; the owned group was terminated";
 
 /// What an observe completion determines about the final report and process result.
 struct ObserveFinal {
