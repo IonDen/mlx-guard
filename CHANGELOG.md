@@ -26,8 +26,9 @@ versions follow Semantic Versioning.
 - When the root command exits while other members of its owned group are still running, `run` now
   sends a cleanup TERM, waits the usual one-second grace period, and escalates to KILL if needed.
   The root's own exit status is still reported unless KILL was required, in which case the process
-  exit code is 75. `observe` still ends at root exit, but now leaves survivors running and reports
-  them rather than treating their presence as unremarkable.
+  exit code is 75. `observe` previously reported a root exit with surviving group members as
+  measurement loss (exit 70); it now ends at root exit, reports the root's own status, leaves
+  survivors running, and marks them in the report (`owned_group_survivors`).
 - A run that loses measurement while enforcement is active now reports process exit code 70 with
   the signals it sent recorded in the report, instead of 75.
 

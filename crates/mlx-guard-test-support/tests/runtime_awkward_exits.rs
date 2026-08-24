@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mlx_guard_cli::{RuntimeResult, execute, parse_cli};
 use mlx_guard_core::{
     CheckpointStatus, ChildStatus, PolicyState, ReportV1, SignalReason, SupervisorOutcome,
-    TerminalKind,
+    TerminalKind, checkpoint_signal_usr1,
 };
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
@@ -191,10 +191,11 @@ fn exit_between_checkpoint_request_and_acknowledgement_is_truthful() {
         report.outcome.child_status,
         Some(ChildStatus::Exited { code: 0 })
     );
-    assert!(
-        reasons(&report)
-            .iter()
-            .all(|(signal, _)| *signal != 15 && *signal != 9),
+    // The wall-time deadline opens the checkpoint request; the child exits before any
+    // acknowledgement or timeout, so that request is the only signal ever recorded.
+    assert_eq!(
+        reasons(&report),
+        [(checkpoint_signal_usr1().get(), Some(SignalReason::WallTime))],
         "{report:#?}"
     );
 }

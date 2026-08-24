@@ -10,7 +10,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mlx_guard_core::{
     CheckpointStatus, ChildStatus, JournalEntry, JournalRecovery, Observed, PolicyState, ReportV1,
-    SignalReason, SignalTarget, TerminalKind,
+    SignalTarget, TerminalKind,
 };
 use serde::Serialize;
 
@@ -678,10 +678,10 @@ fn reference_host_scenarios_write_reports_and_false_intervention_count() {
     let mut false_interventions = 0;
     for (name, mode_args, worker) in safe_cases {
         let (record, report) = scenario_record(&output_directory, name, &mode_args, &worker);
-        let unexpected_signal = report
-            .signals
-            .iter()
-            .any(|signal| signal.reason != Some(SignalReason::RootExitCleanup));
+        // Every safe workload is a single process with no owned-group members that could
+        // survive a root exit, so no RootExitCleanup signal is possible here: any signal at
+        // all is unexpected.
+        let unexpected_signal = !report.signals.is_empty();
         if report.outcome.kind == TerminalKind::PolicyIntervention || unexpected_signal {
             false_interventions += 1;
         }
