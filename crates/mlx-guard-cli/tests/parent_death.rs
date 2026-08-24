@@ -558,3 +558,66 @@ fn observe_terminates_the_group_when_the_parent_dies() {
         "{report:#?}"
     );
 }
+
+#[test]
+fn observe_escalates_to_kill_when_the_group_ignores_the_parent_exit_term() {
+    // Catches a parent-exit shutdown that stops at TERM: a worker that ignores it must still be
+    // gone when the run ends, and the report must say the group was still alive at the escalation.
+    // `trap '' TERM` survives the `exec` as SIG_IGN, the same mechanism the nohup launcher uses.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let journal_path = directory.0.join(".report.json.journal");
+    let script = write_launcher_script(&directory.0, false);
+    let (mut launcher, supervisor) = spawn_via_launcher(
+        &script,
+        &[
+            "observe",
+            "--sample-interval",
+            "10ms",
+            "--report",
+            report_path.to_str().unwrap(),
+            "--",
+            "/bin/sh",
+            "-c",
+            "trap '' TERM; exec /bin/sleep 30",
+        ],
+    );
+    wait_for_first_sample(&journal_path);
+    let worker = only_child_of(supervisor);
+
+    kill_and_reap(&mut launcher);
+
+    // The full TERM grace elapses before the KILL, so this wait is seconds-scale by design.
+    let report = read_report_within(&report_path, Duration::from_secs(10));
+    wait_until_gone(supervisor);
+    wait_until_gone(worker);
+    assert_eq!(
+        report.outcome.kind,
+        mlx_guard_core::TerminalKind::PolicyIntervention
+    );
+    assert_eq!(
+        report
+            .signals
+            .iter()
+            .map(|signal| (signal.signal, signal.reason, signal.result))
+            .collect::<Vec<_>>(),
+        [
+            (
+                15,
+                Some(mlx_guard_core::SignalReason::ParentExit),
+                mlx_guard_core::SignalResult::Delivered,
+            ),
+            (
+                9,
+                Some(mlx_guard_core::SignalReason::ParentExit),
+                mlx_guard_core::SignalResult::Delivered,
+            ),
+        ],
+        "{report:#?}"
+    );
+    // The escalation returns the moment the KILL is out, so the root this run killed is reaped
+    // only by the later cleanup on drop — after the report was written, hence no status here.
+    assert_eq!(report.outcome.child_status, None, "{report:#?}");
+    assert_eq!(report.outcome.owned_group_survivors, Some(true));
+    assert!(report.outcome.parent_exited_at_ms.is_some(), "{report:#?}");
+}

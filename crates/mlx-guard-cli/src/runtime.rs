@@ -1122,10 +1122,17 @@ impl ObserveRuntime {
                 return ObserveCompletion::ObservationFailure;
             }
             let now = self.started.elapsed();
-            let sample_delay = self
-                .sampler
-                .delay_until_next(now)
-                .unwrap_or(self.sample_interval);
+            // A latched observation failure stops `sample_once`, which freezes the sampler's last
+            // start: `delay_until_next` then saturates to zero for good, so honouring it would
+            // spin the loop at full speed until the deadline. The configured interval keeps the
+            // shutdown's remaining second at its normal cadence instead.
+            let sample_delay = if self.observation_failed {
+                self.sample_interval
+            } else {
+                self.sampler
+                    .delay_until_next(now)
+                    .unwrap_or(self.sample_interval)
+            };
             let delay = self
                 .parent_shutdown_deadline
                 .map_or(sample_delay, |deadline| {
