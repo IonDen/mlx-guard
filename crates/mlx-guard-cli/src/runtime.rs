@@ -1701,12 +1701,14 @@ mod tests {
 
     use mlx_guard_core::{
         Actuation, ActuationFailure, ActuationKind, ActuationOutcome, CheckpointDisposition,
-        CheckpointStatus, Event, PolicyState, SampleEvent, SignalNumber, SignalReason,
+        CheckpointStatus, Event, NativeProcessInventory, OnParentExit, ParentWatch, PolicyState,
+        SampleEvent, SignalNumber, SignalReason,
     };
 
     use super::{
-        actuation_reason, checkpoint_progress, intervention_cause_for, may_label_shutdown,
-        opens_an_uncounted_shutdown, shutdown_reason_for, supervisor_error_diagnostic,
+        OnParentExitOption, actuation_reason, checkpoint_progress, establish_parent_watch,
+        intervention_cause_for, may_label_shutdown, opens_an_uncounted_shutdown,
+        shutdown_reason_for, supervisor_error_diagnostic,
     };
 
     fn sample() -> Event {
@@ -1795,6 +1797,55 @@ mod tests {
         assert!(!opens_an_uncounted_shutdown(&parent_exited()));
         assert!(!opens_an_uncounted_shutdown(&sample()));
         assert!(!opens_an_uncounted_shutdown(&tick()));
+    }
+
+    #[test]
+    fn a_nohup_style_launcher_stops_enforcement_without_stopping_detach_evidence() {
+        // Catches the `!wants_detach` override disappearing from the hangup guard: detach enforces
+        // nothing, so an inherited SIG_IGN disposition is no reason to stop watching for evidence.
+        let inventory = NativeProcessInventory::new();
+
+        let ignored = establish_parent_watch(inventory, true, OnParentExitOption::Terminate);
+        assert_eq!(ignored.watch, ParentWatch::HangupIgnored);
+        assert!(
+            ignored.parent.is_none(),
+            "a watch that is never checked must bind no identity"
+        );
+        assert_eq!(ignored.on_parent_exit, OnParentExit::Terminate);
+
+        let detached = establish_parent_watch(inventory, true, OnParentExitOption::Detach);
+        assert_eq!(detached.watch, ParentWatch::Detach);
+        assert!(
+            detached.parent.is_some(),
+            "detach must bind the parent whose exit it records"
+        );
+        assert_eq!(detached.on_parent_exit, OnParentExit::Detach);
+    }
+
+    #[test]
+    fn an_observable_parent_arms_exactly_the_watch_the_option_asked_for() {
+        // Catches an enforcing watch that bound no identity — it could never fire — and either
+        // option arming the other one's watch.
+        //
+        // The two remaining arms cannot be driven from here: `establish_parent_watch` reads this
+        // process's real parent, and under a test runner that parent is neither pid 1 nor
+        // uninspectable, so `ParentIsLaunchd` and `ParentUnobservable` have no in-process input
+        // that reaches them.
+        let inventory = NativeProcessInventory::new();
+
+        let active = establish_parent_watch(inventory, false, OnParentExitOption::Terminate);
+        assert_eq!(active.watch, ParentWatch::Active);
+        assert!(
+            active.parent.is_some(),
+            "an enforcing watch must bind the identity it enforces against"
+        );
+        assert_eq!(active.on_parent_exit, OnParentExit::Terminate);
+        assert_eq!(active.exited_at_ms, None);
+
+        let detached = establish_parent_watch(inventory, false, OnParentExitOption::Detach);
+        assert_eq!(detached.watch, ParentWatch::Detach);
+        assert!(detached.parent.is_some());
+        assert_eq!(detached.exited_at_ms, None);
     }
 
     #[test]

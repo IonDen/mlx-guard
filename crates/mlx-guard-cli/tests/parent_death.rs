@@ -249,8 +249,16 @@ fn killing_the_parent_terminates_the_group_and_reports_parent_exit() {
         report.outcome.child_status,
         Some(mlx_guard_core::ChildStatus::Signaled { signal: 15 })
     );
-    // The schema validator already enforces that this time precedes the outcome it explains.
-    assert!(report.outcome.parent_exited_at_ms.is_some(), "{report:#?}");
+    // The schema validator only enforces that the orphan time is at or before the outcome time;
+    // that the TERM followed the death which caused it is this test's own claim.
+    let parent_exited_at_ms = report
+        .outcome
+        .parent_exited_at_ms
+        .expect("the orphan time must be recorded");
+    assert!(
+        parent_exited_at_ms <= report.signals[0].at_ms,
+        "the parent must die before the TERM it causes: {report:#?}"
+    );
     assert_eq!(
         report.configuration.parent_watch,
         Some(mlx_guard_core::ParentWatch::Active)
@@ -262,7 +270,8 @@ fn killing_the_parent_terminates_the_group_and_reports_parent_exit() {
     // The launcher that would have reaped the supervisor is gone, so no exit code is observable
     // here. A `policy_intervention` outcome IS exit 75 by the independently pinned mapping
     // (`mlx-guard-core/tests/exit_semantics.rs:9` and the 75 row of `_expected_exit_code` in
-    // `python/mlx_guard/_client.py`); the hangup-ignored test below observes a live exit code.
+    // `python/mlx_guard/_client.py`). A live exit code is observed by the two directly-spawned
+    // tests below instead: the SIGHUP forward (129) and the dead stdout reader (0).
 }
 
 #[test]
@@ -286,8 +295,11 @@ fn detach_leaves_the_run_alone_and_records_the_orphan_time() {
             "--report",
             report_path.to_str().unwrap(),
             "--",
+            // Five seconds, not two: the control below holds for a second before checking, and
+            // `wait_for_first_sample` may itself burn a second on a starved runner. The worker
+            // must still be running when both have elapsed, or the control proves nothing.
             "/bin/sleep",
-            "2",
+            "5",
         ],
     );
     wait_for_first_sample(&journal_path);
