@@ -87,9 +87,10 @@ environment values, raw argv, absolute paths, prompts, model IDs, tokens, or chi
 executable basename and argument count are the only default command identity. A non-UTF-8 basename
 becomes the fixed string `<non-utf8>`; its original bytes are not copied.
 
-A committed corpus of seeded adversarial cases plants a marker in every input channel —
-arguments, environment, working directory, executable path, and process output — and confirms
-none survives outside the executable basename in the persisted report and journal.
+Seeded property tests drive the argument-to-basename projection against a committed adversarial
+corpus, and real-process tests plant a marker in every launch channel — arguments, environment,
+working directory, executable path, and process output — then scan the persisted report and
+journal for survival.
 
 Raw sensitive capture is not available, even as an opt-in, in v0.1. The only explicit capture
 option is a correlation hash with the form `sha256:` followed by 64 lowercase hexadecimal digits.
