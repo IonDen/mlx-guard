@@ -117,7 +117,9 @@ impl CaseDirectory {
 
 impl Drop for CaseDirectory {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.root).unwrap();
+        // Cleanup must never panic here: a panic while an assertion is already unwinding
+        // aborts the test binary and destroys the original failure message.
+        let _ = fs::remove_dir_all(&self.root);
     }
 }
 
@@ -506,7 +508,7 @@ fn every_channel_stays_redacted_through_a_policy_intervention() {
     // signals, transitions, and the intervention outcome are all written on this path only.
     //
     // The wall-time and worker sleep here are wider than the other cases' whole-second `SLEEP_SCRIPT`
-    // give the worker's two `echo`s headroom to run before TERM lands on a starved runner; the
+    // to give the worker's two `echo`s headroom to run before TERM lands on a starved runner; the
     // intervention itself is still pinned by exit code 75, not by how long it took to arrive.
     let directory = CaseDirectory::new();
     let worker = directory.marker_worker(
