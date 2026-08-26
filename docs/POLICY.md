@@ -75,7 +75,10 @@ Measured on the M1 Max 32 GB reference host (macOS 26.6.1, 25G76), 20 repetition
 instantaneous event time. `*_to_quiet` marks the loop observing the root reaped and the owned
 group empty, never the reap instant itself. The measured binaries are unoptimized debug builds, so
 these numbers characterize the supervision path's timing shape rather than an optimized release
-build. `group_term`'s TERM-to-quiet interval is computed by the same derivation
+build. The `checkpoint_ack_loaded` background is parked process-table load rather than CPU
+starvation, so the idle/loaded pair does not show ack latency under CPU contention; the shared-VM
+workflow below covers the CPU-starved case. `group_term`'s TERM-to-quiet interval is computed by
+the same derivation
 `reference_runtime_calibration.rs` publishes as `finalization_latency_milliseconds` — first
 delivered group TERM to observed-quiet — but measured under different conditions (a sixteen-member
 group, a wall-time trigger, and 10 ms sampling here, versus a single ramp worker, a footprint
@@ -83,7 +86,7 @@ trigger, and 50 ms sampling there), so the two figures are related by constructi
 interchangeable. The full raw record is `evidence/v0.2.0/m1-max-32gb/escalation-envelope.json`.
 
 A dispatch-only workflow captures the same artifact on GitHub's shared macos-15 VM (3 vCPU / 7 GB)
-as corroboration; those runs are labeled shared-VM, pooled across at least five dispatches, and
+as corroboration; those runs are labeled shared-VM, pooled across at least five captures, and
 never gate releases.
 
 ## Measurement quality and clocks

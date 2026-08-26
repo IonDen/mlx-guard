@@ -43,11 +43,16 @@ a group that never responds to TERM would only measure noise.
   `cargo test`, the same path `scripts/calibrate-reference-host.sh` uses for the rest of the
   reference bundle. These numbers characterize the supervision path's timing shape, not an
   optimized release build.
-- The `checkpoint_ack_loaded` arm's background load is a sixteen-member group that self-expires on
-  a 4 s watchdog with nothing signalling it. A member decaying from the previous repetition can
-  still be running when the next repetition starts, adding load beyond what that repetition itself
-  spawned; conversely, a worst-case slow-acknowledgement repetition can run longer than 4 s and end
-  up measured partially unloaded. Both directions are visible in the raw
+- The `checkpoint_ack_loaded` arm's background load is a sixteen-member `fanout-stall` group whose
+  members park (`thread::park()`) rather than spin, so this is process-table load, not CPU-bound
+  work: the loaded arm's own `load_at_start_per_repetition` samples (roughly 1.9-2.5) run lower
+  than the idle arm's (roughly 2.5-3.0). This bundle characterizes acknowledgement latency
+  alongside an idle sixteen-process group, not under CPU starvation — genuinely CPU-starved
+  corroboration is what the shared three-vCPU-VM workflow below exists to provide. The group also
+  self-expires on a 4 s watchdog with nothing signalling it: a member decaying from the previous
+  repetition can still be running when the next repetition starts, adding load beyond what that
+  repetition itself spawned, and a worst-case slow-acknowledgement repetition can run longer than
+  4 s and end up measured partially unloaded. Both directions are visible in the raw
   `load_at_start_per_repetition` samples in the JSON.
 - `group_term`'s `term_to_quiet` is computed by the same derivation the committed reference
   calibration publishes as `finalization_latency_milliseconds`
@@ -60,7 +65,7 @@ a group that never responds to TERM would only measure noise.
 
 A dispatch-only workflow (`.github/workflows/envelope.yml`) captures the same artifact on GitHub's
 shared macos-15 VM (3 vCPU / 7 GB) under uncontrolled co-tenancy. Those runs are labeled
-`github-macos-15-shared-runN` and never gate a release; a human folds at least five dispatches by
+`github-macos-15-shared-runN` and never gate a release; a human folds at least five captures by
 pooling every raw interval across runs and computing p95 over the pooled set, since a single run's
 internal p95 at `n = 20` sits near the maximum.
 

@@ -40,8 +40,8 @@ versions follow Semantic Versioning.
   matching the CLI's `--checkpoint-timeout`.
 - A new escalation-envelope instrument measures checkpoint acknowledgement, TERM, and KILL
   timing across real supervised runs. Reference measurements from the M1 Max 32 GB host are
-  published in `evidence/v0.2.0/m1-max-32gb/` and summarized in `docs/POLICY.md`, corroborated by
-  a dispatch-only workflow on GitHub's shared macOS runner.
+  published in `evidence/v0.2.0/m1-max-32gb/` and summarized in `docs/POLICY.md`, with a
+  dispatch-only workflow for shared-VM corroboration.
 
 ### Changed
 
