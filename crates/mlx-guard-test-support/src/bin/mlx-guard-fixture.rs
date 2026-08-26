@@ -321,14 +321,19 @@ fn run_fanout_ignore_term(limits: FixtureLimits) -> Result<(), RunError> {
 
 fn run_fanout_ignore_term_member() -> Result<(), RunError> {
     install_ignore_term()?;
-    let stdout = io::stdout();
-    let mut lock = stdout.lock();
-    lock.write_all(b"1")
-        .and_then(|()| lock.flush())
-        .map_err(|error| {
-            RunError::fixture(format!("fanout-ignore-term announce failed: {error}"))
-        })?;
-    drop(lock);
+    // Test-only escape hatch: withhold the announce byte so a test can prove the root's read loop
+    // actually gates READY on it, instead of only reading the loop's source. No other mode reads
+    // this variable.
+    if env::var_os("MLX_GUARD_FIXTURE_WITHHOLD_ANNOUNCE").is_none() {
+        let stdout = io::stdout();
+        let mut lock = stdout.lock();
+        lock.write_all(b"1")
+            .and_then(|()| lock.flush())
+            .map_err(|error| {
+                RunError::fixture(format!("fanout-ignore-term announce failed: {error}"))
+            })?;
+        drop(lock);
+    }
     loop {
         thread::park();
     }

@@ -259,6 +259,31 @@ fn fanout_ignore_term_group_survives_term_until_the_watchdog() {
 }
 
 #[test]
+fn fanout_ignore_term_ready_waits_for_every_announcement() {
+    // Same wall/shape as the paired test above. One member is told to withhold its announce byte,
+    // so the root's exact-count read never completes; a correct root therefore never reaches
+    // READY and is instead caught by its own watchdog. This is the failing-test proof that the
+    // read loop actually gates READY, not just that TERM-immunity happens to be installed early.
+    let mut child = Command::new(FIXTURE)
+        .args(["fanout-ignore-term", "4", "2000"])
+        .env("MLX_GUARD_FIXTURE_WITHHOLD_ANNOUNCE", "1")
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("fixture must launch");
+    let mut stdout = child.stdout.take().expect("fixture stdout must be piped");
+    let mut output = String::new();
+    stdout
+        .read_to_string(&mut output)
+        .expect("fixture stdout must be readable to EOF");
+    let status = child.wait().expect("watchdog must finish");
+    assert!(
+        !output.lines().any(|line| line.starts_with("READY")),
+        "root must not print READY while an announcement is withheld: {output:?}"
+    );
+    assert_eq!(status.code(), Some(124));
+}
+
+#[test]
 fn inherited_fd_frame_is_binary_and_separate_from_stdout() {
     // Catches routing protocol bytes through stdout or text-encoding a raw frame.
     let mut fds = [0; 2];
