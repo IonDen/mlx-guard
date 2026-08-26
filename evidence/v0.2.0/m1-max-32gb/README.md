@@ -49,9 +49,12 @@ a group that never responds to TERM would only measure noise.
   spawned; conversely, a worst-case slow-acknowledgement repetition can run longer than 4 s and end
   up measured partially unloaded. Both directions are visible in the raw
   `load_at_start_per_repetition` samples in the JSON.
-- `group_term`'s `term_to_quiet` is the same quantity the committed reference calibration publishes
-  as `finalization_latency_milliseconds` (`crates/mlx-guard-cli/tests/reference_runtime_calibration.rs`)
-  — one number, two capture paths, not two independent measurements.
+- `group_term`'s `term_to_quiet` is computed by the same derivation the committed reference
+  calibration publishes as `finalization_latency_milliseconds`
+  (`crates/mlx-guard-cli/tests/reference_runtime_calibration.rs`) — first delivered group TERM to
+  observed-quiet — but measured under different conditions (a sixteen-member group, a wall-time
+  trigger, and 10 ms sampling here, versus a single ramp worker, a footprint trigger, and 50 ms
+  sampling there), so the two figures are related by construction, not interchangeable values.
 
 ## Corroboration
 
