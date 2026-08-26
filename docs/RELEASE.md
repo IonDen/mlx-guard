@@ -23,6 +23,10 @@ the version in one commit and refreshes, by hand:
 - Evidence: re-run and commit reference measurements only when runtime, timing, policy, or
   measurement code changed since the last release; when a new bundle lands, move the links in
   `README.md` and `docs/integrations/MLX_TRAIN_PERF.md` to it.
+- Escalation envelope: `scripts/calibrate-reference-host.sh` captures
+  `escalation-envelope.json` alongside the rest of the reference bundle whenever the checkpoint
+  acknowledgement, TERM, or KILL path changed since the last release; re-run it standalone with
+  `scripts/measure-escalation-envelope.sh m1-max-32gb <out>` if only that artifact is stale.
 - If a prior evidence bundle's README notes a supervision-behavior discontinuity and points ahead
   to this version (for example, "see the 0.2.0 bundle"), regenerate the reference-host bundle for
   this version so that reference does not linger unfulfilled.

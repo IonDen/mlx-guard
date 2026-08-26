@@ -59,6 +59,30 @@ Maximum sample age is twice `--sample-interval`; maximum collection-window width
 interval. TERM grace and the sampling-derived maxima are not configurable. The effective values
 are recorded in each report.
 
+## Escalation envelope
+
+| Scenario | Measured interval | p95 (ms) | Maximum (ms) |
+|---|---|---:|---:|
+| `checkpoint_ack_idle` | request to acknowledgement | 29 | 29 |
+| `checkpoint_ack_idle` | TERM to quiet | 27 | 28 |
+| `checkpoint_ack_loaded` | request to acknowledgement | 29 | 30 |
+| `checkpoint_ack_loaded` | TERM to quiet | 28 | 36 |
+| `group_term` | TERM to quiet | 37 | 38 |
+| `group_kill` | KILL to quiet | 31 | 31 |
+
+Measured on the M1 Max 32 GB reference host (macOS 26.6.1, 25G76), 20 repetitions per scenario,
+`resolution_ms: 10` — every mark is a supervisor-loop timestamp quantized to that interval, not an
+instantaneous event time. `*_to_quiet` marks the loop observing the root reaped and the owned
+group empty, never the reap instant itself. The measured binaries are unoptimized debug builds, so
+these numbers characterize the supervision path's timing shape rather than an optimized release
+build. `group_term`'s TERM-to-quiet interval is the same quantity `reference_runtime_calibration.rs`
+publishes as `finalization_latency_milliseconds` — one number, two capture paths. The full raw
+record is `evidence/v0.2.0/m1-max-32gb/escalation-envelope.json`.
+
+A dispatch-only workflow captures the same artifact on GitHub's shared macos-15 VM (3 vCPU / 7 GB)
+as corroboration; those runs are labeled shared-VM, pooled across at least five dispatches, and
+never gate releases.
+
 ## Measurement quality and clocks
 
 A sample is usable only when it contains an aggregate, was captured no later than it was processed,

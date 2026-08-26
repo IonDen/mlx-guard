@@ -71,5 +71,12 @@ MLX_GUARD_ENDURANCE_OUTPUT="$staging_directory/endurance.json" \
     thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds \
     -- --ignored --exact --nocapture
 
+MLX_GUARD_ENVELOPE_OUTPUT="$staging_directory/escalation-envelope.json" \
+MLX_GUARD_ENVELOPE_PROFILE="m1-max-32gb" \
+MLX_GUARD_FIXTURE="$fixture" \
+    cargo test -p mlx-guard-cli --test escalation_envelope \
+    capture_escalation_envelope \
+    -- --exact --ignored --nocapture
+
 mkdir -p "$(dirname "$output_directory")"
 mv "$staging_directory" "$output_directory"

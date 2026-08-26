@@ -36,6 +36,12 @@ versions follow Semantic Versioning.
   against a seeded adversarial corpus. Real-process tests plant a marker in every launch channel —
   arguments, environment, working directory, executable path, and process output — against the
   packaged binary, then scan its persisted report and journal for a leak.
+- Python's `RunConfig` gained a keyword-only `checkpoint_timeout_ms` field (`10ms..=60s`),
+  matching the CLI's `--checkpoint-timeout`.
+- A new escalation-envelope instrument measures checkpoint acknowledgement, TERM, and KILL
+  timing across real supervised runs. Reference measurements from the M1 Max 32 GB host are
+  published in `evidence/v0.2.0/m1-max-32gb/` and summarized in `docs/POLICY.md`, corroborated by
+  a dispatch-only workflow on GitHub's shared macOS runner.
 
 ### Changed
 
