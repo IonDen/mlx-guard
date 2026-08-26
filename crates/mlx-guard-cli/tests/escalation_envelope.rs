@@ -3,17 +3,24 @@
 //!
 //! `mod extract` turns a parsed schema-v1 report's signal, checkpoint, and outcome records into
 //! typed escalation marks and the intervals between them, captures host provenance for a
-//! measurement run, and serializes a verdict-free JSON artifact. This file adds only the pure
-//! extraction core and its unit tests, built and watched failing before `mod extract` existed;
-//! the `#[ignore]`d real-process capture that drives real supervised runs through this module
-//! lands in a later change.
+//! measurement run, and serializes a verdict-free JSON artifact. The unit tests exercise that
+//! pure core; `capture_escalation_envelope` drives the shipped supervisor binary through four
+//! real escalation scenarios and feeds their reports into the same module.
+//!
+//! Nothing in this file asserts a latency target. The capture asserts only that each scenario
+//! really produced the escalation marks its published numbers are derived from, so a run that
+//! stopped escalating fails loudly instead of publishing an empty envelope.
 
 use std::fs;
+use std::io::{BufRead, BufReader};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Output, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mlx_guard_core::{
-    CheckpointRecord, CheckpointStatus, Observed, SignalRecord, SignalResult, SignalTarget,
-    TerminalKind, TerminalOutcome, checkpoint_signal_usr1,
+    CheckpointRecord, CheckpointStatus, ChildStatus, Observed, ReportV1, SignalRecord,
+    SignalResult, SignalTarget, TerminalKind, TerminalOutcome, checkpoint_signal_usr1,
 };
 
 use extract::{
@@ -205,7 +212,7 @@ fn p95_of_twenty_is_the_second_largest() {
     assert_eq!(summary.missing, 0);
 }
 
-fn unique_scratch_directory(tag: &str) -> std::path::PathBuf {
+fn unique_scratch_directory(tag: &str) -> PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -215,6 +222,9 @@ fn unique_scratch_directory(tag: &str) -> std::path::PathBuf {
         std::process::id()
     ));
     fs::create_dir_all(&directory).unwrap();
+    // The supervisor refuses to initialize its journal anywhere that is not owner-only, so every
+    // scratch directory the capture hands it has to be 0700 before the run starts.
+    fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
     directory
 }
 
@@ -299,6 +309,350 @@ fn sanitized_host_omits_unique_machine_identifiers() {
             "unexpected host line: {line}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Real-process capture. Everything below drives the shipped supervisor binary through the four
+// escalation scenarios and records what the resulting schema-v1 reports contain.
+// ---------------------------------------------------------------------------------------------
+
+/// The shipped supervisor binary. Published evidence measures the real process boundary, not an
+/// in-process `execute` call.
+const GUARD: &str = env!("CARGO_BIN_EXE_mlx-guard");
+
+/// Repetitions per scenario. Twenty matches `reference_runtime_calibration.rs`, which makes the
+/// `(n * 95).div_ceil(100) - 1` index the second-largest sample.
+const REPETITIONS: usize = 20;
+
+/// The sampling interval every scenario runs at. The supervisor stamps its marks from the
+/// sampling loop, so this is also the quantization of every published interval.
+const SAMPLE_INTERVAL: &str = "10ms";
+
+/// `SAMPLE_INTERVAL` as the number the artifact's provenance publishes.
+const RESOLUTION_MS: u64 = 10;
+
+/// The repetition count as the artifact's typed field.
+fn repetition_count() -> u64 {
+    u64::try_from(REPETITIONS).expect("repetition count fits u64")
+}
+
+/// The fixture binary the script builds and exports, matching
+/// `reference_runtime_calibration.rs`'s pattern: the capture never guesses a target path.
+fn fixture_path() -> PathBuf {
+    std::env::var_os("MLX_GUARD_FIXTURE")
+        .map(PathBuf::from)
+        .expect("MLX_GUARD_FIXTURE must name the built fixture binary")
+        .canonicalize()
+        .expect("MLX_GUARD_FIXTURE must resolve to a built fixture binary")
+}
+
+/// This host's one-, five-, and fifteen-minute load averages, read fresh for every repetition so
+/// the artifact discloses what else the machine was doing under each measured run.
+fn load_average() -> [f64; 3] {
+    let output = Command::new("sysctl")
+        .args(["-n", "vm.loadavg"])
+        .output()
+        .expect("sysctl -n vm.loadavg must run");
+    assert!(
+        output.status.success(),
+        "sysctl -n vm.loadavg failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let line = String::from_utf8(output.stdout).expect("vm.loadavg must be UTF-8");
+    parse_loadavg(&line).unwrap_or_else(|| panic!("vm.loadavg did not parse: {line:?}"))
+}
+
+/// Read one repetition's final report with the same strict parse the runtime tests use: schema,
+/// privacy, ordering, and cross-field validation all have to pass before a number is recorded.
+fn read_report(path: &Path) -> ReportV1 {
+    ReportV1::from_json(&fs::read_to_string(path).unwrap()).unwrap()
+}
+
+/// Run the checkpoint scenarios' supervised command. The wall-time deadline is the trigger; the
+/// fixture's own 9 s ceiling sits far beyond the worst-case escalation so a fixture self-exit can
+/// never masquerade as a supervised termination.
+fn supervise_checkpoint(fixture: &Path, report_path: &Path) -> Output {
+    Command::new(GUARD)
+        .args([
+            "run",
+            "--max-footprint",
+            "1TiB",
+            "--wall-time",
+            "1s",
+            "--checkpoint-timeout",
+            "5s",
+            "--sample-interval",
+            SAMPLE_INTERVAL,
+            "--report",
+        ])
+        .arg(report_path)
+        .arg("--")
+        .arg(fixture)
+        .args(["checkpoint-success", "1", "9000"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the supervisor binary must run")
+}
+
+/// Run a group scenario's supervised command: a sixteen-member fanout whose own 5 s ceiling
+/// cannot fire before the supervisor's 1500 ms wall deadline drives the escalation.
+fn supervise_fanout(fixture: &Path, report_path: &Path, mode: &str) -> Output {
+    Command::new(GUARD)
+        .args([
+            "run",
+            "--max-footprint",
+            "1TiB",
+            "--wall-time",
+            "1500ms",
+            "--sample-interval",
+            SAMPLE_INTERVAL,
+            "--report",
+        ])
+        .arg(report_path)
+        .arg("--")
+        .arg(fixture)
+        .args([mode, "16", "5000"])
+        .stdin(Stdio::null())
+        .output()
+        .expect("the supervisor binary must run")
+}
+
+/// What else the harness is running while a repetition is measured.
+#[derive(Clone, Copy)]
+enum BackgroundLoad {
+    /// Nothing the harness controls.
+    Idle,
+    /// A fresh unsupervised sixteen-member stall group per repetition.
+    FanoutStall,
+}
+
+/// Spawn the unsupervised load group and return only once its root has announced that every
+/// member exists. Without reading that line the "loaded" arm could measure an idle machine.
+fn spawn_load_group(fixture: &Path) -> Child {
+    let mut child = Command::new(fixture)
+        .args(["fanout-stall", "16", "4000"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the load group must spawn");
+    let stdout = child
+        .stdout
+        .take()
+        .expect("the load group's stdout must be piped");
+    let ready = BufReader::new(stdout)
+        .lines()
+        .next()
+        .expect("the load group ended before announcing readiness")
+        .expect("the load group's readiness line must be readable");
+    assert_eq!(ready, "READY mode=fanout-stall members=16");
+    child
+}
+
+/// Wait for a load group to expire on its own. Nothing is signalled: every member self-terminates
+/// at the 4 s wall its argv set, so a slow repetition can outlive its load and a decaying member
+/// can overlap the next one. Both directions are disclosed with the artifact.
+fn wait_for_load_group(mut root: Child) {
+    root.wait().expect("the load group root must be waitable");
+}
+
+/// Capture one of the checkpoint-acknowledgement scenarios (A1 idle, A2 loaded).
+///
+/// A repetition whose acknowledgement times out records no `request_to_ack` interval and is
+/// counted instead; only a scenario in which every repetition timed out is a failure, since an
+/// acknowledgement window is a negotiation with a real worker, not a bound this test may enforce.
+fn capture_checkpoint_scenario(
+    name: &str,
+    fixture: &Path,
+    background: BackgroundLoad,
+) -> ScenarioSummary {
+    let mut request_to_ack = Vec::with_capacity(REPETITIONS);
+    let mut term_to_quiet = Vec::with_capacity(REPETITIONS);
+    let mut load_at_start_per_repetition = Vec::with_capacity(REPETITIONS);
+    let mut timed_out = 0_u64;
+    for repetition in 0..REPETITIONS {
+        let directory = unique_scratch_directory(&format!("{name}-{repetition}"));
+        let report_path = directory.join("report.json");
+        let load_group = match background {
+            BackgroundLoad::Idle => None,
+            BackgroundLoad::FanoutStall => Some(spawn_load_group(fixture)),
+        };
+        // Read the load average last, immediately before the measured run starts.
+        let load_at_start = load_average();
+
+        let output = supervise_checkpoint(fixture, &report_path);
+
+        if let Some(root) = load_group {
+            wait_for_load_group(root);
+        }
+        assert_eq!(output.status.code(), Some(75), "{output:?}");
+        let report = read_report(&report_path);
+        let marks =
+            extract_escalation_marks(&report.signals, Some(&report.checkpoint), &report.outcome);
+        assert!(marks.checkpoint_requested_at_ms.is_some(), "{report:#?}");
+        assert!(marks.term_at_ms.is_some(), "{report:#?}");
+        assert!(marks.quiet_at_ms.is_some(), "{report:#?}");
+        assert_eq!(
+            report.outcome.child_status,
+            Some(ChildStatus::Signaled { signal: 15 }),
+            "{report:#?}"
+        );
+        if report.checkpoint.status == CheckpointStatus::TimedOut {
+            timed_out += 1;
+        }
+        let computed = intervals(&marks);
+        request_to_ack.push(computed.request_to_ack_ms);
+        term_to_quiet.push(computed.term_to_quiet_ms);
+        load_at_start_per_repetition.push(load_at_start);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    assert!(
+        timed_out < repetition_count(),
+        "every {name} repetition timed out waiting for an acknowledgement"
+    );
+    ScenarioSummary {
+        name: name.to_owned(),
+        repetitions: repetition_count(),
+        request_to_ack: Some(IntervalSummary::from_raw(request_to_ack)),
+        term_to_quiet: Some(IntervalSummary::from_raw(term_to_quiet)),
+        kill_to_quiet: None,
+        timed_out,
+        escalated_to_kill: 0,
+        load_at_start_per_repetition,
+    }
+}
+
+/// Capture scenario B: a sixteen-member group with the default TERM disposition, which the first
+/// escalation step is enough to end.
+fn capture_group_term(name: &str, fixture: &Path) -> ScenarioSummary {
+    let mut term_to_quiet = Vec::with_capacity(REPETITIONS);
+    let mut load_at_start_per_repetition = Vec::with_capacity(REPETITIONS);
+    for repetition in 0..REPETITIONS {
+        let directory = unique_scratch_directory(&format!("{name}-{repetition}"));
+        let report_path = directory.join("report.json");
+        let load_at_start = load_average();
+
+        let output = supervise_fanout(fixture, &report_path, "fanout-stall");
+
+        assert_eq!(output.status.code(), Some(75), "{output:?}");
+        let report = read_report(&report_path);
+        let marks =
+            extract_escalation_marks(&report.signals, Some(&report.checkpoint), &report.outcome);
+        assert!(marks.term_at_ms.is_some(), "{report:#?}");
+        assert!(marks.quiet_at_ms.is_some(), "{report:#?}");
+        // Signalled-15 is what separates a supervised termination from the fixture's own
+        // watchdog, which would show up as an exit code instead.
+        assert_eq!(
+            report.outcome.child_status,
+            Some(ChildStatus::Signaled { signal: 15 }),
+            "{report:#?}"
+        );
+        term_to_quiet.push(intervals(&marks).term_to_quiet_ms);
+        load_at_start_per_repetition.push(load_at_start);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    ScenarioSummary {
+        name: name.to_owned(),
+        repetitions: repetition_count(),
+        request_to_ack: None,
+        term_to_quiet: Some(IntervalSummary::from_raw(term_to_quiet)),
+        kill_to_quiet: None,
+        timed_out: 0,
+        escalated_to_kill: 0,
+        load_at_start_per_repetition,
+    }
+}
+
+/// Capture scenario C: a sixteen-member group that is deaf to TERM, so the escalation has to run
+/// all the way to KILL.
+///
+/// No `term_to_quiet` is published here. `killpg` succeeds against a TERM-deaf group, so the TERM
+/// mark is present but says nothing about when the group went quiet — the KILL is what ended it.
+fn capture_group_kill(name: &str, fixture: &Path) -> ScenarioSummary {
+    let mut kill_to_quiet = Vec::with_capacity(REPETITIONS);
+    let mut load_at_start_per_repetition = Vec::with_capacity(REPETITIONS);
+    let mut escalated_to_kill = 0_u64;
+    for repetition in 0..REPETITIONS {
+        let directory = unique_scratch_directory(&format!("{name}-{repetition}"));
+        let report_path = directory.join("report.json");
+        let load_at_start = load_average();
+
+        let output = supervise_fanout(fixture, &report_path, "fanout-ignore-term");
+
+        assert_eq!(output.status.code(), Some(75), "{output:?}");
+        let report = read_report(&report_path);
+        let marks =
+            extract_escalation_marks(&report.signals, Some(&report.checkpoint), &report.outcome);
+        assert!(marks.term_at_ms.is_some(), "{report:#?}");
+        assert!(marks.kill_at_ms.is_some(), "{report:#?}");
+        assert!(marks.quiet_at_ms.is_some(), "{report:#?}");
+        assert_eq!(
+            report.outcome.child_status,
+            Some(ChildStatus::Signaled { signal: 9 }),
+            "{report:#?}"
+        );
+        // Counted only after the KILL mark was asserted present, so the published count is the
+        // number of repetitions that really escalated, not the number that were expected to.
+        escalated_to_kill += 1;
+        kill_to_quiet.push(intervals(&marks).kill_to_quiet_ms);
+        load_at_start_per_repetition.push(load_at_start);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+    ScenarioSummary {
+        name: name.to_owned(),
+        repetitions: repetition_count(),
+        request_to_ack: None,
+        term_to_quiet: None,
+        kill_to_quiet: Some(IntervalSummary::from_raw(kill_to_quiet)),
+        timed_out: 0,
+        escalated_to_kill,
+        load_at_start_per_repetition,
+    }
+}
+
+#[test]
+#[ignore = "measurement capture; run via scripts/measure-escalation-envelope.sh"]
+fn capture_escalation_envelope() {
+    // Catches an escalation path that stops producing the marks the published envelope is derived
+    // from: each scenario asserts its promised marks, its exit code, and how the root really died
+    // before any interval is recorded, so a silently-degraded run fails instead of publishing an
+    // empty envelope. Nothing here bounds a latency.
+    let output_path = PathBuf::from(
+        std::env::var_os("MLX_GUARD_ENVELOPE_OUTPUT")
+            .expect("MLX_GUARD_ENVELOPE_OUTPUT must name the artifact file path"),
+    );
+    let profile = std::env::var("MLX_GUARD_ENVELOPE_PROFILE")
+        .expect("MLX_GUARD_ENVELOPE_PROFILE must label the capture environment");
+    let fixture = fixture_path();
+
+    let provenance = capture_provenance(&profile, RESOLUTION_MS);
+    let scenarios = [
+        capture_checkpoint_scenario("checkpoint_ack_idle", &fixture, BackgroundLoad::Idle),
+        capture_checkpoint_scenario(
+            "checkpoint_ack_loaded",
+            &fixture,
+            BackgroundLoad::FanoutStall,
+        ),
+        capture_group_term("group_term", &fixture),
+        capture_group_kill("group_kill", &fixture),
+    ];
+
+    if let Some(parent) = output_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent).unwrap();
+    }
+    write_envelope_artifact(&output_path, &provenance, &scenarios).unwrap();
+
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(&output_path).unwrap()).unwrap();
+    assert_eq!(
+        value["scenarios"]
+            .as_array()
+            .expect("the artifact must carry a scenarios array")
+            .len(),
+        4
+    );
 }
 
 /// Pure extraction of escalation marks, intervals, host provenance, and the verdict-free
