@@ -510,6 +510,20 @@ fn capture_checkpoint_scenario(
         timed_out < repetition_count(),
         "every {name} repetition timed out waiting for an acknowledgement"
     );
+    // A published interval that no repetition produced is an empty envelope, not a measurement.
+    // The per-repetition rule above forgives an acknowledgement that timed out, but a checkpoint
+    // status the extraction does not recognize as acknowledged — one left at `RequestedUnverified`
+    // or turned into `Cancelled` — would leave every value missing while `timed_out` stayed zero
+    // and every other assertion passed. These floors are what makes that regression loud. They
+    // bound observation, never latency.
+    assert!(
+        request_to_ack.iter().any(Option::is_some),
+        "no {name} repetition produced an acknowledgement interval"
+    );
+    assert!(
+        term_to_quiet.iter().any(Option::is_some),
+        "no {name} repetition produced a term-to-quiet interval"
+    );
     ScenarioSummary {
         name: name.to_owned(),
         repetitions: repetition_count(),
@@ -551,6 +565,12 @@ fn capture_group_term(name: &str, fixture: &Path) -> ScenarioSummary {
         load_at_start_per_repetition.push(load_at_start);
         fs::remove_dir_all(&directory).unwrap();
     }
+    // An inverted mark pair turns every value missing without failing any per-repetition
+    // assertion, so the published interval needs its own floor. Observation, not latency.
+    assert!(
+        term_to_quiet.iter().any(Option::is_some),
+        "no {name} repetition produced a term-to-quiet interval"
+    );
     ScenarioSummary {
         name: name.to_owned(),
         repetitions: repetition_count(),
@@ -598,6 +618,12 @@ fn capture_group_kill(name: &str, fixture: &Path) -> ScenarioSummary {
         load_at_start_per_repetition.push(load_at_start);
         fs::remove_dir_all(&directory).unwrap();
     }
+    // An inverted mark pair turns every value missing without failing any per-repetition
+    // assertion, so the published interval needs its own floor. Observation, not latency.
+    assert!(
+        kill_to_quiet.iter().any(Option::is_some),
+        "no {name} repetition produced a kill-to-quiet interval"
+    );
     ScenarioSummary {
         name: name.to_owned(),
         repetitions: repetition_count(),
