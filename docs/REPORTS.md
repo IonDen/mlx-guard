@@ -57,6 +57,12 @@ present only when `parent_watch` was `active` or `detach`. The launching parent'
 start_abstime)` identity is never persisted — only the watch state and this timestamp are. All three
 fields are absent from reports written before they existed.
 
+Validation enforces this pairing in both directions. A `detach` watch requires the `detach` option,
+and a `detach` option requires a watch of `detach` or `parent_unobservable` — the only two watch
+states a `detach` run can record. A `detach` option paired with any other watch, including an
+absent one, is rejected as an invalid configuration, reducing the risk of a report whose
+parent-exit fields disagree with each other.
+
 Observe reports can now carry outcome `policy_intervention`. A forwarded terminal signal (SIGHUP,
 SIGINT, SIGTERM) reaches the owned group unchanged, with no grace timer; observe keeps sampling and
 the run ends when the root exits on its own, reporting the root's own signaled status (`128+n`), not
@@ -80,6 +86,11 @@ Redaction happens in memory before JSON reaches the persistence layer. Schema v1
 environment values, raw argv, absolute paths, prompts, model IDs, tokens, or child output. The
 executable basename and argument count are the only default command identity. A non-UTF-8 basename
 becomes the fixed string `<non-utf8>`; its original bytes are not copied.
+
+Seeded property tests drive the argument-to-basename projection against a committed adversarial
+corpus, and real-process tests plant a marker in every launch channel — arguments, environment,
+working directory, executable path, and process output — then scan the persisted report and
+journal for survival.
 
 Raw sensitive capture is not available, even as an opt-in, in v0.1. The only explicit capture
 option is a correlation hash with the form `sha256:` followed by 64 lowercase hexadecimal digits.

@@ -141,7 +141,7 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
     // reason (or accepted once the check that happened to catch it changes).
     type Corrupt = fn(&mut ReportV1);
     type Expected = fn(&ReportError) -> bool;
-    let cases: [(&str, Corrupt, Expected); 17] = [
+    let cases: [(&str, Corrupt, Expected); 19] = [
         (
             "unredacted persistence",
             |r| r.privacy.redacted_before_persistence = false,
@@ -211,6 +211,19 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
         (
             "parent watch detach without the detach option",
             |r| r.configuration.parent_watch = Some(ParentWatch::Detach),
+            |e| matches!(e, ReportError::InvalidConfiguration),
+        ),
+        (
+            "detach option paired with an active parent watch",
+            |r| {
+                r.configuration.on_parent_exit = Some(OnParentExit::Detach);
+                r.configuration.parent_watch = Some(ParentWatch::Active);
+            },
+            |e| matches!(e, ReportError::InvalidConfiguration),
+        ),
+        (
+            "detach option paired with an absent parent watch",
+            |r| r.configuration.on_parent_exit = Some(OnParentExit::Detach),
             |e| matches!(e, ReportError::InvalidConfiguration),
         ),
         (

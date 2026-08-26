@@ -32,6 +32,10 @@ versions follow Semantic Versioning.
   cap), alongside the existing `escape.detected` boolean. Real-process tests now cover a `setsid`
   escape into an empty owned group, a daemonized grandchild, a plain double-fork reparent that
   stays contained, and a flood of seventy simultaneous escapees past the 64-identity evidence cap.
+- Property tests now exercise argument-to-basename projection and full report serialization
+  against a seeded adversarial corpus. Real-process tests plant a marker in every launch channel —
+  arguments, environment, working directory, executable path, and process output — against the
+  packaged binary, then scan its persisted report and journal for a leak.
 
 ### Changed
 
@@ -72,6 +76,9 @@ versions follow Semantic Versioning.
   evidence list had filled, and could count a child that had merely exited as an escape. Neither was
   visible in a report, which carried only the `escape.detected` boolean; both are fixed ahead of the
   count above being published.
+- Before this release, report validation accepted a `detach` parent-exit option paired with an
+  enforcing or absent parent watch — states a `detach` run cannot actually produce. It now rejects
+  that combination as an invalid configuration.
 
 ## [0.1.0] - 2026-08-12
 
