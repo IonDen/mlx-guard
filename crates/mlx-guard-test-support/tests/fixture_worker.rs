@@ -242,6 +242,23 @@ fn setsid_and_ignore_term_modes_expose_real_unix_state() {
 }
 
 #[test]
+fn fanout_ignore_term_group_survives_term_until_the_watchdog() {
+    // Mirrors fixture_worker.rs:227-241's margins (wall 2_000, post-TERM settle 20 ms — the
+    // committed widths judged against the 3 vCPU CI runner). Liveness via try_wait(), never
+    // kill(pid, 0), which is falsely green on a zombie (#20).
+    let mut session = Session::spawn("fanout-ignore-term", 4, 2_000);
+    session.expect_line("READY mode=fanout-ignore-term members=4");
+    let result = unsafe { libc::kill(session.child.id().cast_signed(), libc::SIGTERM) };
+    assert_eq!(result, 0);
+    thread::sleep(Duration::from_millis(20));
+    assert!(session.child.try_wait().expect("wait must work").is_none());
+    assert_eq!(
+        session.child.wait().expect("watchdog must finish").code(),
+        Some(124)
+    );
+}
+
+#[test]
 fn inherited_fd_frame_is_binary_and_separate_from_stdout() {
     // Catches routing protocol bytes through stdout or text-encoding a raw frame.
     let mut fds = [0; 2];
