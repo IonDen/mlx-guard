@@ -19,6 +19,7 @@ result = mlx_guard.run(
         report=Path("reports/train.json"),
         max_footprint_bytes=26 * 1024**3,
         wall_time_ms=2 * 60 * 60 * 1000,
+        checkpoint_timeout_ms=1_000,
     ),
     capture_output=True,
 )
@@ -37,6 +38,10 @@ This governs what the supervisor does if the Python process that called `run()`/
 first — a crash, an unhandled exception, or the process being killed outright. Under the default,
 the supervised command goes down with it; pass `on_parent_exit="detach"` to let it keep running
 independently.
+
+`checkpoint_timeout_ms` bounds how long an enforcing run waits for a negotiated checkpoint
+acknowledgement before escalating (10 ms to 60 s; the supervisor default is 1 s). Observe mode does
+not accept it.
 
 Output inherits the caller's standard streams by default. This keeps the supervisor independent if
 the Python client exits unexpectedly. With `capture_output=True`, `iter_output()` yields

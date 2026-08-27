@@ -1,0 +1,36 @@
+name: Escalation envelope (corroborating)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    # Shared CI VM, uncontrolled co-tenancy: these runs corroborate the committed
+    # reference measurements; they never gate anything. Pooling rule: a human folds
+    # the five captures by pooling every raw interval across runs and computing the
+    # p95 over the pooled set (a single run's internal p95 at n=20 is near-max).
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@d8dfd7155fea72af4ad34a8fe97364d210e2d020 # 1.93.0
+      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - name: Runner profile
+        run: |
+          uname -srm
+          sysctl -n hw.ncpu hw.memsize
+          uptime
+      - name: Capture five envelope runs
+        run: |
+          for i in 1 2 3 4 5; do
+            ./scripts/measure-escalation-envelope.sh \
+              "github-macos-15-shared-run$i" "artifacts/run$i"
+          done
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: escalation-envelope
+          path: artifacts/
+          retention-days: 30

@@ -131,6 +131,68 @@ class ClientTests(unittest.TestCase):
                     max_footprint_bytes=2,
                     wall_time_ms=wall_time,
                 )
+        for checkpoint_timeout in (0, 9, 60_001, -1, True):
+            with (
+                self.subTest(checkpoint_timeout=checkpoint_timeout),
+                self.assertRaisesRegex(
+                    mlx_guard.ConfigurationError,
+                    "^checkpoint_timeout_ms must be within 10ms..=60s$",
+                ),
+            ):
+                mlx_guard.RunConfig(
+                    command=("/usr/bin/true",),
+                    report=Path("r.json"),
+                    max_footprint_bytes=1 << 30,
+                    checkpoint_timeout_ms=checkpoint_timeout,
+                )
+        for accepted_checkpoint_timeout in (10, 60_000):
+            with self.subTest(checkpoint_timeout=accepted_checkpoint_timeout):
+                config = mlx_guard.RunConfig(
+                    command=("/usr/bin/true",),
+                    report=Path("r.json"),
+                    max_footprint_bytes=1 << 30,
+                    checkpoint_timeout_ms=accepted_checkpoint_timeout,
+                )
+                self.assertEqual(config.checkpoint_timeout_ms, accepted_checkpoint_timeout)
+
+    def test_run_config_builds_literal_cli_argv(self) -> None:
+        config = mlx_guard.RunConfig(
+            command=("/usr/bin/true", "--flag"),
+            report=Path("report.json"),
+            max_footprint_bytes=1 << 30,
+            sample_interval_ms=25,
+            wall_time_ms=500,
+            checkpoint_timeout_ms=250,
+        )
+        argv = mlx_guard.supervisor_argv(config)
+        self.assertEqual(Path(argv[0]), mlx_guard.binary_path())
+        self.assertEqual(
+            tuple(argv[1:]),
+            (
+                "run",
+                "--max-footprint", "1073741824B",
+                "--wall-time", "500ms",
+                "--checkpoint-timeout", "250ms",
+                "--sample-interval", "25ms",
+                "--report", "report.json",
+                "--",
+                "/usr/bin/true", "--flag",
+            ),
+        )
+
+    def test_checkpoint_timeout_is_omitted_when_unset_and_run_only(self) -> None:
+        config = mlx_guard.RunConfig(
+            command=("/usr/bin/true",),
+            report=Path("report.json"),
+            max_footprint_bytes=1 << 30,
+        )
+        self.assertNotIn("--checkpoint-timeout", mlx_guard.supervisor_argv(config))
+        with self.assertRaises(TypeError):
+            mlx_guard.ObserveConfig(
+                command=("/usr/bin/true",),
+                report=Path("r.json"),
+                checkpoint_timeout_ms=100,  # type: ignore[call-arg]
+            )
 
     def test_on_parent_exit_config_accepts_detach_and_rejects_other_values(self) -> None:
         observe = mlx_guard.ObserveConfig(
@@ -501,6 +563,39 @@ with worker:
         self.assertEqual(checkpoint["status"], "acknowledged_unverified_durability")
         self.assertEqual(result.returncode, 75)
         self.assertEqual(result.report.outcome.kind, mlx_guard.OutcomeKind.POLICY_INTERVENTION)
+
+    def test_checkpoint_timeout_ms_reaches_the_native_report_configuration(self) -> None:
+        script = """
+import time
+import mlx_guard
+
+def checkpoint(request):
+    return mlx_guard.CheckpointResponse.completed()
+
+worker = mlx_guard.CheckpointWorker.connect(checkpoint)
+assert worker is not None
+with worker:
+    while True:
+        worker.poll()
+        time.sleep(0.001)
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            result = mlx_guard.run(
+                mlx_guard.RunConfig(
+                    command=(sys.executable, "-c", script),
+                    report=Path(temporary, "checkpoint.json"),
+                    max_footprint_bytes=1024**4,
+                    wall_time_ms=500,
+                    sample_interval_ms=10,
+                    checkpoint_timeout_ms=2_000,
+                ),
+                capture_output=True,
+            )
+
+        configuration = result.report.payload["configuration"]
+        self.assertIsInstance(configuration, Mapping)
+        assert isinstance(configuration, Mapping)
+        self.assertEqual(configuration["checkpoint_timeout_ms"], 2_000)
 
     def test_discovery_failure_is_mapped_without_starting_a_process(self) -> None:
         config = mlx_guard.ObserveConfig(

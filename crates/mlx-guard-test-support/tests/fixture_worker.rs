@@ -242,6 +242,48 @@ fn setsid_and_ignore_term_modes_expose_real_unix_state() {
 }
 
 #[test]
+fn fanout_ignore_term_group_survives_term_until_the_watchdog() {
+    // Mirrors fixture_worker.rs:227-241's margins (wall 2_000, post-TERM settle 20 ms — the
+    // committed widths judged against the 3 vCPU CI runner). Liveness via try_wait(), never
+    // kill(pid, 0), which is falsely green on a zombie (#20).
+    let mut session = Session::spawn("fanout-ignore-term", 4, 2_000);
+    session.expect_line("READY mode=fanout-ignore-term members=4");
+    let result = unsafe { libc::kill(session.child.id().cast_signed(), libc::SIGTERM) };
+    assert_eq!(result, 0);
+    thread::sleep(Duration::from_millis(20));
+    assert!(session.child.try_wait().expect("wait must work").is_none());
+    assert_eq!(
+        session.child.wait().expect("watchdog must finish").code(),
+        Some(124)
+    );
+}
+
+#[test]
+fn fanout_ignore_term_ready_waits_for_every_announcement() {
+    // Same wall/shape as the paired test above. One member is told to withhold its announce byte,
+    // so the root's exact-count read never completes; a correct root therefore never reaches
+    // READY and is instead caught by its own watchdog. This is the failing-test proof that the
+    // read loop actually gates READY, not just that TERM-immunity happens to be installed early.
+    let mut child = Command::new(FIXTURE)
+        .args(["fanout-ignore-term", "4", "2000"])
+        .env("MLX_GUARD_FIXTURE_WITHHOLD_ANNOUNCE", "1")
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("fixture must launch");
+    let mut stdout = child.stdout.take().expect("fixture stdout must be piped");
+    let mut output = String::new();
+    stdout
+        .read_to_string(&mut output)
+        .expect("fixture stdout must be readable to EOF");
+    let status = child.wait().expect("watchdog must finish");
+    assert!(
+        !output.lines().any(|line| line.starts_with("READY")),
+        "root must not print READY while an announcement is withheld: {output:?}"
+    );
+    assert_eq!(status.code(), Some(124));
+}
+
+#[test]
 fn inherited_fd_frame_is_binary_and_separate_from_stdout() {
     // Catches routing protocol bytes through stdout or text-encoding a raw frame.
     let mut fds = [0; 2];

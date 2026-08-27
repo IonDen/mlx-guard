@@ -22,6 +22,8 @@ from ._binary import BinaryDiscoveryError, binary_path, binary_version
 _CHECKPOINT_FD_ENV = "MLX_GUARD_CHECKPOINT_FD"
 _MAX_U64 = (1 << 64) - 1
 _MAX_WALL_TIME_MS = 30 * 24 * 60 * 60 * 1000
+_MIN_CHECKPOINT_TIMEOUT_MS = 10
+_MAX_CHECKPOINT_TIMEOUT_MS = 60 * 1000
 _MAX_REPORT_BYTES = 16 * 1024 * 1024
 
 JsonScalar: TypeAlias = bool | int | float | str | None
@@ -93,6 +95,7 @@ class RunConfig:
     clear_env: bool = False
     env: tuple[tuple[str, str], ...] = ()
     on_parent_exit: str | None = dataclasses.field(default=None, kw_only=True)
+    checkpoint_timeout_ms: int | None = dataclasses.field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         _validate_common(self)
@@ -107,6 +110,14 @@ class RunConfig:
             type(wall_time) is not int or not 1 <= wall_time <= _MAX_WALL_TIME_MS
         ):
             raise ConfigurationError("wall_time_ms must be within 1ms..=30d")
+        checkpoint_timeout = self.checkpoint_timeout_ms
+        if checkpoint_timeout is not None and (
+            type(checkpoint_timeout) is not int
+            or not _MIN_CHECKPOINT_TIMEOUT_MS
+            <= checkpoint_timeout
+            <= _MAX_CHECKPOINT_TIMEOUT_MS
+        ):
+            raise ConfigurationError("checkpoint_timeout_ms must be within 10ms..=60s")
 
 
 Config: TypeAlias = ObserveConfig | RunConfig
@@ -521,6 +532,8 @@ def _argv_for(
         common.extend(("--max-footprint", f"{config.max_footprint_bytes}B"))
         if config.wall_time_ms is not None:
             common.extend(("--wall-time", f"{config.wall_time_ms}ms"))
+        if config.checkpoint_timeout_ms is not None:
+            common.extend(("--checkpoint-timeout", f"{config.checkpoint_timeout_ms}ms"))
     common.extend(("--sample-interval", f"{config.sample_interval_ms}ms"))
     common.extend(("--report", os.fspath(config.report)))
     if client_ready_fd is not None:

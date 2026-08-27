@@ -71,6 +71,8 @@ fn run() -> Result<(), RunError> {
         "ramp" => run_ramp(limits),
         "cpu-stall" => run_cpu_stall(limits),
         "fanout-stall" => run_fanout_stall(limits),
+        "fanout-ignore-term" => run_fanout_ignore_term(limits),
+        "fanout-ignore-term-member" => run_fanout_ignore_term_member(),
         "idle-stall" => run_idle_stall(),
         "spawn-churn" => run_spawn_churn(),
         "double-fork" => run_double_fork(limits),
@@ -253,6 +255,85 @@ fn run_fanout_stall(limits: FixtureLimits) -> Result<(), RunError> {
     }
     black_box(&children);
     write_phase(&format!("READY mode=fanout-stall members={member_count}"))?;
+    loop {
+        thread::park();
+    }
+}
+
+fn run_fanout_ignore_term(limits: FixtureLimits) -> Result<(), RunError> {
+    let member_count = usize::try_from(limits.allocation_bytes())
+        .map_err(|_| RunError::fixture("member count does not fit usize"))?;
+    if !(2..=16).contains(&member_count) {
+        return Err(RunError::usage(
+            "fanout-ignore-term member count must be within 2..=16",
+        ));
+    }
+    // The root installs the TERM-ignore first, identically to every member spawned below, so the
+    // exact-count read that gates READY proves the whole group — root included — is TERM-deaf.
+    install_ignore_term()?;
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let wall_ms = limits.wall_time().as_millis().to_string();
+    // One shared announcement pipe: every member installs its TERM-ignore before writing its byte,
+    // so counting bytes off this pipe (rather than sleeping) is what proves the group is deaf.
+    let (mut announcements, writer) = io::pipe()
+        .map_err(|error| RunError::fixture(format!("announcement pipe failed: {error}")))?;
+    let mut children = Vec::with_capacity(member_count - 1);
+    for _ in 1..member_count {
+        let announcement = writer
+            .try_clone()
+            .map_err(|error| RunError::fixture(format!("announcement handle failed: {error}")))?;
+        let child = Command::new(&executable)
+            .args(["fanout-ignore-term-member", "1", &wall_ms])
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(announcement))
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| {
+                RunError::fixture(format!("fanout-ignore-term child failed: {error}"))
+            })?;
+        children.push(child);
+    }
+    // This root holds no writer of its own, so a member that dies before announcing closes the
+    // pipe and ends the read below instead of stalling it until the wall-time ceiling.
+    drop(writer);
+    let mut received = 0_usize;
+    let mut byte = [0_u8; 1];
+    while received < member_count - 1 {
+        let read = announcements
+            .read(&mut byte)
+            .map_err(|error| RunError::fixture(format!("announcement read failed: {error}")))?;
+        if read == 0 {
+            return Err(RunError::fixture(
+                "fanout-ignore-term announcements ended early",
+            ));
+        }
+        received += 1;
+    }
+    black_box(&children);
+    write_phase(&format!(
+        "READY mode=fanout-ignore-term members={member_count}"
+    ))?;
+    loop {
+        thread::park();
+    }
+}
+
+fn run_fanout_ignore_term_member() -> Result<(), RunError> {
+    install_ignore_term()?;
+    // Test-only escape hatch: withhold the announce byte so a test can prove the root's read loop
+    // actually gates READY on it, instead of only reading the loop's source. No other mode reads
+    // this variable.
+    if env::var_os("MLX_GUARD_FIXTURE_WITHHOLD_ANNOUNCE").is_none() {
+        let stdout = io::stdout();
+        let mut lock = stdout.lock();
+        lock.write_all(b"1")
+            .and_then(|()| lock.flush())
+            .map_err(|error| {
+                RunError::fixture(format!("fanout-ignore-term announce failed: {error}"))
+            })?;
+        drop(lock);
+    }
     loop {
         thread::park();
     }
@@ -751,7 +832,10 @@ fn run_setsid() -> Result<(), RunError> {
     ))
 }
 
-fn run_ignore_term() -> Result<(), RunError> {
+// Install the TERM-ignoring disposition every `ignore-term`-family mode relies on. Root and
+// members of `fanout-ignore-term` call this identically, so a SIGTERM sent to any of them is
+// provably ignored rather than merely unhandled by luck of timing.
+fn install_ignore_term() -> Result<(), RunError> {
     // SAFETY: SIG_IGN is a valid signal disposition and SIGTERM is a valid signal number.
     if unsafe { libc::signal(libc::SIGTERM, libc::SIG_IGN) } == libc::SIG_ERR {
         return Err(RunError::fixture(format!(
@@ -759,6 +843,11 @@ fn run_ignore_term() -> Result<(), RunError> {
             io::Error::last_os_error()
         )));
     }
+    Ok(())
+}
+
+fn run_ignore_term() -> Result<(), RunError> {
+    install_ignore_term()?;
     // SAFETY: getpid has no preconditions.
     write_phase(&format!("READY mode=ignore-term pid={}", unsafe {
         libc::getpid()
