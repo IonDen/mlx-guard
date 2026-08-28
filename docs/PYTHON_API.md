@@ -68,7 +68,8 @@ returns `None` when the process was not launched by `mlx-guard`.
 def save_checkpoint(
     request: mlx_guard.CheckpointRequest,
 ) -> mlx_guard.CheckpointResponse:
-    write_and_fsync_checkpoint()
+    checkpoint_dir = f"checkpoints/{request.request_id}"
+    write_and_fsync_checkpoint(checkpoint_dir)
     return mlx_guard.CheckpointResponse.completed(
         mlx_guard.CheckpointArtifact(mlx_guard.CheckpointArtifactKind.DIRECTORY)
     )
@@ -82,9 +83,10 @@ if worker is not None:
 ```
 
 `poll()` invokes the callback on the caller's thread after SIGUSR1 announces a nonce- and
-request-bound request. The v0.1 supervisor allows **100 ms total** from request creation to receipt
-of the acknowledgement; `request.supervisor_deadline_ns` carries that monotonic deadline. The
-timeout is fixed and cannot be extended by callback progress. Python signal handlers run on the main
+request-bound request. The supervisor allows **1 s total by default** (`checkpoint_timeout_ms`/
+`--checkpoint-timeout` sets 10 ms to 60 s) from request creation to receipt of the
+acknowledgement; `request.supervisor_deadline_ns` carries that monotonic deadline. The timeout is
+fixed for the run and cannot be extended by callback progress. Python signal handlers run on the main
 thread and may not run while it is blocked in a long native `mx.eval()` call. Poll at short safe
 boundaries and make the callback finish within the remaining budget—for example, finalize an
 incrementally written checkpoint. Do not put an unbounded full-model save in the callback. An
@@ -101,3 +103,32 @@ If native readiness does not arrive within five seconds, the client first sends 
 supervisor one bounded second to run its process-group cleanup before using SIGKILL. A failure in the
 narrow interval after worker launch but before readiness can still prevent a final report; startup
 readiness is not an arbitrary-daemon containment guarantee.
+
+### Resuming after an intervention
+
+A later process can join an interrupted run back to whatever the worker actually saved, using only
+the persisted report:
+
+```python
+from pathlib import Path
+
+import mlx_guard
+
+report = mlx_guard.load_report(Path("reports/train.json"))
+checkpoint = report.payload["checkpoint"]
+status = checkpoint["status"]
+request_id = checkpoint.get("request_id")
+
+if request_id is not None and status in (
+    "acknowledged_unverified_durability",
+    "timed_out",
+):
+    resume_training(f"checkpoints/{request_id}")
+```
+
+Match on `request_id`, the same value `save_checkpoint` embedded in its own save path above —
+never on `status` alone. `timed_out` means the supervisor gave up waiting for the
+acknowledgement, not that the worker gave up saving: the callback may have written and fsynced
+the checkpoint just after the deadline passed, so a worker-side artifact tagged with that request
+ID can still be there to resume from. As above, a persisted `checkpoint` entry is the worker's own
+report, never independent proof that its bytes are complete or durable.

@@ -32,6 +32,30 @@ set, so an identity a sample misses and later re-observes can add a further incr
 field as bounded evidence of distinct escapes, not an exact census. It is a count, never a list: the
 escaped identities' pids are never persisted.
 
+`checkpoint.request_id`, `checkpoint.reason`, and `checkpoint.artifact` are optional and let a
+resuming consumer correlate the report with the worker's own saved state. `request_id` is the
+nonzero id the supervisor sent and, on acknowledgement, the worker echoed — a worker tags its saved
+state with this id so a later reader can find it. `reason` is the intervention cause behind the
+checkpoint attempt: `footprint` or `wall_time`, the only causes that can request one. `artifact` is
+the worker's own path-free claim about what it saved (`kind`: `file`, `directory`, or `opaque`, plus
+an optional `size_bytes`) — the worker's report, not independent proof; mlx-guard never verifies it.
+All three fields are absent from reports written before they existed.
+
+Their presence follows the checkpoint status:
+
+| status | `request_id` | `reason` | `artifact` |
+|---|---|---|---|
+| `not_negotiated` | absent | present only when a checkpoint was attempted toward a non-negotiated channel, otherwise absent | absent |
+| `requested_unverified` / `timed_out` | present | present | absent |
+| `acknowledged_unverified_durability` | present | present | present when the worker's acknowledgement supplied one |
+| `cancelled` | absent (delivery failed; the worker was never signalled) | present | absent |
+
+Validation only constrains fields that are present, never their absence, so every report written
+before these fields existed keeps parsing: a present `request_id` must be nonzero and its status
+must be one where a frame was actually delivered (`requested_unverified`,
+`acknowledged_unverified_durability`, or `timed_out`); a present `artifact` requires
+`acknowledged_unverified_durability`; a present `reason` must be `footprint` or `wall_time`.
+
 `outcome.child_status` records the root command's own exit code or signal whenever it was observed,
 under every outcome kind, so an intervention or supervisor failure never hides how the command
 ended. `outcome.owned_group_survivors` distinguishes two situations and its encoding is not

@@ -42,6 +42,10 @@ versions follow Semantic Versioning.
   timing across real supervised runs. Reference measurements from the M1 Max 32 GB host are
   published in `evidence/v0.2.0/m1-max-32gb/` and summarized in `docs/POLICY.md`, with a
   dispatch-only workflow for shared-VM corroboration.
+- Reports record `checkpoint.request_id`, `checkpoint.reason`, and `checkpoint.artifact`
+  (path-free `kind`/`size_bytes` facts echoed from a completed acknowledgement), so a later
+  process can join an interrupted run back to whatever the worker actually saved.
+  `docs/PYTHON_API.md` documents the id-tagging idiom and the resulting resume flow.
 
 ### Changed
 

@@ -3,11 +3,11 @@ use std::time::Duration;
 
 use mlx_guard_core::{
     AdvisoryMetrics, AdvisoryScope, AdvisorySnapshot, ArtifactErrorCode, ArtifactErrorRecord,
-    Capabilities, CheckpointRecord, CheckpointStatus, ChildStatus, EscapeEvidence,
-    MemoryPressureLevel, ObservationError, Observed, OnParentExit, ParentWatch, PolicyState,
-    PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1,
-    RunIdentity, SampleWindow, SignalReason, SignalRecord, SignalResult, SignalTarget,
-    TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
+    ArtifactKind, Capabilities, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus,
+    ChildStatus, EscapeEvidence, MemoryPressureLevel, ObservationError, Observed, OnParentExit,
+    ParentWatch, PolicyState, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration,
+    ReportError, ReportMode, ReportV1, RunIdentity, SampleWindow, SignalReason, SignalRecord,
+    SignalResult, SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
 };
 
 fn identity() -> RunIdentity {
@@ -90,6 +90,9 @@ fn report() -> ReportV1 {
         checkpoint: CheckpointRecord {
             status: CheckpointStatus::RequestedUnverified,
             at_ms: Some(12),
+            request_id: None,
+            reason: None,
+            artifact: None,
         },
         escape: EscapeEvidence {
             detected: Observed::Available { value: false },
@@ -141,7 +144,7 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
     // reason (or accepted once the check that happened to catch it changes).
     type Corrupt = fn(&mut ReportV1);
     type Expected = fn(&ReportError) -> bool;
-    let cases: [(&str, Corrupt, Expected); 19] = [
+    let cases: [(&str, Corrupt, Expected); 24] = [
         (
             "unredacted persistence",
             |r| r.privacy.redacted_before_persistence = false,
@@ -255,6 +258,46 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
             },
             |e| matches!(e, ReportError::InvalidEventOrder),
         ),
+        (
+            "checkpoint request id zero",
+            |r| r.checkpoint.request_id = Some(0),
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            // at_ms must stay None here: the golden base carries at_ms: Some(12), and the
+            // pre-existing NotNegotiated => at_ms-None rule (report.rs:638) would reject this row
+            // before the new request_id-status rule ever runs, proving nothing about 0063.
+            "checkpoint request id present with a not-negotiated status",
+            |r| {
+                r.checkpoint.status = CheckpointStatus::NotNegotiated;
+                r.checkpoint.at_ms = None;
+                r.checkpoint.request_id = Some(7);
+            },
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "checkpoint request id present with a cancelled status",
+            |r| {
+                r.checkpoint.status = CheckpointStatus::Cancelled;
+                r.checkpoint.request_id = Some(7);
+            },
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "checkpoint artifact present without an acknowledged status",
+            |r| {
+                r.checkpoint.artifact = Some(CheckpointArtifactRecord {
+                    kind: ArtifactKind::File,
+                    size_bytes: None,
+                });
+            },
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
+        (
+            "checkpoint reason outside the requestable causes",
+            |r| r.checkpoint.reason = Some(SignalReason::ParentExit),
+            |e| matches!(e, ReportError::InvalidEventOrder),
+        ),
     ];
     for (case, corrupt, expected) in cases {
         let mut invalid = report();
@@ -267,6 +310,43 @@ fn validator_rejects_each_unsafe_field_through_its_own_check() {
             "report with {case} was rejected by the wrong check: {error:?}"
         );
     }
+}
+
+#[test]
+fn a_not_negotiated_checkpoint_with_only_a_reason_is_accepted() {
+    // Catches a validator arm that rejects the commonest real report shape: an enforcing run with
+    // no cooperative worker, where a checkpoint actuation was attempted toward a non-negotiated
+    // channel and only the cause is latched. The table's driver only asserts rejection, so this
+    // acceptance case is its own test (plan review D2).
+    let mut accepted = report();
+    accepted.checkpoint.status = CheckpointStatus::NotNegotiated;
+    accepted.checkpoint.at_ms = None;
+    accepted.checkpoint.reason = Some(SignalReason::Footprint);
+    accepted.checkpoint.request_id = None;
+    assert!(accepted.validate().is_ok());
+}
+
+#[test]
+fn schema_v1_resume_fixture_parses_the_acknowledged_checkpoint_shape() {
+    // Catches request_id, reason, or artifact being dropped or rejected on the acknowledged path.
+    let report = ReportV1::from_json(include_str!("fixtures/report-v1-resume.json")).unwrap();
+    assert_eq!(
+        report.checkpoint.status,
+        CheckpointStatus::AcknowledgedUnverifiedDurability
+    );
+    assert_eq!(report.checkpoint.request_id, Some(42));
+    assert_eq!(report.checkpoint.reason, Some(SignalReason::Footprint));
+    assert_eq!(
+        report.checkpoint.artifact,
+        Some(CheckpointArtifactRecord {
+            kind: ArtifactKind::File,
+            size_bytes: Some(1_048_576),
+        })
+    );
+    assert_eq!(
+        report.to_json_pretty().unwrap(),
+        include_str!("fixtures/report-v1-resume.json")
+    );
 }
 
 #[test]

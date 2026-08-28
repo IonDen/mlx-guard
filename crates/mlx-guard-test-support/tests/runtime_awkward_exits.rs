@@ -266,4 +266,10 @@ fn an_emergency_band_breach_kills_at_once_and_names_the_footprint() {
         [(9, Some(SignalReason::Footprint))],
         "{report:#?}"
     );
+    // The emergency band skips the cooperative path entirely, so no checkpoint was ever requested
+    // of this worker. Catches the checkpoint record borrowing the KILL's cause and telling a
+    // reader a checkpoint was attempted when none was.
+    assert_eq!(report.checkpoint.status, CheckpointStatus::NotNegotiated);
+    assert_eq!(report.checkpoint.reason, None, "{report:#?}");
+    assert_eq!(report.checkpoint.request_id, None, "{report:#?}");
 }

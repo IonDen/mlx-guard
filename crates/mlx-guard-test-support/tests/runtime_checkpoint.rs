@@ -11,9 +11,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mlx_guard_cli::{execute, parse_cli};
 use mlx_guard_core::{
-    CheckpointStatus, ChildStatus, PolicyState, ReportV1, SignalResult, SignalTarget,
-    SupervisorOutcome, TerminalKind, TerminalSignalMonitor, checkpoint_signal_usr1,
-    hangup_is_ignored,
+    ArtifactKind, CheckpointArtifactRecord, CheckpointStatus, ChildStatus, PolicyState, ReportV1,
+    SignalReason, SignalResult, SignalTarget, SupervisorOutcome, TerminalKind,
+    TerminalSignalMonitor, checkpoint_signal_usr1, hangup_is_ignored,
 };
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
@@ -119,6 +119,116 @@ fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
             && signal.target == SignalTarget::OwnedProcessGroup
             && signal.result == SignalResult::Delivered
     }));
+    // The resume facts a worker needs to find its own saved state: the correlation key it echoed
+    // and the limit that asked for the checkpoint. The 1 TiB footprint limit is unreachable, so
+    // the wall deadline is the only thing that can have opened this intervention.
+    assert!(
+        report.checkpoint.request_id.is_some_and(|id| id != 0),
+        "{report:#?}"
+    );
+    assert_eq!(
+        report.checkpoint.reason,
+        Some(SignalReason::WallTime),
+        "{report:#?}"
+    );
+    // This worker acknowledges without artifact facts, so the report must not invent any.
+    assert_eq!(report.checkpoint.artifact, None, "{report:#?}");
+}
+
+#[test]
+fn a_worker_reported_artifact_reaches_the_report_verbatim() {
+    // Catches artifact facts being dropped between the acknowledgement frame and the report, or
+    // their kind and size being mangled on the way through.
+    let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let parsed = parse_cli([
+        "mlx-guard",
+        "run",
+        "--max-footprint",
+        "1TiB",
+        "--wall-time",
+        "1s",
+        "--sample-interval",
+        "10ms",
+        "--report",
+        report_path.to_str().unwrap(),
+        "--",
+        FIXTURE,
+        "checkpoint-artifact",
+        "1",
+        "3000",
+    ])
+    .unwrap();
+
+    let result = execute(parsed);
+
+    assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
+    assert!(result.stderr.is_empty());
+    let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
+    assert_eq!(
+        report.checkpoint.status,
+        CheckpointStatus::AcknowledgedUnverifiedDurability,
+        "{report:#?}"
+    );
+    assert_eq!(
+        report.checkpoint.artifact,
+        Some(CheckpointArtifactRecord {
+            kind: ArtifactKind::File,
+            size_bytes: Some(1_048_576),
+        }),
+        "{report:#?}"
+    );
+    assert!(
+        report.checkpoint.request_id.is_some_and(|id| id != 0),
+        "{report:#?}"
+    );
+}
+
+#[test]
+fn a_worker_that_never_negotiates_records_the_cause_without_a_request_id() {
+    // The commonest real report: an ordinary command knows nothing about the protocol, so the
+    // request fails before delivery. Catches a request id being latched for a request that never
+    // reached an endpoint — a resuming worker would look for state no worker was ever asked to
+    // save — while still naming the limit the supervisor acted on.
+    let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let parsed = parse_cli([
+        "mlx-guard",
+        "run",
+        "--max-footprint",
+        "1TiB",
+        "--wall-time",
+        "300ms",
+        "--sample-interval",
+        "10ms",
+        "--report",
+        report_path.to_str().unwrap(),
+        "--",
+        FIXTURE,
+        "idle-stall",
+        "1",
+        "5000",
+    ])
+    .unwrap();
+
+    let result = execute(parsed);
+
+    assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
+    let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
+    assert_eq!(
+        report.checkpoint.status,
+        CheckpointStatus::NotNegotiated,
+        "{report:#?}"
+    );
+    assert_eq!(report.checkpoint.request_id, None, "{report:#?}");
+    assert_eq!(report.checkpoint.artifact, None, "{report:#?}");
+    assert_eq!(
+        report.checkpoint.reason,
+        Some(SignalReason::WallTime),
+        "{report:#?}"
+    );
 }
 
 #[test]
@@ -282,6 +392,13 @@ fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
     assert!(
         term_at.saturating_sub(usr1_at) < 500,
         "TERM at {term_at} ms waited on the blocked worker after the request at {usr1_at} ms"
+    );
+    // A request that was delivered and then timed out still names the state the worker was asked
+    // to save, so a run that timed out can still be resumable. Catches the id being cleared when
+    // the acknowledgement failed to arrive.
+    assert!(
+        report.checkpoint.request_id.is_some_and(|id| id != 0),
+        "{report:#?}"
     );
 }
 

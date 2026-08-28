@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::PolicyState;
 #[cfg(unix)]
+use crate::checkpoint::{CheckpointArtifactKind, CheckpointArtifactMetadata};
+#[cfg(unix)]
 use crate::process_control::RootOutcome;
 
 /// The only report schema major understood by this package.
@@ -351,6 +353,54 @@ pub struct CheckpointRecord {
     pub status: CheckpointStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub at_ms: Option<u64>,
+    /// The nonzero request id the supervisor sent and, on acknowledgement, the worker echoed —
+    /// the correlation key a worker tags its own saved state with. Absent from reports written
+    /// before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<u64>,
+    /// The intervention cause behind the checkpoint attempt, present whenever a checkpoint
+    /// actuation was executed toward the request, delivered or not. Absent from reports written
+    /// before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<SignalReason>,
+    /// Worker-reported, path-free artifact facts echoed from the acknowledgement frame — the
+    /// worker's report, not independent proof. Absent from reports written before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<CheckpointArtifactRecord>,
+}
+
+/// Path-free classification of a worker-reported checkpoint artifact, mirroring the wire's
+/// `CheckpointArtifactKind` (checkpoint.rs) but kept as a distinct report-side type: the wire
+/// enum of the same name is re-exported at the crate root, so a report enum sharing that name
+/// would collide there on unix builds.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactKind {
+    File,
+    Directory,
+    Opaque,
+}
+
+/// Worker-reported, path-free artifact facts echoed from a checkpoint acknowledgement.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CheckpointArtifactRecord {
+    pub kind: ArtifactKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+}
+
+#[cfg(unix)]
+impl From<CheckpointArtifactMetadata> for CheckpointArtifactRecord {
+    fn from(metadata: CheckpointArtifactMetadata) -> Self {
+        Self {
+            kind: match metadata.kind {
+                CheckpointArtifactKind::File => ArtifactKind::File,
+                CheckpointArtifactKind::Directory => ArtifactKind::Directory,
+                CheckpointArtifactKind::Opaque => ArtifactKind::Opaque,
+            },
+            size_bytes: metadata.size_bytes,
+        }
+    }
 }
 
 /// Best-effort evidence that a descendant escaped the owned group.
@@ -641,6 +691,23 @@ impl ReportV1 {
             | CheckpointStatus::TimedOut
             | CheckpointStatus::Cancelled => self.checkpoint.at_ms.is_some(),
         };
+        // Present-⇒-constrained only: schema v1 validates on read, so no rule here may require a
+        // field's absence for any status (every 0.1.0 report, including the committed golden,
+        // must keep parsing).
+        let checkpoint_request_id_valid = self.checkpoint.request_id.is_none_or(|id| id != 0);
+        let checkpoint_request_id_status_valid = self.checkpoint.request_id.is_none_or(|_| {
+            matches!(
+                self.checkpoint.status,
+                CheckpointStatus::RequestedUnverified
+                    | CheckpointStatus::AcknowledgedUnverifiedDurability
+                    | CheckpointStatus::TimedOut
+            )
+        });
+        let checkpoint_artifact_status_valid = self.checkpoint.artifact.is_none()
+            || self.checkpoint.status == CheckpointStatus::AcknowledgedUnverifiedDurability;
+        let checkpoint_reason_valid = self.checkpoint.reason.is_none_or(|reason| {
+            matches!(reason, SignalReason::Footprint | SignalReason::WallTime)
+        });
         let terminal_signal_valid = match self.outcome.kind {
             TerminalKind::ChildSignaled { signal } => (1..=127).contains(&signal),
             _ => true,
@@ -684,6 +751,10 @@ impl ReportV1 {
             || !signals_ordered
             || !artifacts_ordered
             || !checkpoint_valid
+            || !checkpoint_request_id_valid
+            || !checkpoint_request_id_status_valid
+            || !checkpoint_artifact_status_valid
+            || !checkpoint_reason_valid
             || !terminal_signal_valid
             || !child_status_signal_valid
             || !child_status_agrees
@@ -804,8 +875,54 @@ impl Error for ReportError {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{ChildStatus, RootOutcome};
+    use super::{ArtifactKind, CheckpointArtifactRecord, ChildStatus, RootOutcome};
     use crate::SignalNumber;
+    use crate::checkpoint::{CheckpointArtifactKind, CheckpointArtifactMetadata};
+
+    fn metadata(
+        kind: CheckpointArtifactKind,
+        size_bytes: Option<u64>,
+    ) -> CheckpointArtifactMetadata {
+        CheckpointArtifactMetadata { kind, size_bytes }
+    }
+
+    #[test]
+    fn from_metadata_maps_every_wire_kind_to_its_own_report_kind() {
+        // Catches a kind swapped for another on the way to the report: only one end-to-end kind
+        // travels through a real acknowledgement, so the other two are pinned here.
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::File, None)).kind,
+            ArtifactKind::File
+        );
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::Directory, None)).kind,
+            ArtifactKind::Directory
+        );
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::Opaque, None)).kind,
+            ArtifactKind::Opaque
+        );
+    }
+
+    #[test]
+    fn from_metadata_keeps_an_absent_size_absent_and_a_reported_size_exact() {
+        // Catches a missing size becoming a reported zero, which would read as a saved artifact of
+        // no size rather than a worker that reported none.
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::Opaque, None)),
+            CheckpointArtifactRecord {
+                kind: ArtifactKind::Opaque,
+                size_bytes: None,
+            }
+        );
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::File, Some(4_096))),
+            CheckpointArtifactRecord {
+                kind: ArtifactKind::File,
+                size_bytes: Some(4_096),
+            }
+        );
+    }
 
     #[test]
     fn from_root_outcome_maps_an_exited_root_to_the_exited_arm() {
