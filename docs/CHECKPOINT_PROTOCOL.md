@@ -47,3 +47,14 @@ This is possession-bound cooperation, not authentication against hostile supervi
 nonce is plaintext on the inherited channel. A descendant that inherits the descriptor before the
 worker connects can observe or answer the exchange; a fork without exec can retain a connected
 endpoint. Normal exec closes the descriptor after the Python helper re-arms close-on-exec.
+
+## Persisted acknowledgement facts
+
+The echoed request ID, the intervention reason behind the request, and the acknowledgement's
+artifact facts now land in the report's `checkpoint` record alongside `status` and `at_ms`. The
+wire is unchanged: this is the same bounded, path-free frame described above, projected into the
+persisted copy rather than a new exchange. Paths and names have no wire representation, so they
+have no report representation either — only `kind` (`file`, `directory`, or `opaque`) and an
+optional byte count ever reach `checkpoint.artifact`. As with the live acknowledgement, the
+persisted copy is the worker's report, not independent proof that artifact bytes are complete or
+durable.

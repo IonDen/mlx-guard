@@ -23,11 +23,12 @@ use std::time::{Duration, Instant};
 
 use mlx_guard_core::{
     AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
-    AdvisorySource, CapturePolicy, CheckpointRecord, CheckpointStatus, ChildStatus, EscapeEvidence,
-    MemoryPressureLevel, ObservationError, Observed, OnParentExit, ParentWatch, PolicyState,
-    PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportError, ReportMode, ReportV1, RetentionPolicy,
-    RunIdentity, SampleWindow, SignalReason, SignalRecord, SignalResult, SignalTarget,
-    TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason, UploadPolicy,
+    AdvisorySource, ArtifactKind, CapturePolicy, CheckpointArtifactRecord, CheckpointRecord,
+    CheckpointStatus, ChildStatus, EscapeEvidence, MemoryPressureLevel, ObservationError, Observed,
+    OnParentExit, ParentWatch, PolicyState, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportError,
+    ReportMode, ReportV1, RetentionPolicy, RunIdentity, SampleWindow, SignalReason, SignalRecord,
+    SignalResult, SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
+    UploadPolicy,
 };
 
 const MAX_CASE_RUNTIME: Duration = Duration::from_secs(10);
@@ -1101,4 +1102,83 @@ fn adversarial_field_values_never_panic_validation() {
         tally.invalid_privacy > 0,
         "no rejection reached validate_privacy's achievable invariants: {tally:?}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Property 5 — `checkpoint.artifact.size_bytes` is a worker-controlled numeric field, never a
+// leak channel.
+//
+// This is an ACKNOWLEDGEMENT row, not a leak trap like properties 1-4 above. `size_bytes` is
+// typed `Option<u64>` (report.rs's `CheckpointArtifactRecord`): the type system already forbids
+// smuggling bytes or text through it, so there is no marker-occurrence property to fuzz here.
+// What remains worth proving is the serialization SHAPE: an adversarial worker-supplied count
+// (the two u64 boundaries, the smallest nonzero value, and a mixed-bit mid value) must always
+// serialize as a bare JSON number and never widen into a string, so a future serde change can't
+// silently turn this numeric field into a text-shaped surface.
+//
+// Falsifier (recorded RED/GREEN mutation, not left to imagination): temporarily change
+// `size_bytes`'s serde attribute on `CheckpointArtifactRecord` from
+// `#[serde(default, skip_serializing_if = "Option::is_none")]` to an unconditional
+// `#[serde(skip_serializing)]`. The field vanishes from the serialized JSON regardless of value,
+// and this test's `is_some()` assertion below goes RED. Restoring the attribute returns it to
+// GREEN. See the task report for both captured outputs.
+// ---------------------------------------------------------------------------------------------
+
+const ADVERSARIAL_SIZE_BYTES: &[u64] = &[0, 1, u64::MAX, 0xDEAD_BEEF_1234_5678];
+
+#[test]
+fn checkpoint_artifact_size_bytes_round_trips_as_a_bare_number() {
+    let base = base_report();
+
+    for &value in ADVERSARIAL_SIZE_BYTES {
+        let mut report = base.clone();
+        report.checkpoint = CheckpointRecord {
+            status: CheckpointStatus::AcknowledgedUnverifiedDurability,
+            // Golden fixture's `outcome.at_ms` is 15 (report-v1.json); `validate_events` requires
+            // every event timestamp, including this one, to sit at or before it.
+            at_ms: Some(15),
+            request_id: Some(1),
+            reason: Some(SignalReason::Footprint),
+            artifact: Some(CheckpointArtifactRecord {
+                kind: ArtifactKind::File,
+                size_bytes: Some(value),
+            }),
+        };
+        report.validate().unwrap_or_else(|error| {
+            panic!("size_bytes={value}: constructed report must validate: {error}")
+        });
+
+        let serialized = report
+            .to_json_pretty()
+            .unwrap_or_else(|error| panic!("size_bytes={value}: serialization failed: {error}"));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&serialized).expect("serialized report is valid JSON");
+        let field = &parsed["checkpoint"]["artifact"]["size_bytes"];
+
+        assert!(
+            field.is_u64(),
+            "size_bytes={value}: field must serialize as a bare JSON number, got {field}"
+        );
+        assert!(
+            !field.is_string(),
+            "size_bytes={value}: field widened into a JSON string"
+        );
+        assert_eq!(
+            field.as_u64(),
+            Some(value),
+            "size_bytes={value}: serialized number drifted from the input"
+        );
+
+        let round_tripped = ReportV1::from_json(&serialized)
+            .unwrap_or_else(|error| panic!("size_bytes={value}: round-trip parse failed: {error}"));
+        assert_eq!(
+            round_tripped
+                .checkpoint
+                .artifact
+                .as_ref()
+                .and_then(|artifact| artifact.size_bytes),
+            Some(value),
+            "size_bytes={value}: typed round-trip drifted"
+        );
+    }
 }
