@@ -921,6 +921,12 @@ fn mutate_checkpoint(generator: &mut Generator, report: &mut ReportV1) {
     report.checkpoint = CheckpointRecord {
         status: STATUSES[generator.index(STATUSES.len())],
         at_ms: generator.bool().then(|| generator.next() % 10_000),
+        // 0063's request_id/reason/artifact land in a dedicated redaction row (ticket 0063 Task 4);
+        // left absent here so this general adversarial mutator does not fabricate coverage of a
+        // field no writer populates through this path yet.
+        request_id: None,
+        reason: None,
+        artifact: None,
     };
 }
 

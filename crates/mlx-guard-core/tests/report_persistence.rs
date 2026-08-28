@@ -8,8 +8,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mlx_guard_core::{
-    JournalEntry, JournalHeader, JournalRecord, JournalRecovery, JournalRecoveryStatus, ReportV1,
-    RunIdentity, SecureJournal, StorageErrorKind,
+    ArtifactKind, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus, JournalEntry,
+    JournalHeader, JournalRecord, JournalRecovery, JournalRecoveryStatus, ReportV1, RunIdentity,
+    SecureJournal, SignalReason, StorageErrorKind,
 };
 
 struct TestDirectory(PathBuf);
@@ -120,6 +121,32 @@ fn a_durable_terminal_prefix_can_be_replayed_after_supervisor_abort() {
     let recovered = JournalRecovery::read(&journal_path).unwrap();
     assert_eq!(recovered.to_report().unwrap(), report());
     assert!(!report_path.exists());
+}
+
+#[test]
+fn a_replayed_checkpoint_carries_the_request_id_reason_and_artifact() {
+    // Catches request_id, reason, or artifact being dropped by journal replay's Checkpoint entry.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let mut resumable = report();
+    resumable.checkpoint = CheckpointRecord {
+        status: CheckpointStatus::AcknowledgedUnverifiedDurability,
+        at_ms: Some(12),
+        request_id: Some(42),
+        reason: Some(SignalReason::Footprint),
+        artifact: Some(CheckpointArtifactRecord {
+            kind: ArtifactKind::File,
+            size_bytes: Some(1_048_576),
+        }),
+    };
+    let journal_path = {
+        let mut journal = SecureJournal::initialize(&report_path).unwrap();
+        journal.append_report(&resumable).unwrap();
+        journal.journal_path().to_path_buf()
+    };
+
+    let recovered = JournalRecovery::read(&journal_path).unwrap();
+    assert_eq!(recovered.to_report().unwrap(), resumable);
 }
 
 #[test]
