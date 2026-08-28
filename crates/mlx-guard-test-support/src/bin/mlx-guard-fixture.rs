@@ -14,8 +14,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use mlx_guard_core::{
-    CHECKPOINT_FD_ENV, CheckpointAcknowledgement, CheckpointHello, CheckpointNonce,
-    CheckpointRequest, CheckpointWorkerStatus, MAX_CHECKPOINT_FRAME_BYTES,
+    CHECKPOINT_FD_ENV, CheckpointAcknowledgement, CheckpointArtifactKind,
+    CheckpointArtifactMetadata, CheckpointHello, CheckpointNonce, CheckpointRequest,
+    CheckpointWorkerStatus, MAX_CHECKPOINT_FRAME_BYTES,
 };
 use mlx_guard_test_support::FixtureLimits;
 
@@ -38,6 +39,13 @@ const FLOOD_MEMBER_WALL_MS: u64 = 2_000;
 /// twenty times the 10 ms sampling interval the escape tests use, which keeps several samples in
 /// the window even on a starved machine whose sampling loop runs far slower than it asked to.
 const DAEMONIZE_OBSERVATION_HOLD: Duration = Duration::from_millis(200);
+
+/// Size the `checkpoint-artifact` worker claims for the state it says it saved.
+///
+/// A distinctive value no other fixture number could be confused with, and nothing is written to
+/// disk: the acknowledgement frame carries the worker's own claim, not an independently verified
+/// fact.
+const ARTIFACT_SIZE_BYTES: u64 = 1_048_576;
 
 static CHECKPOINT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -86,6 +94,7 @@ fn run() -> Result<(), RunError> {
         "term-then-exit" => run_term_then_exit(limits),
         "checkpoint-parent" => run_checkpoint_parent(limits),
         "checkpoint-success" => run_checkpoint_worker("success", limits),
+        "checkpoint-artifact" => run_checkpoint_worker("artifact", limits),
         "checkpoint-blocked" => run_checkpoint_worker("blocked", limits),
         "checkpoint-exit" => run_checkpoint_worker("exit", limits),
         "checkpoint-cancel" => run_checkpoint_worker("cancel", limits),
@@ -770,9 +779,18 @@ fn run_checkpoint_worker(mode: &str, limits: FixtureLimits) -> Result<(), RunErr
             .map_err(|error| RunError::protocol(format!("checkpoint spoof failed: {error}")))?;
         thread::sleep(Duration::from_millis(20));
     }
-    let acknowledgement =
-        CheckpointAcknowledgement::for_request(&request, CheckpointWorkerStatus::Completed, None)
-            .encode();
+    // Only the artifact mode reports saved state; every other mode acknowledges without any, so a
+    // test that expects artifact facts cannot pass on a worker that never sent them.
+    let artifact = (mode == "artifact").then_some(CheckpointArtifactMetadata {
+        kind: CheckpointArtifactKind::File,
+        size_bytes: Some(ARTIFACT_SIZE_BYTES),
+    });
+    let acknowledgement = CheckpointAcknowledgement::for_request(
+        &request,
+        CheckpointWorkerStatus::Completed,
+        artifact,
+    )
+    .encode();
     channel
         .write_all(&acknowledgement)
         .and_then(|()| channel.flush())

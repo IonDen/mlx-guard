@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::PolicyState;
 #[cfg(unix)]
+use crate::checkpoint::{CheckpointArtifactKind, CheckpointArtifactMetadata};
+#[cfg(unix)]
 use crate::process_control::RootOutcome;
 
 /// The only report schema major understood by this package.
@@ -385,6 +387,20 @@ pub struct CheckpointArtifactRecord {
     pub kind: ArtifactKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
+}
+
+#[cfg(unix)]
+impl From<CheckpointArtifactMetadata> for CheckpointArtifactRecord {
+    fn from(metadata: CheckpointArtifactMetadata) -> Self {
+        Self {
+            kind: match metadata.kind {
+                CheckpointArtifactKind::File => ArtifactKind::File,
+                CheckpointArtifactKind::Directory => ArtifactKind::Directory,
+                CheckpointArtifactKind::Opaque => ArtifactKind::Opaque,
+            },
+            size_bytes: metadata.size_bytes,
+        }
+    }
 }
 
 /// Best-effort evidence that a descendant escaped the owned group.
@@ -859,8 +875,54 @@ impl Error for ReportError {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{ChildStatus, RootOutcome};
+    use super::{ArtifactKind, CheckpointArtifactRecord, ChildStatus, RootOutcome};
     use crate::SignalNumber;
+    use crate::checkpoint::{CheckpointArtifactKind, CheckpointArtifactMetadata};
+
+    fn metadata(
+        kind: CheckpointArtifactKind,
+        size_bytes: Option<u64>,
+    ) -> CheckpointArtifactMetadata {
+        CheckpointArtifactMetadata { kind, size_bytes }
+    }
+
+    #[test]
+    fn from_metadata_maps_every_wire_kind_to_its_own_report_kind() {
+        // Catches a kind swapped for another on the way to the report: only one end-to-end kind
+        // travels through a real acknowledgement, so the other two are pinned here.
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::File, None)).kind,
+            ArtifactKind::File
+        );
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::Directory, None)).kind,
+            ArtifactKind::Directory
+        );
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::Opaque, None)).kind,
+            ArtifactKind::Opaque
+        );
+    }
+
+    #[test]
+    fn from_metadata_keeps_an_absent_size_absent_and_a_reported_size_exact() {
+        // Catches a missing size becoming a reported zero, which would read as a saved artifact of
+        // no size rather than a worker that reported none.
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::Opaque, None)),
+            CheckpointArtifactRecord {
+                kind: ArtifactKind::Opaque,
+                size_bytes: None,
+            }
+        );
+        assert_eq!(
+            CheckpointArtifactRecord::from(metadata(CheckpointArtifactKind::File, Some(4_096))),
+            CheckpointArtifactRecord {
+                kind: ArtifactKind::File,
+                size_bytes: Some(4_096),
+            }
+        );
+    }
 
     #[test]
     fn from_root_outcome_maps_an_exited_root_to_the_exited_arm() {

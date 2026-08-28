@@ -8,9 +8,9 @@ use crate::{
 
 #[cfg(unix)]
 use crate::{
-    CheckpointChannel, CheckpointChannelRequestError, CheckpointEndpoint, CheckpointRejection,
-    CheckpointWorkerStatus, ControlError, ControlErrorKind, OwnedProcess, ProcessControlHandle,
-    SignalResult,
+    CheckpointArtifactMetadata, CheckpointChannel, CheckpointChannelRequestError,
+    CheckpointEndpoint, CheckpointRejection, CheckpointWorkerStatus, ControlError,
+    ControlErrorKind, OwnedProcess, ProcessControlHandle, SignalResult,
 };
 
 /// Maximum number of recent intervention attempts retained per run.
@@ -95,6 +95,11 @@ impl<'a> CheckpointBinding<'a> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckpointObservation {
     pub event: Option<Event>,
+    /// Path-free artifact facts the worker attached to an authenticated completion, present only
+    /// alongside a [`Event::CheckpointAck`]: a rejected acknowledgement claims no saved state.
+    /// The policy machine never sees these — they are the worker's own report, not a decision
+    /// input — so they travel beside the event rather than inside it.
+    pub artifact: Option<CheckpointArtifactMetadata>,
     pub rejections: Vec<CheckpointRejection>,
 }
 
@@ -147,21 +152,29 @@ impl<'a> ProcessInterventionActuator<'a> {
             .channel
             .poll(at)
             .map_err(|_| ActuationFailure::CheckpointUnavailable)?;
-        let event = poll.acknowledgement.map(|acknowledgement| {
-            if acknowledgement.status == CheckpointWorkerStatus::Completed {
-                Event::CheckpointAck {
-                    at,
-                    request_id: acknowledgement.request_id(),
-                    authenticated: true,
-                }
-            } else {
-                Event::ActuationFailed {
+        let (event, artifact) = match poll.acknowledgement {
+            Some(acknowledgement)
+                if acknowledgement.status == CheckpointWorkerStatus::Completed =>
+            {
+                (
+                    Some(Event::CheckpointAck {
+                        at,
+                        request_id: acknowledgement.request_id(),
+                        authenticated: true,
+                    }),
+                    acknowledgement.artifact,
+                )
+            }
+            Some(_) => (
+                Some(Event::ActuationFailed {
                     at,
                     action: ActuationKind::Checkpoint,
                     failure: ActuationFailure::CheckpointRejected,
-                }
-            }
-        });
+                }),
+                None,
+            ),
+            None => (None, None),
+        };
         let endpoint_failed = poll.rejections.iter().any(|rejection| {
             matches!(
                 rejection,
@@ -176,6 +189,7 @@ impl<'a> ProcessInterventionActuator<'a> {
                     failure: ActuationFailure::CheckpointUnavailable,
                 })
             }),
+            artifact,
             rejections: poll.rejections,
         })
     }

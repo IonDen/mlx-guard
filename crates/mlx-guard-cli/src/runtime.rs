@@ -5,18 +5,19 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use mlx_guard_core::{
-    Actuation, ActuationFailure, ActuationOutcome, Capabilities, CheckpointBinding,
-    CheckpointChannel, CheckpointDisposition, CheckpointNonce, CheckpointRecord, CheckpointStatus,
-    CheckpointWorkerEndpoint, ChildStatus, ClientReady, EscapeEvidence, Event, FootprintSampler,
-    IdentityTracker, InterventionEngine, InterventionRecord, JournalDurability, JournalEntry,
-    JournalHeader, JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver,
-    NativeProcessInventory, ObserveCalibration, Observed, OnParentExit, OwnedProcess, ParentWatch,
-    PersistenceAttempt, PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults,
-    ProcessIdentity, ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration,
-    ReportMode, ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal,
-    SignalReason, SignalRecord, SignalResult, SignalTarget, StdioMode, SupervisorOutcome,
-    TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason,
-    VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
+    Actuation, ActuationFailure, ActuationOutcome, Capabilities, CheckpointArtifactRecord,
+    CheckpointBinding, CheckpointChannel, CheckpointDisposition, CheckpointNonce, CheckpointRecord,
+    CheckpointStatus, CheckpointWorkerEndpoint, ChildStatus, ClientReady, EscapeEvidence, Event,
+    FootprintSampler, IdentityTracker, InterventionEngine, InterventionRecord, JournalDurability,
+    JournalEntry, JournalHeader, JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY,
+    NativeAdvisoryObserver, NativeProcessInventory, ObserveCalibration, Observed, OnParentExit,
+    OwnedProcess, ParentWatch, PersistenceAttempt, PlatformSupport, PolicyConfig, PolicyMachine,
+    PolicyState, PrivacyDefaults, ProcessIdentity, ProcessInterventionActuator,
+    REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode, ResilientJournal, RootOutcome,
+    RunIdentity, SamplingConfig, SecureJournal, SignalReason, SignalRecord, SignalResult,
+    SignalTarget, StdioMode, SupervisorOutcome, TerminalKind, TerminalOutcome,
+    TerminalSignalMonitor, TransitionRecord, UnavailableReason, VERSION, checkpoint_signal_usr1,
+    hangup_is_ignored, platform_support,
 };
 
 use crate::completion::{
@@ -69,14 +70,9 @@ pub fn execute(parsed: ParsedCli) -> RuntimeResult {
 }
 
 fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
-    let ready = match ClientReady::take(options.common.client_ready_fd) {
+    let ready = match client_ready(options.common.client_ready_fd) {
         Ok(ready) => ready,
-        Err(error) => {
-            return RuntimeResult::failure(
-                SupervisorOutcome::InvalidConfiguration,
-                &error.to_string(),
-            );
-        }
+        Err(result) => return result,
     };
     let sample_config = match sampling_config(&options.common) {
         Ok(config) => config,
@@ -208,14 +204,9 @@ fn initialize(
 }
 
 fn execute_run(options: &RunOptions) -> RuntimeResult {
-    let ready = match ClientReady::take(options.common.client_ready_fd) {
+    let ready = match client_ready(options.common.client_ready_fd) {
         Ok(ready) => ready,
-        Err(error) => {
-            return RuntimeResult::failure(
-                SupervisorOutcome::InvalidConfiguration,
-                &error.to_string(),
-            );
-        }
+        Err(result) => return result,
     };
     let (mut checkpoint_channel, checkpoint_endpoint, initial_request_id) =
         match checkpoint_channel() {
@@ -296,6 +287,9 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
         checkpoint_negotiation: CheckpointNegotiation::Pending,
         checkpoint_status: CheckpointStatus::NotNegotiated,
         checkpoint_at_ms: None,
+        checkpoint_request_id: None,
+        checkpoint_reason: None,
+        checkpoint_artifact: None,
         terminal_signals,
         parent_watch,
         started: Instant::now(),
@@ -553,6 +547,12 @@ struct RunRuntime<'a> {
     checkpoint_negotiation: CheckpointNegotiation,
     checkpoint_status: CheckpointStatus,
     checkpoint_at_ms: Option<u64>,
+    /// The correlation key of the one checkpoint request that reached the endpoint, if any.
+    checkpoint_request_id: Option<u64>,
+    /// The limit whose breach asked for the checkpoint, latched for any executed request.
+    checkpoint_reason: Option<SignalReason>,
+    /// The path-free artifact facts the worker attached to its authenticated acknowledgement.
+    checkpoint_artifact: Option<CheckpointArtifactRecord>,
     terminal_signals: TerminalSignalMonitor,
     /// The launching parent's identity, the watch decision, and the orphan time once observed.
     parent_watch: ParentWatchState,
@@ -736,6 +736,14 @@ impl RunRuntime<'_> {
         {
             match self.engine.actuator_mut().poll_checkpoint(now) {
                 Ok(observation) => {
+                    // Artifact facts ride the observation, never the policy event: they are the
+                    // worker's own claim about state it says it saved, and the policy machine
+                    // decides on the acknowledgement alone. The channel reports them only for an
+                    // authenticated completion, which is the same acknowledgement that moves the
+                    // recorded status to `AcknowledgedUnverifiedDurability` below.
+                    if let Some(artifact) = observation.artifact {
+                        self.checkpoint_artifact = Some(artifact.into());
+                    }
                     if let Some(event) = observation.event {
                         self.apply_event(event);
                     }
@@ -856,7 +864,17 @@ impl RunRuntime<'_> {
                 actuation_reason(record.action, self.intervention_cause, self.shutdown_reason);
             // Every signal sent to the owned group is the shutdown in flight; a cooperative
             // checkpoint request is not, so it never relabels one.
-            if !matches!(record.action, Actuation::Checkpoint { .. }) {
+            if let Actuation::Checkpoint { request_id, .. } = record.action {
+                // The cause is latched for any executed request, delivered or not: a run whose
+                // request never reached an endpoint still acted for a reason, and that is what a
+                // reader of the commonest report needs. The id is latched only on delivery,
+                // because it is a correlation key for state some worker was actually asked to
+                // save; a request that failed on the way out asked nobody for anything.
+                self.checkpoint_reason = reason;
+                if matches!(record.result, Ok(ActuationOutcome::Delivered)) {
+                    self.checkpoint_request_id = Some(request_id);
+                }
+            } else {
                 self.shutdown_reason = reason;
             }
             if let Some(status) = checkpoint_progress(
@@ -885,11 +903,9 @@ impl RunRuntime<'_> {
             JournalEntry::Checkpoint(CheckpointRecord {
                 status: self.checkpoint_status,
                 at_ms: self.checkpoint_at_ms,
-                // Latched from runtime state alongside checkpoint_status/checkpoint_at_ms in a
-                // follow-up change; explicit None for now.
-                request_id: None,
-                reason: None,
-                artifact: None,
+                request_id: self.checkpoint_request_id,
+                reason: self.checkpoint_reason,
+                artifact: self.checkpoint_artifact.clone(),
             }),
             JournalDurability::Sync,
         );
@@ -1574,6 +1590,13 @@ fn run_policy_config(options: &RunOptions) -> PolicyConfig {
         term_grace: TERM_GRACE,
         wall_time: options.wall_time,
     }
+}
+
+/// Claim the caller's readiness descriptor, or fail the command before anything is launched.
+fn client_ready(raw_descriptor: Option<i32>) -> Result<ClientReady, RuntimeResult> {
+    ClientReady::take(raw_descriptor).map_err(|error| {
+        RuntimeResult::failure(SupervisorOutcome::InvalidConfiguration, &error.to_string())
+    })
 }
 
 fn sampling_config(common: &CommonOptions) -> Result<SamplingConfig, RuntimeResult> {
