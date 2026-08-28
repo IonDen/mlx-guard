@@ -527,6 +527,57 @@ fn process_exit_overwrites_supervisor_error_so_the_runtime_must_latch_it() {
 }
 
 #[test]
+fn checkpoint_request_is_issued_at_most_once_per_run() {
+    // Catches losing the CheckpointRequested breach guard (policy.rs:408-410): without it, a
+    // footprint breach delivered while a checkpoint is already outstanding re-enters
+    // begin_graceful and queues a second Action::RequestCheckpoint for the same run.
+    let mut machine = PolicyMachine::enforce(config(true)).unwrap();
+    let mut all_actions = Vec::new();
+
+    all_actions.extend(machine.apply(sample(0, Some(100))));
+    all_actions.extend(machine.apply(sample(10, Some(101))));
+    assert_eq!(machine.state(), PolicyState::CheckpointRequested);
+
+    // A second footprint breach while the checkpoint is outstanding must not re-request.
+    let repeat_while_requested = machine.apply(sample(20, Some(120)));
+    assert!(
+        !repeat_while_requested
+            .iter()
+            .any(|action| matches!(action, Action::RequestCheckpoint { .. })),
+        "a breach while CheckpointRequested re-requested a checkpoint: {repeat_while_requested:?}"
+    );
+    all_actions.extend(repeat_while_requested);
+    assert_eq!(machine.state(), PolicyState::CheckpointRequested);
+
+    all_actions.extend(machine.apply(Event::CheckpointAck {
+        at: ms(30),
+        request_id: 1,
+        authenticated: true,
+    }));
+    assert_eq!(machine.state(), PolicyState::Terminating);
+
+    // A further breach after TERM has already been sent must not re-request either.
+    let repeat_while_terminating = machine.apply(sample(40, Some(120)));
+    assert!(
+        !repeat_while_terminating
+            .iter()
+            .any(|action| matches!(action, Action::RequestCheckpoint { .. })),
+        "a breach while Terminating re-requested a checkpoint: {repeat_while_terminating:?}"
+    );
+    all_actions.extend(repeat_while_terminating);
+    assert_eq!(machine.state(), PolicyState::Terminating);
+
+    let request_count = all_actions
+        .iter()
+        .filter(|action| matches!(action, Action::RequestCheckpoint { .. }))
+        .count();
+    assert_eq!(
+        request_count, 1,
+        "expected exactly one Action::RequestCheckpoint across the whole run: {all_actions:?}"
+    );
+}
+
+#[test]
 fn long_sleep_advances_one_safety_phase_per_observed_tick() {
     // Catches sleep recovery that emits checkpoint, TERM, and KILL from one stale wake-up.
     let mut settings = config(true);
