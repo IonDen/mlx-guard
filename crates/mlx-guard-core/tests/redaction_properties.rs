@@ -922,9 +922,9 @@ fn mutate_checkpoint(generator: &mut Generator, report: &mut ReportV1) {
     report.checkpoint = CheckpointRecord {
         status: STATUSES[generator.index(STATUSES.len())],
         at_ms: generator.bool().then(|| generator.next() % 10_000),
-        // 0063's request_id/reason/artifact land in a dedicated redaction row (ticket 0063 Task 4);
-        // left absent here so this general adversarial mutator does not fabricate coverage of a
-        // field no writer populates through this path yet.
+        // The checkpoint resume fields (request_id/reason/artifact) are covered by the dedicated
+        // worker-controlled-value row below; left absent here so this general adversarial mutator
+        // does not fabricate coverage of a field no writer populates through this path yet.
         request_id: None,
         reason: None,
         artifact: None,
@@ -1120,8 +1120,8 @@ fn adversarial_field_values_never_panic_validation() {
 // `size_bytes`'s serde attribute on `CheckpointArtifactRecord` from
 // `#[serde(default, skip_serializing_if = "Option::is_none")]` to an unconditional
 // `#[serde(skip_serializing)]`. The field vanishes from the serialized JSON regardless of value,
-// and this test's `is_some()` assertion below goes RED. Restoring the attribute returns it to
-// GREEN. See the task report for both captured outputs.
+// and this test's `is_u64()` assertion below goes RED (the field parses back as `null`, not a
+// number). Restoring the attribute returns it to GREEN.
 // ---------------------------------------------------------------------------------------------
 
 const ADVERSARIAL_SIZE_BYTES: &[u64] = &[0, 1, u64::MAX, 0xDEAD_BEEF_1234_5678];

@@ -50,11 +50,16 @@ endpoint. Normal exec closes the descriptor after the Python helper re-arms clos
 
 ## Persisted acknowledgement facts
 
-The echoed request ID, the intervention reason behind the request, and the acknowledgement's
-artifact facts now land in the report's `checkpoint` record alongside `status` and `at_ms`. The
-wire is unchanged: this is the same bounded, path-free frame described above, projected into the
-persisted copy rather than a new exchange. Paths and names have no wire representation, so they
-have no report representation either — only `kind` (`file`, `directory`, or `opaque`) and an
-optional byte count ever reach `checkpoint.artifact`. As with the live acknowledgement, the
-persisted copy is the worker's report, not independent proof that artifact bytes are complete or
-durable.
+The acknowledgement's echoed request ID and artifact facts now land in the report's `checkpoint`
+record alongside `status` and `at_ms`. The wire is unchanged: this is the same bounded, path-free
+frame described above, projected into the persisted copy rather than a new exchange. Paths and
+names have no wire representation, so they have no report representation either — only `kind`
+(`file`, `directory`, or `opaque`) and an optional byte count ever reach `checkpoint.artifact`. As
+with the live acknowledgement, the persisted `request_id` and `artifact` are the worker's report,
+not independent proof that artifact bytes are complete or durable.
+
+`checkpoint.reason` is a different kind of fact: it is the supervisor's own record of why it
+attempted a checkpoint (`footprint` or `wall_time`), latched locally whenever a checkpoint
+actuation was executed. It is never echoed by the worker and never carried on the wire, so it can
+be present even when no frame was exchanged at all — for example under `not_negotiated`, when the
+attempt targeted a channel whose handshake never completed.

@@ -83,9 +83,10 @@ if worker is not None:
 ```
 
 `poll()` invokes the callback on the caller's thread after SIGUSR1 announces a nonce- and
-request-bound request. The v0.1 supervisor allows **100 ms total** from request creation to receipt
-of the acknowledgement; `request.supervisor_deadline_ns` carries that monotonic deadline. The
-timeout is fixed and cannot be extended by callback progress. Python signal handlers run on the main
+request-bound request. The supervisor allows **1 s total by default** (`checkpoint_timeout_ms`/
+`--checkpoint-timeout` sets 10 ms to 60 s) from request creation to receipt of the
+acknowledgement; `request.supervisor_deadline_ns` carries that monotonic deadline. The timeout is
+fixed for the run and cannot be extended by callback progress. Python signal handlers run on the main
 thread and may not run while it is blocked in a long native `mx.eval()` call. Poll at short safe
 boundaries and make the callback finish within the remaining budget—for example, finalize an
 incrementally written checkpoint. Do not put an unbounded full-model save in the callback. An
@@ -109,7 +110,12 @@ A later process can join an interrupted run back to whatever the worker actually
 the persisted report:
 
 ```python
-checkpoint = result.report.payload["checkpoint"]
+from pathlib import Path
+
+import mlx_guard
+
+report = mlx_guard.load_report(Path("reports/train.json"))
+checkpoint = report.payload["checkpoint"]
 status = checkpoint["status"]
 request_id = checkpoint.get("request_id")
 
