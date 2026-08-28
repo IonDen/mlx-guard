@@ -60,6 +60,9 @@ fn ack_time_comes_only_from_an_acknowledged_checkpoint_record() {
     let checkpoint = CheckpointRecord {
         status: CheckpointStatus::AcknowledgedUnverifiedDurability,
         at_ms: Some(340),
+        request_id: None,
+        reason: None,
+        artifact: None,
     };
     let outcome = outcome_at(TerminalKind::PolicyIntervention, 1_000);
 
@@ -82,6 +85,9 @@ fn timed_out_checkpoint_yields_no_ack_interval() {
     let checkpoint = CheckpointRecord {
         status: CheckpointStatus::TimedOut,
         at_ms: Some(1_100),
+        request_id: None,
+        reason: None,
+        artifact: None,
     };
     let outcome = outcome_at(TerminalKind::PolicyIntervention, 1_200);
 

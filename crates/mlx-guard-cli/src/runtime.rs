@@ -885,6 +885,11 @@ impl RunRuntime<'_> {
             JournalEntry::Checkpoint(CheckpointRecord {
                 status: self.checkpoint_status,
                 at_ms: self.checkpoint_at_ms,
+                // Latched from runtime state alongside checkpoint_status/checkpoint_at_ms in a
+                // follow-up change; explicit None for now.
+                request_id: None,
+                reason: None,
+                artifact: None,
             }),
             JournalDurability::Sync,
         );
@@ -1262,6 +1267,10 @@ impl ObserveRuntime {
             JournalEntry::Checkpoint(CheckpointRecord {
                 status: CheckpointStatus::NotNegotiated,
                 at_ms: None,
+                // This static path never negotiates a checkpoint, so these stay None here too.
+                request_id: None,
+                reason: None,
+                artifact: None,
             }),
             JournalDurability::Sync,
         );
@@ -1449,6 +1458,10 @@ fn append_terminal(
         JournalEntry::Checkpoint(CheckpointRecord {
             status: CheckpointStatus::NotNegotiated,
             at_ms: None,
+            // A launch failure never reaches checkpoint negotiation, so these stay None here too.
+            request_id: None,
+            reason: None,
+            artifact: None,
         }),
         JournalDurability::Sync,
     )?;
