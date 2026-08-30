@@ -97,13 +97,15 @@ versions follow Semantic Versioning.
   immediately before delivery, matching every other direct signal this supervisor sends; a PID
   recycled inside the owned group between negotiation and delivery is refused as an invalid
   checkpoint endpoint rather than signalled. An endpoint whose process has already exited is now
-  refused the same way, immediately, instead of being signalled and left to burn the full checkpoint
-  timeout. A transient failure while inspecting the endpoint — the likeliest failure under exactly
-  the memory pressure this supervisor exists to police — now also cancels the checkpoint request and
-  escalates to termination, where previously nothing stood between the policy and the signal call.
-  Permission denial can now originate from either the inspection or the signal itself.
-  `OwnedProcess::negotiate_checkpoint_endpoint` in the core library now takes an inspected process
-  identity rather than a bare PID, an API-shape change for anyone embedding the crate directly.
+  recognized immediately too and refused before the signal is sent — reported as `process_missing`,
+  the value any other missing-target signal already uses — instead of being signalled and left to
+  burn the full checkpoint timeout. A transient failure while inspecting the endpoint — the likeliest
+  failure under exactly the memory pressure this supervisor exists to police — now also cancels the
+  checkpoint request and escalates to termination, where previously nothing stood between the policy
+  and the signal call. Permission denial can now originate from either the inspection or the signal
+  itself. `OwnedProcess::negotiate_checkpoint_endpoint` in the core library now takes an inspected
+  process identity rather than a bare PID, an API-shape change for anyone embedding the crate
+  directly.
 
 ## [0.1.0] - 2026-08-12
 
