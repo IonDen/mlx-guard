@@ -16,6 +16,25 @@ Only `SIGUSR1` or `SIGUSR2` can be configured for checkpoint delivery. `SIGINT`,
 job-control signals, and zero are rejected as collisions. The signal is sent only to the negotiated
 live root or cooperative endpoint; TERM and KILL continue to target the validated owned group.
 
+Delivery revalidates the endpoint's exact `(pid, start token)` immediately before signalling, so a
+PID recycled inside the owned group between negotiation and delivery is refused as an invalid
+checkpoint endpoint instead of receiving the signal — the same identity discipline every other direct
+signal in this supervisor already followed. Through the CLI the checkpoint endpoint is always the
+root process, held unreaped by the supervisor for the whole run, so its PID cannot be recycled there.
+This is a contract-conformance fix, not a live PID-reuse hole in the CLI: it matters to the core
+library API, where an embedder can negotiate an endpoint for a non-root member of the owned group.
+Inspection and signalling remain two separate steps, and macOS offers no `pidfd`-equivalent primitive
+to bind them atomically, so a PID reused inside that sub-millisecond window is still not detectable —
+see [identity and containment](IDENTITY_AND_CONTAINMENT.md).
+
+An endpoint whose process has already exited is refused at this same check, immediately, instead of
+receiving a signal that reaches nothing and only being noticed once the full checkpoint timeout
+elapses. A failure in the identity check itself — unreadable or unsupported process metadata, most
+likely under exactly the memory pressure this supervisor exists to police — now also refuses the
+request rather than falling through to a plain signal call. Both cases escalate straight to
+termination. Permission denial can now surface from either the inspection or the signal itself, and
+both are reported the same way.
+
 ## Wire format
 
 Every frame starts with a four-byte big-endian body length. Bodies are at most 128 bytes and contain
