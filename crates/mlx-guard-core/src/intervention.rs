@@ -581,6 +581,8 @@ mod tests {
     const REQUEST_FRAME_BYTES: usize = 58;
     const NONCE: CheckpointNonce = CheckpointNonce::from_bytes([7; 32]);
     const REQUEST_ID: u64 = 11;
+    /// Generous enough that a starved runner never trips it, short enough to fail rather than hang.
+    const READ_TIMEOUT: Duration = Duration::from_secs(5);
     /// The worker's own claim about saved state, distinctive enough that leaking it is unmistakable.
     const ARTIFACT: CheckpointArtifactMetadata = CheckpointArtifactMetadata {
         kind: CheckpointArtifactKind::Directory,
@@ -632,6 +634,12 @@ mod tests {
         // SAFETY: `raw_fd` hands back the live worker descriptor. The `ManuallyDrop` above means
         // the endpoint never closes it, so this stream is its sole owner and closes it once.
         let mut worker = unsafe { UnixStream::from_raw_fd(inherited.raw_fd()) };
+        // Both reads below demand an exact frame length from a blocking socket, and `cargo test`
+        // has no per-test timeout. Without this bound, a changed body size would hang the runner
+        // for its whole job budget instead of failing; with it, the read names the frame it wanted.
+        worker
+            .set_read_timeout(Some(READ_TIMEOUT))
+            .expect("a positive read timeout is accepted");
 
         channel.begin_negotiation().expect("hello is written");
         let mut hello = [0_u8; HELLO_FRAME_BYTES];
