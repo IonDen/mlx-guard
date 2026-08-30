@@ -55,12 +55,20 @@ $ echo $?
 ```
 
 ```console
-$ jq '[.samples[].aggregate_footprint_bytes.value] | max' reports/observe.json
+$ jq '[.samples[] | select(.aggregate_footprint_bytes.status == "available") | .aggregate_footprint_bytes.value] | max' reports/observe.json
 6930888
+$ jq '[.samples[] | select(.aggregate_footprint_bytes.status != "available")] | length' reports/observe.json
+0
 $ jq '.outcome.kind, .signals' reports/observe.json
 "child_exited"
 []
 ```
+
+A footprint in a report is a tagged value, not a bare number: `available` means the whole owned
+group was measured, and the other states record that it was not. The first command therefore filters
+on the status before taking a maximum, and the second counts the samples it skipped. A nonzero count
+means part of the run went unmeasured, and the peak you just read is the peak of what was seen.
+[Reports and privacy](../REPORTS.md) lists the states.
 
 A bare Python interpreter sleeping costs under 7 MiB here. `run` requires an explicit limit; set one
 well above that observed peak and nothing changes:
@@ -128,7 +136,7 @@ $ mlx-guard observe --report reports/observe-footprint.json -- python3 -c "impor
 mlx-guard: child_exited at 30115ms; 558 samples, 0 signals
 $ echo $?
 0
-$ jq '[.samples[].aggregate_footprint_bytes.value] | max' reports/observe-footprint.json
+$ jq '[.samples[] | select(.aggregate_footprint_bytes.status == "available") | .aggregate_footprint_bytes.value] | max' reports/observe-footprint.json
 216810072
 ```
 
@@ -170,34 +178,67 @@ that a demo limit meant to force a clean TERM has to sit close to a real peak, n
 
 The ladder above uses a throwaway command so every number in it could be captured fresh for this
 page. Real workloads look the same from `mlx-guard`'s side, a literal argument vector and a byte
-limit, just with a limit chosen from your own measurements instead of a three-second sleep.
+limit, just with a limit chosen from your own measurements instead of a three-second sleep. Neither
+recipe below prints a limit, because the limit is the one part nobody can write for you: measure
+your own command and substitute the number.
 
 A small LoRA fine-tune with `mlx-lm`:
 
 ```bash
-mlx-guard run --max-footprint 12GiB --report reports/lora-finetune.json -- \
+mlx-guard run --max-footprint <observed peak + headroom> --report reports/lora-finetune.json -- \
   uvx --from mlx-lm mlx_lm.lora \
     --model mlx-community/Qwen2.5-0.5B-Instruct-4bit \
-    --train --data ./data --iters 200 --adapter-path adapters
+    --train --data mlx-community/wikisql --iters 200 --adapter-path adapters
 ```
 
-An `mflux` image generation:
+An `mflux` image generation, quantized to 8 bits:
 
 ```bash
-mlx-guard run --max-footprint 12GiB --report reports/mflux-generate.json -- \
-  mflux-generate --model schnell --prompt "a lighthouse at dusk" \
+mlx-guard run --max-footprint <observed peak + headroom> --report reports/mflux-generate.json -- \
+  mflux-generate --model schnell --quantize 8 --prompt "a lighthouse at dusk" \
     --steps 4 --seed 42 --output out.png
 ```
 
-Choose the limit the same way for either one: run the real command under `observe` first with
-representative arguments, read the peak footprint back out of the report the way the ladder above
-does, then set `--max-footprint` above that peak with headroom for run-to-run variation, never a
-fraction of total machine memory. The 12 GiB above is a starting point for a small quantized model
-on a 32 GB Mac, not a measurement of yours; recalibrate for your own model, batch size, and machine.
-These are the recipes the maintainers' in-house trial exercises end to end on the reference host
-(M1 Max, 32 GB). Their output is real workload output, not something this page can fabricate,
-so none is pasted here; the report shapes captured from the throwaway demo command above are what an
-actual run of either one produces.
+That `--quantize 8` is load-bearing. `mflux-generate` quantizes nothing by default, so leaving it
+off loads FLUX.1-schnell at the precision it ships in, which is a different workload with a
+different footprint from the one an 8-bit run measures. Whichever you choose, measure the
+configuration you actually intend to enforce.
+
+### Choosing the limit
+
+Run the real command under `observe` with representative arguments, read the peak out of the report
+the way the ladder above does, and set `--max-footprint` above it with headroom for run-to-run
+variation, never as a fraction of total machine memory. Repeat the observe run rather than trusting
+one of them: the number you want is the highest repeatable peak, not whichever peak the first run
+happened to produce.
+
+Two details decide whether the peak you read is the peak that matters.
+
+The first is how long the report remembers. Sample history is a ring of the most recent 4,096
+windows, and each new sample evicts the oldest, so at the default 50 ms interval a report holds
+about three and a half minutes. An MLX workload spends its highest footprint early, while weights
+load and the first step compiles, so observe a longer run at the default and that peak is gone
+before the command exits. You would be calibrating from the steady-state tail, and the enforcing run
+would trip during load. Size the interval so `4096 × interval` covers the whole run:
+`--sample-interval 1s` reaches about 68 minutes, and 10s is the maximum the CLI accepts. Sampling
+less often also means a spike that rises and falls between two samples is one the supervisor never
+sees, so widen the interval deliberately rather than by default.
+
+The second is that MLX holds memory you did not ask it to hold. OS-accounted footprint includes
+MLX's retained buffer cache, and both tools above ship knobs that move it: `mflux-generate` has
+`--low-ram` and `--mlx-cache-limit-gb`, and `mlx_lm.lora` has `--clear-cache-threshold`. Each of
+them changes the number `observe` reports. Measure with the same cache settings the enforced run
+will use, or the limit you derive belongs to a workload you are not running.
+
+Recalibrate after a change in the workload, in MLX, in macOS, or in the machine.
+[Observe and calibration](../OBSERVE_AND_CALIBRATION.md) covers the artifact and the partial-sample
+rules in full.
+
+Fine-tunes and generations of this shape are what the maintainers' in-house trial exercises end to
+end on the reference host (M1 Max, 32 GB). Their output is real workload output, not something this
+page can fabricate, so none is pasted here, and the limit is left as a placeholder for the same
+reason: the peak belongs to your machine. The report shapes captured from the throwaway demo command
+above are what an actual run of either one produces.
 
 One distinction matters between the two halves of this page. Every intervention above was *forced*:
 a wall-time limit shorter than the sleep, or a footprint limit set deliberately close to the

@@ -42,17 +42,19 @@ def train() -> None:
     state = {"step": 0}
 
     def save_checkpoint(request: mlx_guard.CheckpointRequest) -> mlx_guard.CheckpointResponse:
+        CHECKPOINTS.mkdir(mode=0o700, exist_ok=True)
         directory = CHECKPOINTS / str(request.request_id)
-        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        directory.mkdir(mode=0o700, parents=False, exist_ok=True)
         payload = directory / "step"
         with payload.open("w") as handle:
             handle.write(f"{state['step']}\n")
             handle.flush()
             os.fsync(handle.fileno())
+        saved = sum(entry.stat().st_size for entry in directory.iterdir() if entry.is_file())
         return mlx_guard.CheckpointResponse.completed(
             mlx_guard.CheckpointArtifact(
                 mlx_guard.CheckpointArtifactKind.DIRECTORY,
-                size_bytes=payload.stat().st_size,
+                size_bytes=saved,
             )
         )
 
@@ -107,19 +109,37 @@ script runnable on its own. The callback runs on whichever thread calls `poll()`
 durability decision: it writes, it flushes, it fsyncs, and only then does it return
 `CheckpointResponse.completed()`. Naming the directory after `request.request_id` is the whole
 resume mechanism, since the id is the only thing the report and the worker's own filesystem have in
-common. Artifact metadata is deliberately path-free, carrying a kind and an optional size and
-nothing that could leak a name. The acknowledgement budget is fixed for the run and cannot be
-extended by a callback that is making progress, so a real loop polls at safe boundaries and
-finalizes an incrementally written checkpoint rather than starting a full model save from scratch.
-The [Python API](../PYTHON_API.md#cooperative-checkpoints) covers the threading and deadline rules
-in full.
+common. The checkpoints root is created on its own line, and the per-request directory with
+`parents=False`, because `mkdir(parents=True)` applies its mode to the leaf alone and leaves any
+parent it had to create world-listable. Artifact metadata is deliberately path-free, carrying a kind
+and an optional size and nothing that could leak a name; the size reported here sums the files under
+the directory, so the same callback still says something true once a real checkpoint is more than
+one file. The acknowledgement budget is fixed for the run and cannot be extended by a callback that
+is making progress, so a real loop polls at safe boundaries and finalizes an incrementally written
+checkpoint rather than starting a full model save from scratch. The
+[Python API](../PYTHON_API.md#cooperative-checkpoints) covers the threading and deadline rules in
+full.
+
+An MLX workload asks two more things of that loop. The first is that the callback not allocate. Put
+an `mx.eval(model.parameters(), optimizer.state)` at the same boundary you poll on, so the callback
+serializes arrays that are already materialized instead of forcing a lazy graph to evaluate, and
+allocate, at the moment memory is already what went wrong; `mx.clear_cache()` before the save hands
+MLX's retained buffers back and leaves the save some room. The second is that the budget match a
+real step. Size `checkpoint_timeout_ms` against your longest step plus the time that save takes
+rather than leaving it at the one-second default: the SIGUSR1 handler only sets a flag, `poll()`
+does the work, and a main thread inside a long `mx.eval()` reaches neither until that call returns.
+A budget shorter than one step is a budget the worker cannot meet, and the supervisor escalates when
+it expires.
 
 The limit above is set at 2 GiB so that it never fires, and the intervention is forced with a
 two-second wall-time budget instead. That is deliberate: a footprint limit set far below what a
 process actually uses lands in the emergency band and produces an immediate KILL with no checkpoint
 request at all, which is the wrong shape to demonstrate. A wall-time expiry always takes the
-graceful route. A real footprint breach takes that same route, and reads the same way in the report
-below except for `footprint` in place of `wall_time`. If you want to force one on purpose, the
+graceful route. A real footprint breach takes that same route only while it stays inside the band:
+two consecutive samples at or above the limit but under `1.1 ×` the limit. A sample that clears
+`1.1 ×` is an emergency, so the limit has to leave enough margin that one MLX allocation cannot
+carry the process past that multiple between two samples. Inside the band the report reads the same
+as below, with `footprint` in place of `wall_time`. If you want to force one on purpose, the
 [wrapped-command page](WRAP_A_COMMAND.md#optional-forcing-a-footprint-intervention-instead)
 explains the band arithmetic.
 
@@ -130,13 +150,13 @@ this repository. Timings and the request id differ from run to run; the shape do
 
 ```console
 $ python adapter_demo.py
-mlx-guard: policy_intervention at 2171ms; 39 samples, 2 signals
+mlx-guard: policy_intervention at 2176ms; 40 samples, 2 signals
 exit code: 75
 outcome: policy_intervention
 {
   "status": "acknowledged_unverified_durability",
-  "at_ms": 2094,
-  "request_id": 4929558223165305186,
+  "at_ms": 2109,
+  "request_id": 16447506383078896645,
   "reason": "wall_time",
   "artifact": {
     "kind": "directory",
@@ -148,17 +168,17 @@ outcome: policy_intervention
 The two signals that run recorded are the whole negotiation:
 
 ```console
-$ jq '.signals' reports/adapter-demo-27812.json
+$ jq '.signals' reports/adapter-demo-51961.json
 [
   {
-    "at_ms": 2021,
+    "at_ms": 2039,
     "signal": 30,
     "target": "cooperative_endpoint",
     "result": "delivered",
     "reason": "wall_time"
   },
   {
-    "at_ms": 2094,
+    "at_ms": 2109,
     "signal": 15,
     "target": "owned_process_group",
     "result": "delivered",
@@ -167,14 +187,14 @@ $ jq '.signals' reports/adapter-demo-27812.json
 ]
 ```
 
-At 2021 ms the wall-time budget expired and SIGUSR1 (30) went to the cooperative endpoint alone,
+At 2039 ms the wall-time budget expired and SIGUSR1 (30) went to the cooperative endpoint alone,
 never to the group. The worker's next `poll()` wrote its file, fsynced it, and acknowledged. That
-acknowledgement landed at 2094 ms, and TERM went to the owned process group in the same
+acknowledgement landed at 2109 ms, and TERM went to the owned process group in the same
 millisecond. The run ended with exit code 75, the policy-intervention code, and the workload's own
 state was on disk under the id the report names:
 
 ```console
-$ cat checkpoints/4929558223165305186/step
+$ cat checkpoints/16447506383078896645/step
 37
 ```
 
@@ -189,7 +209,11 @@ declare about what it wrote.
 A later process joins the interrupted run back to that saved state from the persisted report alone.
 The [resume walkthrough](../PYTHON_API.md#resuming-after-an-intervention) shows the match to write,
 including why `timed_out` deserves the same treatment as an acknowledgement: the supervisor giving
-up on the wait does not mean the worker gave up on the save.
+up on the wait does not mean the worker gave up on the save. Give the machine a moment before
+launching that resume, though: a released Metal object can stay charged by the OS for more than ten
+seconds after the process holding it is gone (see [sampling](../SAMPLING.md)), so a resume started
+the instant the first run exits can measure the old run's footprint alongside its own and trip its
+limit on memory nothing is using any more.
 
 ## What an adapter must and must not claim
 
