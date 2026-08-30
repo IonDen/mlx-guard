@@ -549,3 +549,176 @@ fn actuation_for(action: Action) -> Option<Actuation> {
         | Action::ReportSupervisorError { .. } => None,
     }
 }
+
+// These live in the crate because no external caller can play the worker: `raw_fd` is
+// `pub(crate)` and no fixture mode ever acknowledges anything but `Completed`, so a rejected
+// acknowledgement carrying artifact facts has no integration-test representation.
+#[cfg(all(test, unix))]
+#[allow(unsafe_code)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+    use std::io::{Read, Write};
+    use std::mem::ManuallyDrop;
+    use std::os::fd::FromRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
+
+    use super::{
+        ActuationFailure, ActuationKind, CheckpointBinding, CheckpointObservation, Event,
+        ProcessInterventionActuator,
+    };
+    use crate::{
+        CheckpointAcknowledgement, CheckpointArtifactKind, CheckpointArtifactMetadata,
+        CheckpointChannel, CheckpointHello, CheckpointNonce, CheckpointRequest,
+        CheckpointWorkerStatus, LaunchOptions, NativeProcessInventory, OwnedProcess,
+        ProcessIdentity, StdioMode, checkpoint_signal_usr1,
+    };
+
+    /// 4-byte length header plus the 38-byte negotiation body.
+    const HELLO_FRAME_BYTES: usize = 42;
+    /// 4-byte length header plus the 54-byte request body.
+    const REQUEST_FRAME_BYTES: usize = 58;
+    const NONCE: CheckpointNonce = CheckpointNonce::from_bytes([7; 32]);
+    const REQUEST_ID: u64 = 11;
+    /// The worker's own claim about saved state, distinctive enough that leaking it is unmistakable.
+    const ARTIFACT: CheckpointArtifactMetadata = CheckpointArtifactMetadata {
+        kind: CheckpointArtifactKind::Directory,
+        size_bytes: Some(4_096),
+    };
+
+    fn ms(value: u64) -> Duration {
+        Duration::from_millis(value)
+    }
+
+    /// Launch one inert, self-limiting child purely to mint a validated owned group.
+    ///
+    /// `poll_checkpoint` reads the inherited descriptor and never signals, so this process is only
+    /// here to supply the `ProcessControlHandle` and `CheckpointEndpoint` the actuator is built
+    /// from. It is killed and reaped when the returned value drops.
+    fn inert_root() -> OwnedProcess {
+        OwnedProcess::launch(&LaunchOptions {
+            command: vec![OsString::from("/bin/sleep"), OsString::from("10")],
+            cwd: None,
+            clear_env: false,
+            env: BTreeMap::new(),
+            stdin: StdioMode::Null,
+            stdout: StdioMode::Null,
+            stderr: StdioMode::Null,
+        })
+        .expect("/bin/sleep launches into its own process group")
+    }
+
+    fn root_identity(process: &OwnedProcess) -> ProcessIdentity {
+        NativeProcessInventory::new()
+            .inspect(process.root_pid().cast_signed())
+            .expect("launched root process is inspectable")
+            .identity
+    }
+
+    /// Run one full cooperative exchange whose acknowledgement carries `ARTIFACT`, and return what
+    /// `poll_checkpoint` made of it.
+    ///
+    /// The worker is this test: the request is written straight onto the channel rather than
+    /// through `Actuation::Checkpoint`, so no signal is ever delivered and the exchange stays
+    /// deterministic.
+    fn observe_acknowledgement(
+        process: &OwnedProcess,
+        status: CheckpointWorkerStatus,
+    ) -> CheckpointObservation {
+        let (mut channel, inherited) =
+            CheckpointChannel::pair(NONCE).expect("socketpair creation succeeds");
+        let inherited = ManuallyDrop::new(inherited);
+        // SAFETY: `raw_fd` hands back the live worker descriptor. The `ManuallyDrop` above means
+        // the endpoint never closes it, so this stream is its sole owner and closes it once.
+        let mut worker = unsafe { UnixStream::from_raw_fd(inherited.raw_fd()) };
+
+        channel.begin_negotiation().expect("hello is written");
+        let mut hello = [0_u8; HELLO_FRAME_BYTES];
+        worker.read_exact(&mut hello).expect("hello frame arrives");
+        let ready = CheckpointHello::decode(&hello)
+            .expect("supervisor hello decodes")
+            .ready_frame();
+        worker.write_all(&ready).expect("readiness is written");
+        assert!(channel.poll_ready().expect("readiness frame decodes"));
+
+        channel
+            .begin_request(REQUEST_ID, ms(0), ms(50))
+            .expect("request is written");
+        let mut frame = [0_u8; REQUEST_FRAME_BYTES];
+        worker
+            .read_exact(&mut frame)
+            .expect("request frame arrives");
+        let request = CheckpointRequest::decode(&frame).expect("request decodes");
+        assert_eq!(request.request_id(), REQUEST_ID);
+        let acknowledgement =
+            CheckpointAcknowledgement::for_request(&request, status, Some(ARTIFACT));
+        assert_eq!(acknowledgement.artifact, Some(ARTIFACT));
+        worker
+            .write_all(&acknowledgement.encode())
+            .expect("acknowledgement is written");
+
+        let endpoint = process
+            .negotiate_checkpoint_endpoint(root_identity(process))
+            .expect("the launched root is its own group leader");
+        let binding = CheckpointBinding::new(&mut channel, endpoint, checkpoint_signal_usr1());
+        let mut actuator = ProcessInterventionActuator::new(process, Some(binding));
+
+        // One socketpair write is delivered whole, but a short read would only look like "nothing
+        // yet", so poll until the channel resolves rather than trusting a single attempt.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let observation = actuator
+                .poll_checkpoint(ms(20))
+                .expect("the inherited descriptor is readable");
+            if observation.event.is_some() || !observation.rejections.is_empty() {
+                return observation;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the acknowledgement never reached the supervisor"
+            );
+        }
+    }
+
+    #[test]
+    fn rejected_acknowledgement_drops_the_artifact_the_worker_claimed() {
+        // Catches `poll_checkpoint` forwarding acknowledgement artifact facts on any status
+        // instead of only on `Completed`, which would let a failed checkpoint publish a
+        // resume artifact the worker never saved.
+        let process = inert_root();
+
+        let observation = observe_acknowledgement(&process, CheckpointWorkerStatus::Failed);
+
+        assert_eq!(observation.artifact, None);
+        assert_eq!(
+            observation.event,
+            Some(Event::ActuationFailed {
+                at: ms(20),
+                action: ActuationKind::Checkpoint,
+                failure: ActuationFailure::CheckpointRejected,
+            })
+        );
+        assert!(observation.rejections.is_empty());
+    }
+
+    #[test]
+    fn completed_acknowledgement_carries_the_artifact_through() {
+        // Positive control for the test above: catches an artifact that never reaches the
+        // supervisor at all, which would make the rejected-acknowledgement pin vacuous.
+        let process = inert_root();
+
+        let observation = observe_acknowledgement(&process, CheckpointWorkerStatus::Completed);
+
+        assert_eq!(observation.artifact, Some(ARTIFACT));
+        assert_eq!(
+            observation.event,
+            Some(Event::CheckpointAck {
+                at: ms(20),
+                request_id: REQUEST_ID,
+                authenticated: true,
+            })
+        );
+        assert!(observation.rejections.is_empty());
+    }
+}

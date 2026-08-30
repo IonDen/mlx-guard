@@ -10,7 +10,7 @@ use mlx_guard_core::{NativeProcessInventory, OwnedProcess, ProcessIdentity};
 /// Inspect a launched root process and bind the start token it is running under.
 ///
 /// Tests that negotiate a checkpoint endpoint need the root's exact `(pid, start token)`; this is
-/// the one place that inspection lives so the three real-process suites cannot drift apart.
+/// the one place that inspection lives so the four real-process suites cannot drift apart.
 ///
 /// # Panics
 ///

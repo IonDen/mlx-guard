@@ -1,4 +1,5 @@
 import dataclasses
+import json
 import signal
 import subprocess
 import sys
@@ -698,6 +699,34 @@ with worker:
             )
         )
         self.assertNotIn(path_canary, rendered)
+
+    def test_report_loader_preserves_checkpoint_resume_metadata(self) -> None:
+        # Catches a reader that drops or rewrites checkpoint fields it does not itself model,
+        # which would strip the request_id a consumer correlates its saved artifact against.
+        # The fixture is resolved from __file__ rather than the working directory because the
+        # wheel proof runs this suite from a temporary directory outside the repository.
+        fixture = (
+            Path(__file__).resolve().parents[2]
+            / "crates/mlx-guard-core/tests/fixtures/report-v1-resume.json"
+        )
+        decoded = json.loads(fixture.read_text(encoding="utf-8"))
+        self.assertEqual(decoded["checkpoint"]["request_id"], 42)
+        # The loader also cross-checks package_version against the installed binary, so pin it to
+        # what is installed and keep this test about resume metadata, not the release version bump.
+        decoded["package_version"] = mlx_guard.binary_version()
+
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary, "resume.json")
+            path.write_text(json.dumps(decoded), encoding="utf-8")
+            # load_report demands euid ownership and mode exactly 0600; the committed fixture is
+            # checked out world-readable, so it cannot be loaded in place.
+            path.chmod(0o600)
+            report = mlx_guard.load_report(path)
+
+        checkpoint = report.payload["checkpoint"]
+        self.assertIsInstance(checkpoint, Mapping)
+        assert isinstance(checkpoint, Mapping)
+        self.assertEqual(checkpoint["request_id"], 42)
 
 
 if __name__ == "__main__":
