@@ -12,6 +12,7 @@ use mlx_guard_core::{
 };
 #[cfg(target_os = "macos")]
 use mlx_guard_core::{FootprintSampler, IdentityTracker, NativeProcessInventory, SampleOutcome};
+use mlx_guard_test_support::root_identity;
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
 
@@ -105,7 +106,7 @@ fn request_and_signal(
         .begin_request(1, epoch.elapsed(), epoch.elapsed() + config.timeout())
         .unwrap();
     let endpoint = process
-        .negotiate_checkpoint_endpoint(process.root_pid())
+        .negotiate_checkpoint_endpoint(root_identity(process))
         .unwrap();
     assert_eq!(
         process
@@ -230,7 +231,7 @@ fn endpoint_exit_and_protocol_cancellation_are_typed() {
     let (mut cancelled_process, mut output, mut cancelled_channel) = launch("checkpoint-cancel", 1);
     cancelled_channel.cancel(Instant::now().elapsed()).unwrap();
     let endpoint = cancelled_process
-        .negotiate_checkpoint_endpoint(cancelled_process.root_pid())
+        .negotiate_checkpoint_endpoint(root_identity(&cancelled_process))
         .unwrap();
     cancelled_process
         .signal_checkpoint(&endpoint, signal_config(Duration::from_millis(50)).signal())
@@ -250,11 +251,8 @@ fn bounded_checkpoint_allocation_remains_observable_until_acknowledged() {
     const ALLOCATION_BYTES: u64 = 8 * 1024 * 1024;
     let (mut process, _output, mut channel) = launch("checkpoint-allocate", ALLOCATION_BYTES);
     let inventory = NativeProcessInventory::new();
-    let root = inventory
-        .inspect(process.root_pid().cast_signed())
-        .unwrap()
-        .identity;
-    let tracker = IdentityTracker::new(root, process.process_group_id()).unwrap();
+    let tracker =
+        IdentityTracker::new(root_identity(&process), process.process_group_id()).unwrap();
     let config = mlx_guard_core::SamplingConfig::new(
         Duration::from_millis(10),
         Duration::from_millis(100),

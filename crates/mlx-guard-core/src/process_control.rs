@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
+use crate::identity::{IdentityUnavailable, NativeProcessInventory, ProcessIdentity};
 use crate::{CHECKPOINT_FD_ENV, CheckpointWorkerEndpoint, SignalNumber, SignalResult};
 
 const CHECKPOINT_CHILD_FD: libc::c_int = 198;
@@ -544,7 +545,8 @@ impl fmt::Display for ControlError {
                 "only SIGHUP, SIGINT, and SIGTERM can be forwarded as terminal signals"
             }
             ControlErrorKind::InvalidCheckpointEndpoint => {
-                "checkpoint endpoint is not a live member of the owned process group"
+                "checkpoint endpoint is not the identity it was negotiated for, or is not a live \
+                 member of the owned process group"
             }
             ControlErrorKind::GroupQueryFailed => "owned process-group query failed",
             ControlErrorKind::TerminalSignalMonitorUnavailable => {
@@ -570,10 +572,12 @@ impl Error for ControlError {
     }
 }
 
+/// A negotiated cooperative endpoint bound to the exact `(pid, start token)` it was negotiated for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CheckpointEndpoint {
     pid: NonZeroI32,
     process_group: NonZeroI32,
+    start_abstime: u64,
 }
 
 /// Copyable authority for signalling and querying one validated owned process group.
@@ -646,15 +650,28 @@ impl ProcessControlHandle {
 
     /// Send a checkpoint request only to its validated cooperative endpoint.
     ///
+    /// Delivery revalidates the endpoint's exact `(pid, start token)` immediately before signalling,
+    /// so a recycled PID inside the owned group is refused instead of interrupted. The process-group
+    /// membership check runs first and keeps its own failure class; the group is never derived from
+    /// the inspection, because an exited process reports process group `0` by design.
+    ///
     /// # Errors
     ///
-    /// Returns [`ControlError`] if the endpoint no longer belongs to this group or delivery fails.
+    /// Returns [`ControlError`] if the endpoint no longer belongs to this group, no longer names the
+    /// negotiated process, or delivery fails.
     pub fn signal_checkpoint(
         self,
         endpoint: &CheckpointEndpoint,
         signal: SignalNumber,
     ) -> Result<SignalResult, ControlError> {
         if endpoint.process_group != self.process_group {
+            return Err(ControlError::new(
+                ControlErrorKind::InvalidCheckpointEndpoint,
+            ));
+        }
+        // A negative target would signal a whole process group, so positivity is checked explicitly
+        // and not merely inherited from negotiation.
+        if endpoint.pid.get() <= 0 {
             return Err(ControlError::new(
                 ControlErrorKind::InvalidCheckpointEndpoint,
             ));
@@ -666,7 +683,27 @@ impl ProcessControlHandle {
                 ControlErrorKind::InvalidCheckpointEndpoint,
             ));
         }
-        signal_raw(endpoint.pid.get(), signal)
+        let expected = ProcessIdentity {
+            pid: endpoint.pid.get(),
+            start_abstime: endpoint.start_abstime,
+        };
+        NativeProcessInventory::new()
+            .signal_identity(expected, signal)
+            .or_else(|error| match error {
+                // A PID that now names another process is the endpoint refusal this contract owes.
+                IdentityUnavailable::Stale => Err(ControlError::new(
+                    ControlErrorKind::InvalidCheckpointEndpoint,
+                )),
+                // The two outcomes below keep the values `signal_raw` already reported for ESRCH and
+                // EPERM, so no shipped `signals[].result` moves.
+                IdentityUnavailable::Disappeared => Ok(SignalResult::ProcessMissing),
+                IdentityUnavailable::PermissionDenied => Ok(SignalResult::PermissionDenied),
+                IdentityUnavailable::MalformedData
+                | IdentityUnavailable::Unsupported
+                | IdentityUnavailable::Unavailable => {
+                    Err(ControlError::new(ControlErrorKind::SignalFailed))
+                }
+            })
     }
 
     fn signal_group(self, signal: SignalNumber) -> Result<SignalResult, ControlError> {
@@ -944,16 +981,19 @@ impl OwnedProcess {
 
     /// Validate a negotiated checkpoint endpoint as a live member of this group.
     ///
+    /// The caller's already-established identity is taken on trust here and only process-group
+    /// membership is checked; the start token it carries is revalidated at delivery by
+    /// [`ProcessControlHandle::signal_checkpoint`], which is this contract's single point of truth.
+    ///
     /// # Errors
     ///
     /// Returns [`ControlError`] when the PID is zero, invalid, gone, or outside the owned group.
     pub fn negotiate_checkpoint_endpoint(
         &self,
-        pid: u32,
+        identity: ProcessIdentity,
     ) -> Result<CheckpointEndpoint, ControlError> {
-        let raw_pid = i32::try_from(pid)
-            .ok()
-            .and_then(NonZeroI32::new)
+        let raw_pid = NonZeroI32::new(identity.pid)
+            .filter(|pid| pid.get() > 0)
             .ok_or_else(|| ControlError::new(ControlErrorKind::InvalidCheckpointEndpoint))?;
         // SAFETY: `raw_pid` is a validated positive PID and no pointers are involved.
         let observed_group = unsafe { libc::getpgid(raw_pid.get()) };
@@ -965,6 +1005,7 @@ impl OwnedProcess {
         Ok(CheckpointEndpoint {
             pid: raw_pid,
             process_group: self.process_group,
+            start_abstime: identity.start_abstime,
         })
     }
 
@@ -972,7 +1013,8 @@ impl OwnedProcess {
     ///
     /// # Errors
     ///
-    /// Returns [`ControlError`] if the endpoint no longer belongs to this group or delivery fails.
+    /// Returns [`ControlError`] if the endpoint no longer belongs to this group, no longer names the
+    /// negotiated process, or delivery fails.
     pub fn signal_checkpoint(
         &self,
         endpoint: &CheckpointEndpoint,
