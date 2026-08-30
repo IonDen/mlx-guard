@@ -161,6 +161,8 @@ for required in \
     "${package_name}/docs/RELEASE.md" \
     "${package_name}/docs/SUPPORT.md" \
     "${package_name}/docs/THREAT_MODEL.md" \
+    "${package_name}/docs/integrations/PYTHON_ADAPTER.md" \
+    "${package_name}/docs/integrations/WRAP_A_COMMAND.md" \
     "${package_name}/python/mlx_guard/_binary.py" \
     "${package_name}/python/mlx_guard/_checkpoint.py" \
     "${package_name}/python/mlx_guard/_client.py"; do

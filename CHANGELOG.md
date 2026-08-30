@@ -46,6 +46,10 @@ versions follow Semantic Versioning.
   (path-free `kind`/`size_bytes` facts echoed from a completed acknowledgement), so a later
   process can join an interrupted run back to whatever the worker actually saved.
   `docs/PYTHON_API.md` documents the id-tagging idiom and the resulting resume flow.
+- Two integration guides under `docs/integrations/`. `WRAP_A_COMMAND.md` takes a command-line
+  workload from an unsupervised run to a deliberately forced intervention without touching the
+  workload itself, and `PYTHON_ADAPTER.md` shows a library author how to launch a workload under
+  supervision, negotiate a cooperative checkpoint, and return a report a later run can resume from.
 
 ### Changed
 
