@@ -652,8 +652,9 @@ impl ProcessControlHandle {
     ///
     /// Delivery revalidates the endpoint's exact `(pid, start token)` immediately before signalling,
     /// so a recycled PID inside the owned group is refused instead of interrupted. The process-group
-    /// membership check runs first and keeps its own failure class; the group is never derived from
-    /// the inspection, because an exited process reports process group `0` by design.
+    /// membership check runs first and shares the invalid-endpoint failure class with a stale start
+    /// token; both stay distinct from the inspection's own failure classes. The group is never
+    /// derived from the inspection, because an exited process reports process group `0` by design.
     ///
     /// # Errors
     ///
@@ -676,7 +677,8 @@ impl ProcessControlHandle {
                 ControlErrorKind::InvalidCheckpointEndpoint,
             ));
         }
-        // SAFETY: the endpoint PID is positive and validated; this recheck narrows PID-reuse risk.
+        // SAFETY: the endpoint PID is positive and validated. This recheck proves only current
+        // group membership; the start-token comparison below is what refuses a recycled PID.
         let observed_group = unsafe { libc::getpgid(endpoint.pid.get()) };
         if observed_group != self.process_group.get() {
             return Err(ControlError::new(

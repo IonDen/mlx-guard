@@ -202,11 +202,13 @@ rest as evidence." [The identity contract](https://github.com/IonDen/mlx-guard/b
 binds every observed process to `(pid, process_start_abstime)`, so a member whose start token
 changed is recorded as stale rather than counted or trusted.
 
-The signal paths deserve a precise statement, because their guarantees differ. TERM and KILL go
-to the retained, launch-validated numeric process group; a checkpoint request is rechecked for
-group membership immediately before delivery. Neither re-proves a start token at the instant of
-the system call. A reused PID inside a live group, or a reused group number after the owned group
-empties, therefore remains a real if narrow window on a platform with no stable process handle.
+The signal paths deserve a precise statement, because their guarantees differ. In the v0.1.0
+runtime, TERM and KILL go to the retained, launch-validated numeric process group; a checkpoint
+request is rechecked for group membership immediately before delivery
+([source at v0.1.0](https://github.com/IonDen/mlx-guard/blob/v0.1.0/crates/mlx-guard-core/src/process_control.rs)).
+Neither re-proves a start token at the instant of the system call. A reused PID inside a live
+group, or a reused group number after the owned group empties, therefore remains a real if narrow
+window on a platform with no stable process handle.
 
 Descendants are discovered on every sample. One observed outside the owned group is recorded as
 an escape, and that flag stands for the whole run, so a later clean group-empty check can never

@@ -27,9 +27,12 @@ Inspection and signalling remain two separate steps, and macOS offers no `pidfd`
 to bind them atomically, so a PID reused inside that sub-millisecond window is still not detectable —
 see [identity and containment](IDENTITY_AND_CONTAINMENT.md).
 
-An endpoint whose process has already exited is refused at this same check, immediately, instead of
-receiving a signal that reaches nothing and only being noticed once the full checkpoint timeout
-elapses. A failure in the identity check itself — unreadable or unsupported process metadata, most
+An endpoint whose process has already exited is refused earlier still, at the group membership
+check, because macOS reports no process group for an exited process. The identity check covers the
+remaining window: an endpoint that exits between that membership check and delivery is reported as
+`process_missing` rather than signalled, since delivery to an exited process succeeds at the system
+call and would otherwise wait out the whole checkpoint timeout for an acknowledgement that cannot
+arrive. A failure in the identity check itself — unreadable or unsupported process metadata, most
 likely under exactly the memory pressure this supervisor exists to police — now also refuses the
 request rather than falling through to a plain signal call. Both cases escalate straight to
 termination. Permission denial can now surface from either the inspection or the signal itself, and
