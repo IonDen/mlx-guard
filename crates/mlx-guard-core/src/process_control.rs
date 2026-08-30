@@ -654,7 +654,8 @@ impl ProcessControlHandle {
     /// so a recycled PID inside the owned group is refused instead of interrupted. The process-group
     /// membership check runs first and shares the invalid-endpoint failure class with a stale start
     /// token; both stay distinct from the inspection's own failure classes. The group is never
-    /// derived from the inspection, because an exited process reports process group `0` by design.
+    /// derived from the inspection, because the inspection reports process group `0` for an exited
+    /// process by design.
     ///
     /// # Errors
     ///

@@ -28,15 +28,16 @@ to bind them atomically, so a PID reused inside that sub-millisecond window is s
 see [identity and containment](IDENTITY_AND_CONTAINMENT.md).
 
 An endpoint whose process has already exited is refused earlier still, at the group membership
-check, because macOS reports no process group for an exited process. The identity check covers the
-remaining window: an endpoint that exits between that membership check and delivery is reported as
-`process_missing` rather than signalled, since delivery to an exited process succeeds at the system
-call and would otherwise wait out the whole checkpoint timeout for an acknowledgement that cannot
-arrive. A failure in the identity check itself — unreadable or unsupported process metadata, most
-likely under exactly the memory pressure this supervisor exists to police — now also refuses the
-request rather than falling through to a plain signal call. Both cases escalate straight to
-termination. Permission denial can now surface from either the inspection or the signal itself, and
-both are reported the same way.
+check, because macOS reports no process group for an exited process. The identity check narrows the
+remaining window to the interval between inspection and the system call: an endpoint that exits
+before that inspection is reported as `process_missing` rather than signalled, since delivery to an
+exited process can otherwise succeed at the system call and wait out the whole checkpoint timeout
+for an acknowledgement that cannot arrive. A failure in the identity check itself — unreadable or
+unsupported process metadata, most likely under exactly the memory pressure this supervisor exists
+to police — now also refuses the request rather than falling through to a plain signal call. All
+three cases — refusal at the membership check, `process_missing` inside the narrower window, and a
+failed identity check — escalate straight to termination. Permission denial can now surface from
+either the inspection or the signal itself, and both are reported the same way.
 
 ## Wire format
 

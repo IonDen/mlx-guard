@@ -72,8 +72,8 @@ versions follow Semantic Versioning.
   Pass `--on-parent-exit=detach` (or `on_parent_exit="detach"` from Python) to keep the previous
   behavior.
 - `OwnedProcess::negotiate_checkpoint_endpoint` in the core library takes an inspected process
-  identity rather than a bare PID. Neither Rust crate is published to a registry, so this is a note
-  on the API shape rather than a migration anyone has to perform.
+  identity rather than a bare PID. Neither the core nor the CLI crate is published to a registry, so
+  this is a note on the API shape rather than a migration anyone has to perform.
 
 ### Fixed
 
