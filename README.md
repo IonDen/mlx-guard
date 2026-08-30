@@ -132,6 +132,7 @@ contract below defines one subsystem.
 | [Intervention execution](https://github.com/IonDen/mlx-guard/blob/main/docs/INTERVENTION.md) | Action targets, policy-owned deadlines, typed failures, post-action observation |
 | [Python API](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) | Typed configuration, incremental runs, cancellation, report loading, worker checkpoints |
 | [Python packaging](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_PACKAGING.md) | Wheel support, native-binary discovery, editable installs, sdist policy |
+| [Wrap a command](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/WRAP_A_COMMAND.md) | Supervising a command-line workload with no adapter, from bare to a forced intervention |
 | [mlx-train-perf integration](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/MLX_TRAIN_PERF.md) | Optional external supervision for its runner, keeping the direct-launch fallback |
 | [Support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md) | Supported platforms and release boundaries |
 | [Threat model](https://github.com/IonDen/mlx-guard/blob/main/docs/THREAT_MODEL.md) | Trust boundaries and supported failures |

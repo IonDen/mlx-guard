@@ -64,6 +64,7 @@ include = [
     { path = "docs/SUPPORT.md", format = "sdist" },
     { path = "docs/THREAT_MODEL.md", format = "sdist" },
     { path = "docs/integrations/MLX_TRAIN_PERF.md", format = "sdist" },
+    { path = "docs/integrations/WRAP_A_COMMAND.md", format = "sdist" },
 ]
 manifest-path = "crates/mlx-guard-cli/Cargo.toml"
 python-source = "python"
