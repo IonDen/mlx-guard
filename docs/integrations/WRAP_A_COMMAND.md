@@ -20,9 +20,13 @@ that: see the ladder below for what it looks like.
 pip install mlx-guard
 ```
 
+This installs only on Apple Silicon macOS (macOS 11 or newer, arm64); other platforms have no
+matching wheel, and `pip` fails by design rather than falling back to a source build.
+
 The CLI also works without a Python project: `uvx mlx-guard …` runs it on demand, and
-`pipx install mlx-guard` keeps it on your PATH. The only other prerequisite for the commands on this
-page is `python3`, used below to build the demo workload.
+`pipx install mlx-guard` keeps it on your PATH. The other prerequisites for the commands on this
+page are `python3`, used below to build the demo workload, and `jq` for the report-reading commands
+(or use the Python `load_report` route shown at the end).
 
 ## The ladder
 
@@ -75,8 +79,8 @@ $ jq '.outcome.kind, .signals' reports/run.json
 ```
 
 Now force an intervention on purpose, with `--wall-time` rather than a tight footprint limit. A
-wall-time expiry is always graceful: the supervisor still attempts a checkpoint request first, gets
-back a non-cooperative refusal from a command that never connected a worker, and only then sends
+wall-time expiry is always graceful: the supervisor still attempts a checkpoint request first, finds
+no cooperative endpoint to answer it since the command never connected a worker, and only then sends
 TERM.
 
 ```console
@@ -105,7 +109,8 @@ $ jq '.outcome.kind, .checkpoint, .signals' reports/run-wall-time.json
 ```
 
 A plain CLI workload negotiates no checkpoint, so the record says exactly that: `not_negotiated`
-with a `reason`, and no `request_id`, rather than pretending one was attempted and failed.
+with a `reason` recording the attempted request, and no `request_id`, since there was never a
+cooperative endpoint to acknowledge one.
 
 ### Optional: forcing a footprint intervention instead
 
@@ -189,8 +194,8 @@ representative arguments, read the peak footprint back out of the report the way
 does, then set `--max-footprint` above that peak with headroom for run-to-run variation, never a
 fraction of total machine memory. The 12 GiB above is a starting point for a small quantized model
 on a 32 GB Mac, not a measurement of yours; recalibrate for your own model, batch size, and machine.
-Both commands were exercised end to end this way in the maintainers' in-house trial on the reference
-host (M1 Max, 32 GB). Their output is real workload output, not something this page can fabricate,
+These are the recipes the maintainers' in-house trial exercises end to end on the reference host
+(M1 Max, 32 GB). Their output is real workload output, not something this page can fabricate,
 so none is pasted here; the report shapes captured from the throwaway demo command above are what an
 actual run of either one produces.
 
@@ -223,6 +228,7 @@ A command wrapped this way, never having connected `mlx_guard.CheckpointWorker`,
 `checkpoint.status: not_negotiated`, so there is no `request_id` or `artifact` to resume from; the
 process simply stopped where TERM or KILL caught it. Resuming from a saved checkpoint is only
 possible for a workload that connects the worker helper itself, which is the
-[adapter pattern](../PYTHON_API.md#resuming-after-an-intervention), not this page's wrapped-CLI
-recipe. [Reports and privacy](../REPORTS.md) defines the full schema; every field name and status
-value used above comes from there.
+[adapter pattern](PYTHON_ADAPTER.md), not this page's wrapped-CLI recipe; see its
+[resume walkthrough](../PYTHON_API.md#resuming-after-an-intervention) for the match to write.
+[Reports and privacy](../REPORTS.md) defines the full schema; every field name and status value used
+above comes from there.
