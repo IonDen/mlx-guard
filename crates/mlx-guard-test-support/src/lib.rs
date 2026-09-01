@@ -4,6 +4,29 @@ use std::error::Error;
 use std::fmt;
 use std::time::Duration;
 
+#[cfg(unix)]
+use mlx_guard_core::{NativeProcessInventory, OwnedProcess, ProcessIdentity};
+
+/// Inspect a launched root process and bind the start token it is running under.
+///
+/// Tests that negotiate a checkpoint endpoint need the root's exact `(pid, start token)`; this is
+/// the one place that inspection lives for the four suites here, so they cannot drift apart.
+/// `mlx-guard-core`'s own unit tests cannot depend on this crate without a dependency cycle, so
+/// they carry their own copy.
+///
+/// # Panics
+///
+/// Panics when the launched root cannot be inspected, which in a real-process test means the
+/// fixture died before the test could observe it.
+#[cfg(unix)]
+#[must_use]
+pub fn root_identity(process: &OwnedProcess) -> ProcessIdentity {
+    NativeProcessInventory::new()
+        .inspect(process.root_pid().cast_signed())
+        .expect("launched root process is inspectable")
+        .identity
+}
+
 /// Maximum aggregate allocation a synthetic fixture may request.
 pub const MAX_FIXTURE_ALLOCATION_BYTES: u64 = 128 * 1024 * 1024;
 

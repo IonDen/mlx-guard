@@ -13,6 +13,7 @@ use mlx_guard_core::{
     PolicyMachine, PolicyState, ProcessInterventionActuator, RootOutcome, SampleEvent,
     SignalNumber, StdioMode,
 };
+use mlx_guard_test_support::root_identity;
 use serde::Serialize;
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
@@ -136,7 +137,7 @@ fn authenticated_checkpoint_acknowledgement_drives_term_against_the_group() {
     let (mut process, mut channel) = launch_checkpoint("checkpoint-success", 1);
 
     let endpoint = process
-        .negotiate_checkpoint_endpoint(process.root_pid())
+        .negotiate_checkpoint_endpoint(root_identity(&process))
         .unwrap();
     let checkpoint_signal = CheckpointSignalConfig::new(signal(libc::SIGUSR1), ms(50)).unwrap();
     let binding = CheckpointBinding::new(&mut channel, endpoint, checkpoint_signal.signal());
@@ -177,7 +178,7 @@ fn spoofed_acknowledgement_cannot_suppress_real_term() {
     // Catches forwarding any descriptor frame as an authenticated policy acknowledgement.
     let (mut process, mut channel) = launch_checkpoint("checkpoint-spoof", 1);
     let endpoint = process
-        .negotiate_checkpoint_endpoint(process.root_pid())
+        .negotiate_checkpoint_endpoint(root_identity(&process))
         .unwrap();
     let binding = CheckpointBinding::new(&mut channel, endpoint, signal(libc::SIGUSR1));
     let actuator = ProcessInterventionActuator::new(&process, Some(binding));
@@ -224,7 +225,7 @@ fn blocked_checkpoint_cannot_extend_the_policy_deadline() {
     // of one second separates the two while tolerating CI scheduler noise.
     let (mut process, mut channel) = launch_checkpoint("checkpoint-blocked", 1_500);
     let endpoint = process
-        .negotiate_checkpoint_endpoint(process.root_pid())
+        .negotiate_checkpoint_endpoint(root_identity(&process))
         .unwrap();
     let binding = CheckpointBinding::new(&mut channel, endpoint, signal(libc::SIGUSR1));
     let actuator = ProcessInterventionActuator::new(&process, Some(binding));

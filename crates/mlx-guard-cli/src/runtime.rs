@@ -512,7 +512,7 @@ fn prepare_run_worker(
             diagnostic: "owned process identity could not be established".to_owned(),
         })?;
     let checkpoint_endpoint = process
-        .negotiate_checkpoint_endpoint(process.root_pid())
+        .negotiate_checkpoint_endpoint(root)
         .map_err(|error| RunLaunchFailure {
             outcome: SupervisorOutcome::SupervisorFailure,
             diagnostic: error.to_string(),

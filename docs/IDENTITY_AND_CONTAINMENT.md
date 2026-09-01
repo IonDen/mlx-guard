@@ -15,6 +15,17 @@ adapter records the validated identity and exit without inventing parent or PGID
 A Linux `/proc` adapter exercises the same identity and topology rules in CI. It does not provide
 Darwin physical footprint and does not expand the supported runtime claim beyond Apple Silicon.
 
+## Checkpoint delivery
+
+The cooperative checkpoint endpoint follows the same discipline as every other direct signal:
+negotiation binds the caller's already-established `(pid, process_start_abstime)` on trust, and
+delivery revalidates that exact identity immediately before signalling. Inspection and signalling
+remain two separate steps; macOS has no `pidfd`-equivalent primitive to bind them atomically, so a
+PID recycled inside that sub-millisecond window is still not detectable. This narrows the reuse risk
+rather than eliminating it. A mismatched identity is refused as an invalid endpoint before any signal
+reaches the target. Permission denial can now be observed at either step — inspecting the endpoint or
+signalling it — and both are reported the same way.
+
 ## Descendants and escapes
 
 Each snapshot considers the bound root, current owned-group members, current parent chains, and

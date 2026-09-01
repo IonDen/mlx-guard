@@ -10,9 +10,11 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mlx_guard_core::{
-    Action, Event, LaunchErrorKind, LaunchOptions, OwnedProcess, PolicyConfig, PolicyMachine,
-    RootOutcome, SignalNumber, SignalResult, StdioMode, validate_noninteractive_terminal,
+    Action, Event, LaunchErrorKind, LaunchOptions, NativeProcessInventory, OwnedProcess,
+    PolicyConfig, PolicyMachine, RootOutcome, SignalNumber, SignalResult, StdioMode,
+    validate_noninteractive_terminal,
 };
+use mlx_guard_test_support::root_identity;
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
 
@@ -354,13 +356,16 @@ fn checkpoint_signal_reaches_only_the_negotiated_endpoint() {
         .parse()
         .unwrap();
     let endpoint = process
-        .negotiate_checkpoint_endpoint(process.root_pid())
+        .negotiate_checkpoint_endpoint(root_identity(&process))
         .unwrap();
-    assert!(
-        process
-            .negotiate_checkpoint_endpoint(std::process::id())
-            .is_err()
-    );
+    // The test process is live and its identity is correctly inspected, so only its process group
+    // differs from the owned one: negotiation still refuses it, proving group membership is checked
+    // when the endpoint is negotiated and not left to delivery-time identity revalidation.
+    let outsider = NativeProcessInventory::new()
+        .inspect(std::process::id().cast_signed())
+        .unwrap()
+        .identity;
+    assert!(process.negotiate_checkpoint_endpoint(outsider).is_err());
     let request = signal_number(libc::SIGUSR1);
     assert_eq!(
         process.signal_checkpoint(&endpoint, request).unwrap(),

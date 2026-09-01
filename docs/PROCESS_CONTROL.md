@@ -63,11 +63,16 @@ launcher disables the watch entirely (`parent_watch: hangup_ignored`), the same 
 forwarding; under `--on-parent-exit=detach` the watch is established anyway, since detach only ever
 collects evidence and never acts on it.
 
-Checkpoint delivery has a different target type. A cooperative endpoint must be negotiated as a
-positive, live member of the owned group. Membership is checked when the endpoint is created and
-again immediately before delivery. The checkpoint signal targets that PID only. TERM and KILL never
-use the endpoint target. The inherited channel and FD-only readiness handshake are defined in the
-[checkpoint protocol](CHECKPOINT_PROTOCOL.md); no checkpoint signal is enabled before readiness.
+Checkpoint delivery has a different target type. A cooperative endpoint is negotiated from a
+caller-supplied `(pid, start token)` identity, taken on trust at that point, and confirmed as a
+positive, live member of the owned group. Delivery re-checks group membership first — the group
+recorded at negotiation, then positivity, then a live `getpgid` query — and only then revalidates
+that same identity immediately before signalling; that revalidation, not negotiation, is this
+contract's single point of truth for the identity match. A PID whose identity no longer matches is
+refused as an invalid checkpoint endpoint rather than signalled. The checkpoint signal targets that
+revalidated PID only. TERM and KILL never use the endpoint target. The inherited channel and FD-only
+readiness handshake are defined in the [checkpoint protocol](CHECKPOINT_PROTOCOL.md); no checkpoint
+signal is enabled before readiness.
 
 ## Terminal and stdio behavior
 

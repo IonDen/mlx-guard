@@ -71,6 +71,9 @@ versions follow Semantic Versioning.
   one-second grace, KILL if needed) when that happens, and report a policy intervention (exit 75).
   Pass `--on-parent-exit=detach` (or `on_parent_exit="detach"` from Python) to keep the previous
   behavior.
+- `OwnedProcess::negotiate_checkpoint_endpoint` in the core library takes an inspected process
+  identity rather than a bare PID. Neither the core nor the CLI crate is published to a registry, so
+  this is a note on the API shape rather than a migration anyone has to perform.
 
 ### Fixed
 
@@ -93,6 +96,19 @@ versions follow Semantic Versioning.
 - Before this release, report validation accepted a `detach` parent-exit option paired with an
   enforcing or absent parent watch — states a `detach` run cannot actually produce. It now rejects
   that combination as an invalid configuration.
+- The cooperative checkpoint endpoint is now bound to `(pid, start token)` and revalidated
+  immediately before delivery, matching every other direct signal this supervisor sends; a PID
+  recycled inside the owned group between negotiation and delivery is refused as an invalid
+  checkpoint endpoint rather than signalled. An endpoint whose process had already exited was
+  refused before this change too, since macOS reports no process group for an exited process and the
+  membership check catches that. What is new is the narrow window between that check and delivery:
+  an endpoint that exits inside it is now recorded as `process_missing`, where previously the request
+  was signalled, which succeeds even for a process that has exited, and then waited out the full
+  checkpoint timeout for an acknowledgement that could not arrive. A transient failure while
+  inspecting the endpoint — the likeliest failure under exactly the memory pressure this supervisor
+  exists to police — now also cancels the checkpoint request and escalates to termination, where
+  previously nothing stood between the policy and the signal call. Permission denial can now
+  originate from either the inspection or the signal itself.
 
 ## [0.1.0] - 2026-08-12
 
