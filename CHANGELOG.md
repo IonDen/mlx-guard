@@ -53,6 +53,10 @@ versions follow Semantic Versioning.
 
 ### Changed
 
+- CI skips the Rust and Python jobs and the dependency audit on pull requests that change only
+  documentation (README, CHANGELOG, release notes, `docs/`, `evidence/`). The release-literals
+  guard still runs on every pull request, since it reads those files for version strings, and
+  every push to `main` still runs the full pipeline.
 - The checkpoint acknowledgement timeout default rose from 100ms to 1s. A real cooperative worker
   on a loaded 3-CPU machine missed the former window, and interventions happen under exactly that
   kind of pressure. The timeout still fails closed: an unresponsive worker receives TERM when it
@@ -77,6 +81,11 @@ versions follow Semantic Versioning.
 
 ### Fixed
 
+- A command that finished in the instant between the supervisor's first identity inspection and
+  its checkpoint endpoint negotiation no longer turns the run into a supervisor failure (exit 70).
+  It keeps its own exit status, exactly as a command that finishes before the inspection always
+  has; the only difference is the diagnostic naming which step it beat. On a busy machine that
+  window is wide enough for `/usr/bin/true` to fall into.
 - A command that exits before the supervisor's first identity inspection now keeps its real
   exit status instead of being reported as supervisor failure (exit 70).
 - Supervisor memory no longer grows with every distinct child process observed during a long

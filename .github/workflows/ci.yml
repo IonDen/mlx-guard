@@ -9,8 +9,43 @@ permissions:
   contents: read
 
 jobs:
+  # Decide whether a pull request touches anything the code jobs need to prove. A change set
+  # made only of documentation surfaces (scripts/ci-change-scope.sh holds the exact list)
+  # skips the Rust and Python jobs and the dependency audit; the release-literals guard still
+  # runs because it reads CHANGELOG.md, RELEASE_NOTES.md, and docs/EXAMPLES.md for content.
+  #
+  # This is a job-level `if:` rather than a `paths-ignore:` filter on purpose: a job skipped by
+  # a condition reports "skipped" and satisfies a required status check, whereas a workflow that
+  # never triggers leaves the check pending and blocks the merge. Pushes to main always run
+  # everything, and every gate below is written as "unless the scope was read as docs": a diff
+  # that could not be read classifies as code, and a scope job that failed outright leaves the
+  # output empty, which is not "docs" either. The only way to skip is a diff that was actually
+  # read and actually contained nothing but documentation.
+  scope:
+    name: Change scope
+    runs-on: ubuntu-24.04
+    outputs:
+      scope: ${{ steps.classify.outputs.scope }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          scope=code
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            scope=$(git diff --name-only "$BASE...$HEAD" | ./scripts/ci-change-scope.sh) || scope=code
+          fi
+          echo "scope=$scope"
+          echo "scope=$scope" >> "$GITHUB_OUTPUT"
+
   rust:
     name: Rust (${{ matrix.os }})
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs' }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -42,21 +77,32 @@ jobs:
 
   dependencies:
     name: Dependency policy
+    needs: scope
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Always: a documentation change can break this guard (it checks the version strings in
+      # CHANGELOG.md, RELEASE_NOTES.md, and docs/EXAMPLES.md), and it needs no toolchain.
       - run: ./scripts/check-release-literals.sh
-      - uses: dtolnay/rust-toolchain@d8dfd7155fea72af4ad34a8fe97364d210e2d020 # 1.93.0
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
-      - name: Install locked dependency tools
+      - if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs' }}
+        uses: dtolnay/rust-toolchain@d8dfd7155fea72af4ad34a8fe97364d210e2d020 # 1.93.0
+      - if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs' }}
+        uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+      - if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs' }}
+        name: Install locked dependency tools
         run: |
           cargo install cargo-deny --locked --version 0.20.2
           cargo install cargo-audit --locked --version 0.22.1
-      - run: cargo deny check
-      - run: cargo audit --deny warnings
+      - if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs' }}
+        run: cargo deny check
+      - if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs' }}
+        run: cargo audit --deny warnings
 
   python:
     name: Python package and wheel
+    needs: scope
+    if: ${{ !cancelled() && needs.scope.outputs.scope != 'docs' }}
     runs-on: macos-15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
