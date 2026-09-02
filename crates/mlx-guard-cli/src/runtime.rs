@@ -451,16 +451,14 @@ fn prepare_observe_worker(
     let root = if let Ok(observation) = inventory.inspect(root_pid) {
         observation.identity
     } else {
-        if let Ok(Some(outcome)) = process.try_wait_root() {
-            return Err(RunLaunchFailure {
-                outcome: supervisor_outcome(outcome),
-                diagnostic: "child exited before identity inspection".to_owned(),
-            });
-        }
-        return Err(RunLaunchFailure {
-            outcome: SupervisorOutcome::SupervisorFailure,
-            diagnostic: "root process identity could not be established".to_owned(),
-        });
+        return Err(early_exit_or_failure(
+            process.try_wait_root().ok().flatten(),
+            "identity inspection",
+            RunLaunchFailure {
+                outcome: SupervisorOutcome::SupervisorFailure,
+                diagnostic: "root process identity could not be established".to_owned(),
+            },
+        ));
     };
     let tracker =
         IdentityTracker::new(root, process.process_group_id()).map_err(|_| RunLaunchFailure {
@@ -495,28 +493,36 @@ fn prepare_run_worker(
     let root = if let Ok(observation) = inventory.inspect(root_pid) {
         observation.identity
     } else {
-        if let Ok(Some(outcome)) = process.try_wait_root() {
-            return Err(RunLaunchFailure {
-                outcome: supervisor_outcome(outcome),
-                diagnostic: "child exited before identity inspection".to_owned(),
-            });
-        }
-        return Err(RunLaunchFailure {
-            outcome: SupervisorOutcome::SupervisorFailure,
-            diagnostic: "root process identity could not be established".to_owned(),
-        });
+        return Err(early_exit_or_failure(
+            process.try_wait_root().ok().flatten(),
+            "identity inspection",
+            RunLaunchFailure {
+                outcome: SupervisorOutcome::SupervisorFailure,
+                diagnostic: "root process identity could not be established".to_owned(),
+            },
+        ));
     };
     let tracker =
         IdentityTracker::new(root, process.process_group_id()).map_err(|_| RunLaunchFailure {
             outcome: SupervisorOutcome::SupervisorFailure,
             diagnostic: "owned process identity could not be established".to_owned(),
         })?;
-    let checkpoint_endpoint = process
-        .negotiate_checkpoint_endpoint(root)
-        .map_err(|error| RunLaunchFailure {
-            outcome: SupervisorOutcome::SupervisorFailure,
-            diagnostic: error.to_string(),
-        })?;
+    // The same window one step later: negotiation queries the live process group, and a root
+    // that finished in the microseconds since the inspection is no longer in one. That is the
+    // command completing, not the supervisor failing.
+    let checkpoint_endpoint = match process.negotiate_checkpoint_endpoint(root) {
+        Ok(endpoint) => endpoint,
+        Err(error) => {
+            return Err(early_exit_or_failure(
+                process.try_wait_root().ok().flatten(),
+                "checkpoint negotiation",
+                RunLaunchFailure {
+                    outcome: SupervisorOutcome::SupervisorFailure,
+                    diagnostic: error.to_string(),
+                },
+            ));
+        }
+    };
     Ok(PreparedRun {
         process,
         tracker,
@@ -1445,6 +1451,25 @@ fn finalize_without_worker(
     }
 }
 
+/// Resolve a pre-supervision step that failed after the root was launched.
+///
+/// A root that has already exited did not make the step fail; it finished first. The run then
+/// completes with the root's own status, the same way a root that beats the first identity
+/// inspection always has. Only a failure on a still-running root is the supervisor's own.
+fn early_exit_or_failure(
+    root_status: Option<RootOutcome>,
+    window: &str,
+    step_failure: RunLaunchFailure,
+) -> RunLaunchFailure {
+    match root_status {
+        Some(outcome) => RunLaunchFailure {
+            outcome: supervisor_outcome(outcome),
+            diagnostic: format!("child exited before {window}"),
+        },
+        None => step_failure,
+    }
+}
+
 fn launch_outcome(kind: mlx_guard_core::LaunchErrorKind) -> SupervisorOutcome {
     match kind {
         mlx_guard_core::LaunchErrorKind::NotFound => SupervisorOutcome::LaunchNotFound,
@@ -1877,6 +1902,8 @@ mod tests {
         opens_an_uncounted_shutdown, parent_has_exited, shutdown_reason_for,
         supervisor_error_diagnostic,
     };
+    use super::{RunLaunchFailure, early_exit_or_failure};
+    use mlx_guard_core::{RootOutcome, SupervisorOutcome};
 
     fn sample() -> Event {
         Event::Sample(SampleEvent {
@@ -2405,5 +2432,58 @@ mod tests {
             state.exited_at_ms.is_none(),
             "a provably still-alive recorded identity must never latch an exit"
         );
+    }
+
+    // Catches the 0049 sibling: a pre-supervision step that fails because the root has ALREADY
+    // exited must hand back the root's own status, not turn a finished command into exit 70.
+    #[test]
+    fn an_exited_root_keeps_its_status_whichever_pre_supervision_step_failed() {
+        let step_failure = RunLaunchFailure {
+            outcome: SupervisorOutcome::SupervisorFailure,
+            diagnostic: "checkpoint endpoint is not a live member".to_owned(),
+        };
+        let failure = early_exit_or_failure(
+            Some(RootOutcome::Exited(3)),
+            "checkpoint negotiation",
+            step_failure,
+        );
+        assert_eq!(failure.outcome, SupervisorOutcome::ChildExited(3));
+        assert_eq!(
+            failure.diagnostic,
+            "child exited before checkpoint negotiation"
+        );
+    }
+
+    // Catches the inverse defect: treating every step failure as an early exit would hide a real
+    // supervisor fault on a root that is still running.
+    #[test]
+    fn a_live_root_keeps_the_step_failure_untouched() {
+        let step_failure = RunLaunchFailure {
+            outcome: SupervisorOutcome::SupervisorFailure,
+            diagnostic: "root process identity could not be established".to_owned(),
+        };
+        let failure = early_exit_or_failure(None, "identity inspection", step_failure);
+        assert_eq!(failure.outcome, SupervisorOutcome::SupervisorFailure);
+        assert_eq!(
+            failure.diagnostic,
+            "root process identity could not be established"
+        );
+    }
+
+    // A root killed by a signal in the window is reported as signaled, the same mapping the
+    // inspection window has always used.
+    #[test]
+    fn a_signaled_root_maps_to_child_signaled() {
+        let step_failure = RunLaunchFailure {
+            outcome: SupervisorOutcome::SupervisorFailure,
+            diagnostic: String::new(),
+        };
+        let signal = SignalNumber::new(9).expect("SIGKILL is a valid signal number");
+        let failure = early_exit_or_failure(
+            Some(RootOutcome::Signaled(signal)),
+            "checkpoint negotiation",
+            step_failure,
+        );
+        assert_eq!(failure.outcome, SupervisorOutcome::ChildSignaled(signal));
     }
 }
