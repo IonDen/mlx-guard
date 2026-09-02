@@ -53,6 +53,10 @@ versions follow Semantic Versioning.
 
 ### Changed
 
+- CI skips the Rust and Python jobs and the dependency audit on pull requests that change only
+  documentation (README, CHANGELOG, release notes, `docs/`, `evidence/`). The release-literals
+  guard still runs on every pull request, since it reads those files for version strings, and
+  every push to `main` still runs the full pipeline.
 - The checkpoint acknowledgement timeout default rose from 100ms to 1s. A real cooperative worker
   on a loaded 3-CPU machine missed the former window, and interventions happen under exactly that
   kind of pressure. The timeout still fails closed: an unresponsive worker receives TERM when it
