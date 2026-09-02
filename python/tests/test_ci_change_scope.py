@@ -34,6 +34,10 @@ class ChangeScopeTests(unittest.TestCase):
             "docs/integrations/WRAP_A_COMMAND.md",
             "docs/papers/diagrams/supervision-boundary.svg",
             "evidence/v0.2.0/m1-max-32gb/README.md",
+            "RELEASE_NOTES.md",
+            "SECURITY.md",
+            "LICENSE",
+            "THIRD_PARTY_LICENSES.md",
         ]
         self.assertEqual(classify(changed), "docs")
 
@@ -50,6 +54,7 @@ class ChangeScopeTests(unittest.TestCase):
     def test_markdown_outside_the_allowlist_is_code(self) -> None:
         # Red if the allowlist matches by extension or by an unanchored basename.
         self.assertEqual(classify(["crates/mlx-guard-core/README.md"]), "code")
+        self.assertEqual(classify(["crates/mlx-guard-core/docs/notes.md"]), "code")
 
     def test_last_path_without_trailing_newline_still_counts(self) -> None:
         # Red if the read loop drops an unterminated final line: the code path would vanish and
