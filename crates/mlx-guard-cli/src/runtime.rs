@@ -2485,5 +2485,30 @@ mod tests {
             step_failure,
         );
         assert_eq!(failure.outcome, SupervisorOutcome::ChildSignaled(signal));
+        assert_eq!(
+            failure.diagnostic,
+            "child exited before checkpoint negotiation"
+        );
+    }
+
+    // The exact shape CI observed: `/usr/bin/true` finishing inside the negotiation window must
+    // report a clean exit, not become a supervisor failure. Pins the zero code, which is the
+    // value a future `if code == 0` special case would most plausibly mishandle.
+    #[test]
+    fn a_clean_exit_inside_the_negotiation_window_stays_a_clean_exit() {
+        let step_failure = RunLaunchFailure {
+            outcome: SupervisorOutcome::SupervisorFailure,
+            diagnostic: "checkpoint endpoint is not a live member".to_owned(),
+        };
+        let failure = early_exit_or_failure(
+            Some(RootOutcome::Exited(0)),
+            "checkpoint negotiation",
+            step_failure,
+        );
+        assert_eq!(failure.outcome, SupervisorOutcome::ChildExited(0));
+        assert_eq!(
+            failure.diagnostic,
+            "child exited before checkpoint negotiation"
+        );
     }
 }

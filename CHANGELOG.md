@@ -81,6 +81,11 @@ versions follow Semantic Versioning.
 
 ### Fixed
 
+- A command that finished in the instant between the supervisor's first identity inspection and
+  its checkpoint endpoint negotiation no longer turns the run into a supervisor failure (exit 70).
+  It keeps its own exit status, exactly as a command that finishes before the inspection always
+  has; the only difference is the diagnostic naming which step it beat. On a busy machine that
+  window is wide enough for `/usr/bin/true` to fall into.
 - A command that exits before the supervisor's first identity inspection now keeps its real
   exit status instead of being reported as supervisor failure (exit 70).
 - Supervisor memory no longer grows with every distinct child process observed during a long
