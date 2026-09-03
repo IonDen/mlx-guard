@@ -75,14 +75,28 @@ def check_requirements(requirements: list[ModelRequirement]) -> list[str]:
     return messages
 
 
+# Marker strings a value is checked against, never a temp-file path this code opens itself.
+_PATH_MARKERS = ("/Users/", "/Volumes/", "/private/", "/tmp/", "/var/")  # noqa: S108
+
+
+def _looks_like_a_path(value: str) -> bool:
+    """Return True for a value shaped like a filesystem path, not merely one containing ``/``.
+
+    An absolute path, a home-relative path (``~``), or one containing a well-known mount or
+    prefix — never a bare string that happens to contain a slash, such as a git branch name
+    (``trial/in-house-recipes``).
+    """
+    return value.startswith(("/", "~")) or any(marker in value for marker in _PATH_MARKERS)
+
+
 def scan_for_paths(payload: Mapping[str, Any], *, prefix: str = "") -> list[str]:
-    """Dotted keys of every string value that looks like a filesystem path (contains ``/``)."""
+    """Dotted keys of every string value that looks like a filesystem path."""
     offenders: list[str] = []
     for key, value in payload.items():
         dotted = f"{prefix}.{key}" if prefix else key
         if isinstance(value, Mapping):
             offenders.extend(scan_for_paths(value, prefix=dotted))
-        elif isinstance(value, str) and "/" in value:
+        elif isinstance(value, str) and _looks_like_a_path(value):
             offenders.append(dotted)
     return offenders
 

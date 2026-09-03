@@ -56,7 +56,7 @@ def test_check_requirements_reports_only_absent_ones_with_their_size() -> None:
     assert "2.0 GiB" in messages[0]
 
 
-def test_scan_for_paths_flags_any_string_containing_a_slash() -> None:
+def test_scan_for_paths_flags_a_nested_path_value() -> None:
     """Bug: only scanning top-level values, missing a path nested inside the ``binary`` \
 sub-object."""
     clean = {
@@ -66,3 +66,25 @@ sub-object."""
     dirty = {"commit": "abc123", "binary": {"version": "0.1.0", "note": "/Users/ionden/trial"}}
     assert p.scan_for_paths(clean) == []
     assert p.scan_for_paths(dirty) == ["binary.note"]
+
+
+def test_scan_for_paths_allows_a_branch_name_with_a_slash() -> None:
+    """Bug: flagging any string containing a slash treats a branch name like \
+``trial/in-house-recipes`` as a leaked path, so preflight refuses forever on that branch."""
+    payload = {"branch": "trial/in-house-recipes", "rust_tree_equals": "b6a0504"}
+    assert p.scan_for_paths(payload) == []
+
+
+def test_scan_for_paths_still_catches_real_path_shapes() -> None:
+    """Bug: narrowing the slash check to fix the branch-name false positive could also stop \
+catching genuine path leaks (an absolute path, a home-relative path, or a well-known mount)."""
+    dirty = {
+        "a": "/Users/ionden/trial",
+        "b": "~/trial",
+        "c": "/Volumes/data/x",
+        "d": "/private/tmp/x",
+        "e": "/tmp/x",  # noqa: S108 — a scanned value, not a temp-file path this test opens
+        "f": "/var/folders/x",
+        "g": "not/a/leaked/path",
+    }
+    assert set(p.scan_for_paths(dirty)) == {"a", "b", "c", "d", "e", "f"}
