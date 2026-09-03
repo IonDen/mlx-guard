@@ -7,6 +7,7 @@ in once that earlier arm's peak is known. ``orchestrator.py --dry-run`` renders 
 as ``<limit>`` / ``<walltime>`` rather than guessing one.
 """
 
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -67,6 +68,11 @@ def _mflux_argv(*, model: str) -> tuple[str, ...]:
 
 def _lookup(overrides: Mapping[str, int] | None, arm_id: str) -> int | None:
     return None if overrides is None else overrides.get(arm_id)
+
+
+def _required_flag(flag: str, value: int | None, placeholder: str) -> tuple[str, str]:
+    """Render a mandatory numeric ``launch`` flag, or a dry-run placeholder when unresolved."""
+    return (flag, str(value) if value is not None else placeholder)
 
 
 def _assert_cooperative_wall_time(report: Mapping[str, object]) -> None:
@@ -221,6 +227,7 @@ def build_arms(
             arm_id="C0",
             mode="observe",
             argv=(
+                sys.executable,
                 RESUMABLE_LORA,
                 "train",
                 "--checkpoints",
@@ -242,22 +249,23 @@ def build_arms(
             arm_id="C1",
             mode="python",
             argv=(
-                "python3",
+                sys.executable,
                 RESUMABLE_LORA,
                 "launch",
                 "--arm",
                 "c1",
                 "--total-steps",
                 "400",
+                *_required_flag("--max-footprint-bytes", _lookup(limit_bytes, "C1"), "<limit>"),
                 *(
                     ("--wall-time-ms", str(_lookup(wall_time_ms, "C1")))
-                    if _lookup(wall_time_ms, "C1")
+                    if _lookup(wall_time_ms, "C1") is not None
                     else ()
                 ),
-                *(
-                    ("--checkpoint-timeout-ms", str(_lookup(checkpoint_timeout_ms, "C1")))
-                    if _lookup(checkpoint_timeout_ms, "C1")
-                    else ()
+                *_required_flag(
+                    "--checkpoint-timeout-ms",
+                    _lookup(checkpoint_timeout_ms, "C1"),
+                    "<checkpoint-timeout>",
                 ),
             ),
             sample_interval_ms=50,
@@ -269,13 +277,28 @@ def build_arms(
         ArmSpec(
             arm_id="C2",
             mode="python",
-            argv=("python3", RESUMABLE_LORA, "launch", "--arm", "c2", "--total-steps", "450"),
+            argv=(
+                sys.executable,
+                RESUMABLE_LORA,
+                "launch",
+                "--arm",
+                "c2",
+                "--total-steps",
+                "450",
+                *_required_flag("--max-footprint-bytes", _lookup(limit_bytes, "C2"), "<limit>"),
+                *_required_flag(
+                    "--checkpoint-timeout-ms",
+                    _lookup(checkpoint_timeout_ms, "C2"),
+                    "<checkpoint-timeout>",
+                ),
+            ),
             sample_interval_ms=50,
             limit_bytes=_lookup(limit_bytes, "C2"),
             wall_time_ms=None,
             validator=lambda report: v.assert_child_exit(report, 0),
             notes=(
-                "resume from C1's artifact; wait >= 30s after C1 before launch "
+                "resume from C1's artifact (--resume-report/--c1-checkpoints added by hand at "
+                "launch, once C1's attempt directory is known); wait >= 30s after C1 "
                 "(PYTHON_API.md walkthrough)"
             ),
         ),
