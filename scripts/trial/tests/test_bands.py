@@ -1,6 +1,5 @@
 """Band-prediction tests. Each docstring names the one-line bug that turns the test red."""
 
-
 import bands as b
 
 

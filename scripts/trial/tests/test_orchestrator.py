@@ -5,8 +5,10 @@ report to whatever path follows ``--report``, controlled by two environment vari
 single script can stand in for both a passing and a failing arm.
 """
 
+import json
 from pathlib import Path
 
+import bands
 import orchestrator
 import pytest
 import validators as v
@@ -20,6 +22,25 @@ for arg in "$@"; do
     prev="$arg"
 done
 exit "${FAKE_EXIT_CODE:-0}"
+"""
+
+PREDICTION_CHECKING_BINARY = """#!/bin/sh
+prev=""
+report=""
+for arg in "$@"; do
+    if [ "$prev" = "--report" ]; then
+        report="$arg"
+    fi
+    prev="$arg"
+done
+if [ -f ../prediction.json ]; then
+    code=0
+else
+    code=99
+fi
+printf '{"outcome": {"kind": "child_exited", "code": '"$code"'}, "signals": [], \
+"checkpoint": {"status": "not_negotiated"}, "transitions": [], "samples": []}' > "$report"
+exit 0
 """
 
 UNEVENTFUL_REPORT = """{
@@ -37,9 +58,54 @@ WRONG_SHAPE_REPORT = (
     '"signals": [], "checkpoint": {}, "samples": []}'
 )
 
+EMERGENCY_REPORT = """{
+  "outcome": {
+    "kind": "policy_intervention", "at_ms": 900, "final_footprint_bytes": {"status": "unknown"}
+  },
+  "signals": [
+    {"at_ms": 880, "signal": 9, "target": "owned_process_group",
+     "result": "delivered", "reason": "footprint"}
+  ],
+  "checkpoint": {"status": "not_negotiated"},
+  "transitions": [
+    {"at_ms": 880, "from": "normal", "to": "emergency", "aggregate_footprint_bytes": 200}
+  ],
+  "samples": [{"aggregate_footprint_bytes": {"status": "available", "value": 200}}]
+}"""
+
+
+def multi_sample_report(values: list[int]) -> dict[str, object]:
+    return {
+        "outcome": {"kind": "child_exited", "code": 0},
+        "signals": [],
+        "checkpoint": {"status": "not_negotiated"},
+        "transitions": [],
+        "samples": [
+            {"aggregate_footprint_bytes": {"status": "available", "value": v}} for v in values
+        ],
+    }
+
+
+def make_done_arm(trial_root: Path, arm_id: str, report: dict[str, object]) -> None:
+    """Fabricate a done arm directly on disk, bypassing run_arm, for derivation-source setup."""
+    arm_root = trial_root / "arms" / arm_id
+    attempt = arm_root / "attempt-1"
+    attempt.mkdir(parents=True)
+    (attempt / "report.json").write_text(json.dumps(report))
+    (attempt / "result.json").write_text(json.dumps({"report_path": "report.json"}))
+    orchestrator.mark_done(arm_root, attempt)
+
 
 def write_fake_binary(path: Path) -> Path:
     path.write_text(FAKE_BINARY)
+    path.chmod(0o755)
+    return path
+
+
+def write_fake_python_launcher(path: Path, report_filename: str) -> Path:
+    path.write_text(
+        f'#!/bin/sh\nprintf \'%s\' "$FAKE_REPORT_BODY" > "reports/{report_filename}"\nexit 0\n'
+    )
     path.chmod(0o755)
     return path
 
@@ -130,6 +196,101 @@ def test_run_arm_marks_done_on_a_valid_report(
     arm_root = tmp_path / "arms" / "l0"
     assert orchestrator.is_done(arm_root)
     assert (arm_root / "attempt-1" / "result.json").exists()
+
+
+def test_assemble_collects_python_mode_reports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug: hardcoded `report.json` skips C1/C2's reports (they live at reports/<arm>.json)."""
+    launcher = write_fake_python_launcher(tmp_path / "fake_launcher.sh", "c1.json")
+    monkeypatch.setenv("FAKE_REPORT_BODY", UNEVENTFUL_REPORT)
+    spec = orchestrator.ArmSpec(
+        arm_id="C1",
+        mode="python",
+        argv=(str(launcher),),
+        sample_interval_ms=50,
+        limit_bytes=None,
+        wall_time_ms=None,
+        validator=v.assert_uneventful,
+        notes="test python-mode arm",
+    )
+    result = orchestrator.run_arm(spec, tmp_path, Path("/unused-binary"), dry_run=False)
+    assert result.validator_ok is True
+    assert orchestrator.is_done(tmp_path / "arms" / "C1")
+
+    bundle = tmp_path / "bundle"
+    written = orchestrator.assemble(tmp_path, bundle)
+    dest = bundle / "reports" / "C1.json"
+    assert dest.exists()
+    assert dest in written
+
+
+def test_derive_headroom_uses_the_max_over_named_arms(tmp_path: Path) -> None:
+    """Bug: uses the first named arm only."""
+    make_done_arm(tmp_path, "L1a", multi_sample_report([100]))
+    make_done_arm(tmp_path, "L1b", multi_sample_report([200]))
+    derived = orchestrator.compute_derivation(tmp_path, ["L1a", "L1b"], "headroom")
+    assert derived["limit_bytes"] == bands.headroom_limit(200, 125)
+    assert derived["source_peak_bytes"] == 200
+
+
+def test_derive_graceful_writes_prediction_before_launch(tmp_path: Path) -> None:
+    """Bug: prediction computed from the run's own samples after the fact — circular."""
+    make_done_arm(tmp_path, "L1a", multi_sample_report([90, 95, 100, 98, 97]))
+    binary = tmp_path / "fake-mlx-guard.sh"
+    binary.write_text(PREDICTION_CHECKING_BINARY)
+    binary.chmod(0o755)
+    spec = orchestrator.ArmSpec(
+        arm_id="L3",
+        mode="run",
+        argv=("/bin/echo", "hi"),
+        sample_interval_ms=50,
+        limit_bytes=None,
+        wall_time_ms=None,
+        validator=lambda report: None,
+        notes="test",
+    )
+    orchestrator.run_derived_arm(
+        spec, tmp_path, binary, source_arm_ids=["L1a"], derivation="graceful", dry_run=False
+    )
+    assert (tmp_path / "arms" / "L3" / "prediction.json").exists()
+    report = json.loads((tmp_path / "arms" / "L3" / "attempt-1" / "report.json").read_text())
+    assert report["outcome"]["code"] == 0  # prediction.json already existed when the binary ran
+
+
+def test_derive_refuses_an_undone_source_arm(tmp_path: Path) -> None:
+    """Bug: reads a source arm's report before checking whether it finished."""
+    with pytest.raises(orchestrator.DerivationError):
+        orchestrator.compute_derivation(tmp_path, ["L1a"], "headroom")
+
+
+def test_band_mismatch_is_recorded_not_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug: a mismatch between predicted and observed band blocks mark_done as a hard failure
+    instead of being recorded as `band_mismatch` while the run still counts as evidence."""
+    make_done_arm(tmp_path, "L1a", multi_sample_report([90, 95, 100, 98, 97]))
+    binary = write_fake_binary(tmp_path / "fake-mlx-guard.sh")
+    monkeypatch.setenv("FAKE_REPORT_BODY", EMERGENCY_REPORT)
+    monkeypatch.setenv("FAKE_EXIT_CODE", "0")
+    spec = orchestrator.ArmSpec(
+        arm_id="L3",
+        mode="run",
+        argv=("/bin/echo", "hi"),
+        sample_interval_ms=50,
+        limit_bytes=None,
+        wall_time_ms=None,
+        validator=v.assert_uneventful,  # irrelevant placeholder; graceful mode overrides it
+        notes="test",
+    )
+    result = orchestrator.run_derived_arm(
+        spec, tmp_path, binary, source_arm_ids=["L1a"], derivation="graceful", dry_run=False
+    )
+    assert result.predicted_band == "graceful"
+    assert result.observed_band == "emergency"
+    assert result.band_mismatch is True
+    assert result.validator_ok is True
+    assert orchestrator.is_done(tmp_path / "arms" / "L3")
 
 
 def test_version_pin_refuses_a_changed_triple(tmp_path: Path) -> None:

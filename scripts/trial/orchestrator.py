@@ -20,7 +20,7 @@ import sys
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal
 
@@ -59,12 +59,19 @@ class ArmResult:
     peak_bytes: int | None = None
     sample_count: int | None = None
     ring_wrapped: bool | None = None
-    predicted_band: str | None = None
+    self_consistency_band: str | None = None
     observed_band: str | None = None
+    report_path: str | None = None
+    predicted_band: str | None = None
+    band_mismatch: bool | None = None
 
 
 class VersionPinError(RuntimeError):
     """A later arm's resolved tool version differs from what an earlier arm in the family pinned."""
+
+
+class DerivationError(RuntimeError):
+    """A ``--derive-from`` request cannot be met: an undone source arm, or a conflicting flag."""
 
 
 def next_attempt_dir(arm_root: Path) -> Path:
@@ -165,27 +172,43 @@ def _redact_argv(argv: Sequence[str], attempt: Path, binary: Path) -> list[str]:
     return out
 
 
-def _derive_metrics(report: Mapping[str, Any], limit_bytes: int | None) -> dict[str, Any]:
+def _derive_metrics(
+    report: Mapping[str, Any], limit_bytes: int | None, predicted_band: str | None = None
+) -> dict[str, Any]:
+    """Derive result.json's report-shape metrics.
+
+    ``self_consistency_band`` is a same-run sanity check only: ``bands.predict_band`` applied to
+    this report's own samples against its own ``limit_bytes`` — it answers "does this run's own
+    trajectory look like it would predict its own outcome", not "did the run match what an earlier
+    arm's samples predicted". The latter (the real ahead-of-launch prediction used for L3/F3) is
+    ``predicted_band``, supplied by the caller from ``prediction.json`` via ``--derive-from``; when
+    given, ``band_mismatch`` records whether the observed band differs from it.
+    """
     metrics: dict[str, Any] = {
         "peak_bytes": None,
         "sample_count": len(report.get("samples", [])),
         "ring_wrapped": v.ring_wrapped(report),
         "observed_band": v.observed_band(report),
-        "predicted_band": None,
+        "self_consistency_band": None,
+        "predicted_band": predicted_band,
+        "band_mismatch": None,
     }
     with contextlib.suppress(v.ShapeError):
         metrics["peak_bytes"] = v.peak(report)
     if limit_bytes is not None:
         values = v.available_values(report)
         if values:
-            metrics["predicted_band"] = bands.predict_band(values, limit_bytes)
+            metrics["self_consistency_band"] = bands.predict_band(values, limit_bytes)
+    if predicted_band is not None:
+        metrics["band_mismatch"] = metrics["observed_band"] != predicted_band
     return metrics
 
 
 def _result_to_json(result: ArmResult, attempt: Path) -> dict[str, Any]:
-    payload = {
+    return {
         "arm_id": result.arm_id,
         "attempt": attempt.name,
+        "report_path": result.report_path,
         "exit_code": result.exit_code,
         "duration_s": result.duration_s,
         "validator_ok": result.validator_ok,
@@ -193,14 +216,28 @@ def _result_to_json(result: ArmResult, attempt: Path) -> dict[str, Any]:
         "peak_bytes": result.peak_bytes,
         "sample_count": result.sample_count,
         "ring_wrapped": result.ring_wrapped,
-        "predicted_band": result.predicted_band,
+        "self_consistency_band": result.self_consistency_band,
         "observed_band": result.observed_band,
+        "predicted_band": result.predicted_band,
+        "band_mismatch": result.band_mismatch,
     }
-    return payload
 
 
-def run_arm(spec: ArmSpec, trial_root: Path, binary: Path, *, dry_run: bool) -> ArmResult:
-    """Launch one arm (or print its argv under ``dry_run``), then validate and record its result."""
+def run_arm(
+    spec: ArmSpec,
+    trial_root: Path,
+    binary: Path,
+    *,
+    dry_run: bool,
+    predicted_band: str | None = None,
+) -> ArmResult:
+    """Launch one arm (or print its argv under ``dry_run``), then validate and record its result.
+
+    ``predicted_band`` is the ahead-of-launch prediction from ``--derive-from`` (graceful mode
+    only). When given, a validator failure caused solely by the observed band differing from the
+    prediction is recorded as ``band_mismatch: true`` rather than a hard failure — the evidence is
+    still accepted as long as the report matches *some* real band shape.
+    """
     arm_root = trial_root / "arms" / spec.arm_id
     if is_done(arm_root):
         return ArmResult(spec.arm_id, attempt=None, dry_run=dry_run, skipped=True)
@@ -259,11 +296,33 @@ def run_arm(spec: ArmSpec, trial_root: Path, binary: Path, *, dry_run: bool) -> 
         "sample_count": None,
         "ring_wrapped": None,
         "observed_band": None,
-        "predicted_band": None,
+        "self_consistency_band": None,
+        "predicted_band": predicted_band,
+        "band_mismatch": None,
     }
     if report is not None:
         with contextlib.suppress(KeyError, TypeError):
-            metrics = _derive_metrics(report, spec.limit_bytes)
+            metrics = _derive_metrics(report, spec.limit_bytes, predicted_band)
+        if validator_error is not None and metrics.get("band_mismatch"):
+            # The validator was chosen from the PREDICTED band; a mismatch means it just
+            # asserted the wrong shape, not that the shape itself is bad. Confirm the report is a
+            # valid instance of whatever band actually happened before accepting it as evidence.
+            observed = metrics.get("observed_band")
+            fallback = (
+                v.assert_graceful_footprint
+                if observed == "graceful"
+                else v.assert_emergency_footprint
+                if observed == "emergency"
+                else None
+            )
+            if fallback is not None:
+                try:
+                    fallback(report)
+                    validator_error = None
+                except v.ShapeError as exc:
+                    validator_error = (
+                        f"{type(exc).__name__}: {exc} (also failed the observed-band check)"
+                    )
 
     result = ArmResult(
         arm_id=spec.arm_id,
@@ -274,6 +333,7 @@ def run_arm(spec: ArmSpec, trial_root: Path, binary: Path, *, dry_run: bool) -> 
         duration_s=duration_s,
         validator_ok=validator_error is None,
         validator_error=validator_error,
+        report_path=str(report_path.relative_to(attempt)),
         **metrics,
     )
     (attempt / "result.json").write_text(
@@ -330,9 +390,13 @@ def _run_probe_arm(
 def assemble(trial_root: Path, bundle_dir: Path) -> list[Path]:
     """Collect every done arm's report, journal, and small markers into ``bundle_dir``.
 
-    Copies exactly: each done arm's ``report.json`` to ``reports/<arm>.json``, its retained journal
-    (if any) to ``reports/.<arm>.json.journal``, every ``result.json`` row into one ``arms.json``,
-    ``tty/t0.json``, and any ``cooperative/*.json`` markers. Never logs, adapters, images, weights.
+    Copies exactly: each done arm's report (found via its own ``result.json``'s ``report_path`` —
+    ``report.json`` for observe/run arms, ``reports/<arm>.json`` for a Python-launched arm like
+    C1/C2 — one source of truth, not a hardcoded guess) to ``reports/<arm>.json``, its retained
+    journal (if any) to ``reports/.<arm>.json.journal``, every ``result.json`` row into one
+    ``arms.json``, ``tty/t0.json``, any ``cooperative/*.json`` markers, and a ``prediction.json``
+    (if the arm used ``--derive-from``) to ``predictions/<arm>.json``. Never logs, adapters,
+    images, weights.
     """
     arms_root = trial_root / "arms"
     written: list[Path] = []
@@ -347,10 +411,13 @@ def assemble(trial_root: Path, bundle_dir: Path) -> list[Path]:
         attempt = arm_root / (arm_root / "status").read_text().strip()
 
         result_path = attempt / "result.json"
+        result_data: dict[str, Any] = {}
         if result_path.exists():
-            index.append(json.loads(result_path.read_text()))
+            result_data = json.loads(result_path.read_text())
+            index.append(result_data)
 
-        report_path = attempt / "report.json"
+        report_rel = result_data.get("report_path") or "report.json"
+        report_path = attempt / report_rel
         if report_path.exists():
             reports_dir = bundle_dir / "reports"
             reports_dir.mkdir(parents=True, exist_ok=True)
@@ -362,6 +429,14 @@ def assemble(trial_root: Path, bundle_dir: Path) -> list[Path]:
                 journal_dest = reports_dir / f".{arm_id}.json.journal"
                 journal_dest.write_text(journal_path.read_text())
                 written.append(journal_dest)
+
+        prediction_path = arm_root / "prediction.json"
+        if prediction_path.exists():
+            predictions_dir = bundle_dir / "predictions"
+            predictions_dir.mkdir(parents=True, exist_ok=True)
+            dest = predictions_dir / f"{arm_id}.json"
+            dest.write_text(prediction_path.read_text())
+            written.append(dest)
 
         for subdir_name in ("tty", "cooperative"):
             src_dir = attempt / subdir_name
@@ -380,6 +455,126 @@ def assemble(trial_root: Path, bundle_dir: Path) -> list[Path]:
         arms_json.write_text(json.dumps(index, indent=2) + "\n")
         written.append(arms_json)
     return written
+
+
+def resolved_report_path(arm_root: Path) -> Path:
+    """Return the done arm's report path, from its own ``result.json`` (single source of truth).
+
+    Refuses (``DerivationError``) when the arm is not done — a derivation must never read a source
+    arm's report before that arm has finished and been accepted as evidence.
+    """
+    if not is_done(arm_root):
+        raise DerivationError(f"{arm_root.name}: not done yet, refusing to read its report")
+    attempt = arm_root / (arm_root / "status").read_text().strip()
+    result = json.loads((attempt / "result.json").read_text())
+    report_rel = result.get("report_path") or "report.json"
+    return attempt / report_rel
+
+
+def compute_derivation(
+    trial_root: Path, source_arm_ids: Sequence[str], derivation: Literal["headroom", "graceful"]
+) -> dict[str, Any]:
+    """Derive a limit (and, for ``graceful``, a band prediction) from named done arms' reports.
+
+    ``headroom``: the limit is 125% of the highest peak among the named arms' own peaks — no band
+    prediction. ``graceful``: the named arm with the higher ``bands.late_peak`` is chosen; the
+    limit is ``bands.derive_limit`` of that peak, and the predicted band comes from
+    ``bands.predict_band`` on that arm's own samples against the derived limit. Every named arm
+    must already be done (``resolved_report_path`` refuses otherwise).
+    """
+    reports = [
+        (arm_id, json.loads(resolved_report_path(trial_root / "arms" / arm_id).read_text()))
+        for arm_id in source_arm_ids
+    ]
+
+    if derivation == "headroom":
+        peak = max(v.peak(report) for _, report in reports)
+        return {
+            "derived_from": list(source_arm_ids),
+            "derivation": "headroom",
+            "limit_bytes": bands.headroom_limit(peak, 125),
+            "predicted_band": None,
+            "largest_step_near_bytes": None,
+            "emergency_threshold_bytes": None,
+            "source_peak_bytes": peak,
+            "source_late_peak_bytes": None,
+        }
+
+    late_peaks = [
+        (arm_id, report, bands.late_peak(v.available_values(report))) for arm_id, report in reports
+    ]
+    _chosen_id, chosen_report, chosen_late_peak = max(late_peaks, key=lambda row: row[2])
+    values = v.available_values(chosen_report)
+    limit = bands.derive_limit(chosen_late_peak)
+    return {
+        "derived_from": list(source_arm_ids),
+        "derivation": "graceful",
+        "limit_bytes": limit,
+        "predicted_band": bands.predict_band(values, limit),
+        "largest_step_near_bytes": bands.largest_step_near(values, limit),
+        "emergency_threshold_bytes": bands.emergency_threshold(limit),
+        "source_peak_bytes": None,
+        "source_late_peak_bytes": chosen_late_peak,
+    }
+
+
+def write_prediction(arm_root: Path, payload: Mapping[str, Any]) -> Path:
+    """Atomically write ``arms/<id>/prediction.json`` before the arm it describes ever launches."""
+    arm_root.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=arm_root, prefix=".prediction-")
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(payload, indent=2) + "\n")
+        dest = arm_root / "prediction.json"
+        os.replace(tmp_name, dest)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
+    return dest
+
+
+def _predicted_band_validator(predicted_band: str) -> Callable[[Mapping[str, Any]], None]:
+    """Return the strict predicted-band validator a ``graceful`` derivation picks for its arm."""
+    return (
+        v.assert_graceful_footprint
+        if predicted_band == "graceful"
+        else v.assert_emergency_footprint
+    )
+
+
+def run_derived_arm(
+    spec: ArmSpec,
+    trial_root: Path,
+    binary: Path,
+    *,
+    source_arm_ids: Sequence[str],
+    derivation: Literal["headroom", "graceful"],
+    dry_run: bool,
+) -> ArmResult:
+    """Derive ``spec``'s limit from ``source_arm_ids``' own reports, then run it via ``run_arm``.
+
+    Writes ``arms/<spec.arm_id>/prediction.json`` before launching (never under ``dry_run``, which
+    only prints the derivation and the argv). For ``graceful``, the spec's validator is replaced
+    with the strict predicted-band assertion — ``run_arm`` records a predicted/observed mismatch as
+    ``band_mismatch`` rather than a hard failure.
+    """
+    derived = compute_derivation(trial_root, source_arm_ids, derivation)
+    predicted_band = derived["predicted_band"]
+    if predicted_band is not None:
+        final_spec = replace(
+            spec,
+            limit_bytes=derived["limit_bytes"],
+            validator=_predicted_band_validator(predicted_band),
+        )
+    else:
+        final_spec = replace(spec, limit_bytes=derived["limit_bytes"])
+
+    if dry_run:
+        print(f"[{spec.arm_id}] derive-from {source_arm_ids} ({derivation}): {derived}")
+        return run_arm(final_spec, trial_root, binary, dry_run=True)
+
+    write_prediction(trial_root / "arms" / spec.arm_id, derived)
+    return run_arm(final_spec, trial_root, binary, dry_run=False, predicted_band=predicted_band)
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -410,6 +605,19 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default=None,
         help="resolved checkpoint timeout for --only's arm (C1)",
     )
+    parser.add_argument(
+        "--derive-from",
+        default=None,
+        metavar="ARM_A[,ARM_B]",
+        help="derive --only's limit (and, for --derivation graceful, its band prediction) "
+        "from these done arms' own reports, instead of a hand-computed --limit-bytes",
+    )
+    parser.add_argument(
+        "--derivation",
+        choices=("headroom", "graceful"),
+        default=None,
+        help="how to derive the limit from --derive-from's arms",
+    )
     parser.add_argument("--assemble", type=Path, default=None, metavar="BUNDLE_DIR")
     return parser.parse_args(argv)
 
@@ -431,12 +639,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("--binary is required unless --assemble is given", file=sys.stderr)
         return 2
 
+    if args.derive_from is not None:
+        if args.only is None:
+            print("--derive-from requires --only", file=sys.stderr)
+            return 2
+        if args.limit_bytes is not None:
+            print("--derive-from and --limit-bytes are mutually exclusive", file=sys.stderr)
+            return 2
+        if args.derivation is None:
+            print("--derive-from requires --derivation headroom|graceful", file=sys.stderr)
+            return 2
+
     import arms as arm_table  # deferred: arms.py imports ArmSpec back from this module
 
     build_kwargs: dict[str, Any] = {}
     if args.mflux_model is not None:
         build_kwargs["mflux_model"] = args.mflux_model
-    if args.only is not None:
+    if args.only is not None and args.derive_from is None:
         # A limit/wall-time/checkpoint-timeout override only ever targets --only's one arm — its
         # value is derived from an earlier arm's own report, one arm at a time.
         if args.limit_bytes is not None:
@@ -452,6 +671,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not specs:
             print(f"unknown arm id {args.only!r}", file=sys.stderr)
             return 2
+
+    if args.derive_from is not None:
+        spec = specs[0]
+        source_arm_ids = [a.strip() for a in args.derive_from.split(",") if a.strip()]
+        try:
+            run_derived_arm(
+                spec,
+                args.trial_root,
+                args.binary,
+                source_arm_ids=source_arm_ids,
+                derivation=args.derivation,
+                dry_run=args.dry_run,
+            )
+        except DerivationError as exc:
+            print(f"derivation refused: {exc}", file=sys.stderr)
+            return 2
+        return 0
 
     for spec in specs:
         if not args.dry_run and is_done(args.trial_root / "arms" / spec.arm_id):
