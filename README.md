@@ -91,8 +91,9 @@ periodic, tree totals are not atomic, and a descendant can leave the group. `mlx
 it cannot promise a hard memory boundary, immediate Metal-driver reclamation, or protection during a
 kernel or system-wide failure. It never chooses a destructive limit automatically.
 
-Interactive terminal job control, sandboxed execution, and Mac App Store distribution are outside
-the v0.1 scope. Direct CLI and Python-wheel distribution are the target.
+An interactive terminal on standard input and shell job control are outside the v0.1 scope, along
+with sandboxed execution and Mac App Store distribution. Direct CLI and Python-wheel distribution
+are the target.
 
 ## MetalGuard and mlx-guard
 

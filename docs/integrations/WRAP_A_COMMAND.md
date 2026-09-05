@@ -28,6 +28,10 @@ The CLI also works without a Python project: `uvx mlx-guard …` runs it on dema
 page are `python3`, used below to build the demo workload, and `jq` for the report-reading commands
 (or use the Python `load_report` route shown at the end).
 
+`mlx-guard` refuses to start if its standard input is an interactive terminal: it exits 64 with
+`mlx-guard: interactive terminal input is unsupported` before launching anything. Run the commands
+on this page from a script, or add `< /dev/null` to the command line, as the transcripts below do.
+
 ## The ladder
 
 Every recipe on this page starts the same way: run the command bare, watch it under `observe`,
@@ -48,7 +52,7 @@ $ echo $?
 
 ```console
 $ mkdir -m 700 reports
-$ mlx-guard observe --report reports/observe.json -- python3 -c "import time; time.sleep(3)"
+$ mlx-guard observe --report reports/observe.json -- python3 -c "import time; time.sleep(3)" < /dev/null
 mlx-guard: child_exited at 3047ms; 57 samples, 0 signals
 $ echo $?
 0
@@ -74,7 +78,7 @@ A bare Python interpreter sleeping costs under 7 MiB here. `run` requires an exp
 well above that observed peak and nothing changes:
 
 ```console
-$ mlx-guard run --max-footprint 64MiB --report reports/run.json -- python3 -c "import time; time.sleep(3)"
+$ mlx-guard run --max-footprint 64MiB --report reports/run.json -- python3 -c "import time; time.sleep(3)" < /dev/null
 mlx-guard: child_exited at 3068ms; 57 samples, 0 signals
 $ echo $?
 0
@@ -92,7 +96,7 @@ no cooperative endpoint to answer it since the command never connected a worker,
 TERM.
 
 ```console
-$ mlx-guard run --max-footprint 64MiB --wall-time 1s --report reports/run-wall-time.json -- python3 -c "import time; time.sleep(3)"
+$ mlx-guard run --max-footprint 64MiB --wall-time 1s --report reports/run-wall-time.json -- python3 -c "import time; time.sleep(3)" < /dev/null
 mlx-guard: policy_intervention at 1095ms; 20 samples, 1 signal
 $ echo $?
 75
@@ -132,7 +136,7 @@ limit close to a measured peak rather than an arbitrarily low one, and using a w
 stable allocation rather than one that keeps growing:
 
 ```console
-$ mlx-guard observe --report reports/observe-footprint.json -- python3 -c "import time; b = bytearray(200 << 20); time.sleep(30)"
+$ mlx-guard observe --report reports/observe-footprint.json -- python3 -c "import time; b = bytearray(200 << 20); time.sleep(30)" < /dev/null
 mlx-guard: child_exited at 30115ms; 558 samples, 0 signals
 $ echo $?
 0
@@ -146,7 +150,7 @@ observed peak below it while still sitting under the peak itself. The run breach
 without ever entering the emergency band:
 
 ```console
-$ mlx-guard run --max-footprint 200MiB --report reports/run-footprint.json -- python3 -c "import time; b = bytearray(200 << 20); time.sleep(30)"
+$ mlx-guard run --max-footprint 200MiB --report reports/run-footprint.json -- python3 -c "import time; b = bytearray(200 << 20); time.sleep(30)" < /dev/null
 mlx-guard: policy_intervention at 165ms; 3 samples, 1 signal
 $ echo $?
 75
@@ -186,10 +190,14 @@ A small LoRA fine-tune with `mlx-lm`:
 
 ```bash
 mlx-guard run --max-footprint <observed peak + headroom> --report reports/lora-finetune.json -- \
-  uvx --from mlx-lm mlx_lm.lora \
+  uvx --from 'mlx-lm[train]' mlx_lm.lora \
     --model mlx-community/Qwen2.5-0.5B-Instruct-4bit \
     --train --data mlx-community/wikisql --iters 200 --adapter-path adapters
 ```
+
+Loading the dataset from the Hub this way pulls in the `datasets` package, which `mlx-lm` ships
+only through its `train` extra; without it, the command loads the model and then stops on that
+import.
 
 An `mflux` image generation, quantized to 8 bits:
 
