@@ -191,6 +191,15 @@ def _derive_metrics(
     arm's samples predicted". The latter (the real ahead-of-launch prediction used for L3/F3) is
     ``predicted_band``, supplied by the caller from ``prediction.json`` via ``--derive-from``; when
     given, ``band_mismatch`` records whether the observed band differs from it.
+
+    The sample-window metrics (``first_sample_captured_at_ms``, ``sample_window_p95_ms`` and
+    ``sample_window_max_ms``) are computed only when every sample actually carries ``window_ms``
+    and ``captured_at_ms`` — true of every real schema-v1 report, false only of a hand-built test
+    double that predates those fields. This is a presence check, not a safety net: once the inputs
+    are there, a malformed value inside them (a wrong type, say) is left to raise rather than being
+    swallowed into a silent ``None`` — a masked exception here is exactly the failure mode 0081 and
+    0085 exist to catch. ``intervention_overshoot`` needs no such guard: it already returns ``None``
+    on its own missing-input cases (see its docstring).
     """
     metrics: dict[str, Any] = {
         "peak_bytes": None,
@@ -204,7 +213,7 @@ def _derive_metrics(
         "unavailable_samples": None,
         "sample_window_p95_ms": None,
         "sample_window_max_ms": None,
-        "intervention_overshoot": None,
+        "intervention_overshoot": v.intervention_overshoot(report),
     }
     with contextlib.suppress(v.ShapeError):
         metrics["peak_bytes"] = v.peak(report)
@@ -214,18 +223,14 @@ def _derive_metrics(
             metrics["self_consistency_band"] = bands.predict_band(values, limit_bytes)
     if predicted_band is not None:
         metrics["band_mismatch"] = metrics["observed_band"] != predicted_band
-    # Independent of the block above and each other: a report missing `window_ms`/`captured_at_ms`
-    # (every hand-rolled band-logic fixture in this test suite) must not blank out peak/band
-    # metrics that don't need those fields, and vice versa.
-    with contextlib.suppress(KeyError, TypeError):
+
+    samples: Sequence[Mapping[str, Any]] = report.get("samples", [])
+    if samples and all("window_ms" in s and "captured_at_ms" in s for s in samples):
         metrics["first_sample_captured_at_ms"] = v.first_sample_captured_at_ms(report)
-    with contextlib.suppress(KeyError, TypeError):
         quality = v.sample_quality(report)
         metrics["unavailable_samples"] = quality["unavailable_samples"]
         metrics["sample_window_p95_ms"] = quality["sample_window_p95_ms"]
         metrics["sample_window_max_ms"] = quality["sample_window_max_ms"]
-    with contextlib.suppress(KeyError, TypeError):
-        metrics["intervention_overshoot"] = v.intervention_overshoot(report)
     return metrics
 
 

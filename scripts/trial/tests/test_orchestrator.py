@@ -48,8 +48,10 @@ UNEVENTFUL_REPORT = """{
   "signals": [],
   "checkpoint": {"status": "not_negotiated"},
   "transitions": [],
+  "configuration": {"sample_interval_ms": 50},
   "samples": [
-    {"aggregate_footprint_bytes": {"status": "available", "value": 42}}
+    {"captured_at_ms": 10, "window_ms": 1,
+     "aggregate_footprint_bytes": {"status": "available", "value": 42}}
   ]
 }"""
 
@@ -70,7 +72,11 @@ EMERGENCY_REPORT = """{
   "transitions": [
     {"at_ms": 880, "from": "normal", "to": "emergency", "aggregate_footprint_bytes": 200}
   ],
-  "samples": [{"aggregate_footprint_bytes": {"status": "available", "value": 200}}]
+  "configuration": {"max_footprint_bytes": 100, "emergency_footprint_bytes": 150},
+  "samples": [
+    {"captured_at_ms": 870, "window_ms": 1,
+     "aggregate_footprint_bytes": {"status": "available", "value": 200}}
+  ]
 }"""
 
 
@@ -419,6 +425,27 @@ def test_result_json_carries_the_three_measurements(
     arms_index = {row["arm_id"]: row for row in json.loads((bundle / "arms.json").read_text())}
     assert arms_index["l0"]["sample_window_max_ms"] == 500
     assert arms_index["l1"]["intervention_overshoot"]["overshoot_bytes"] == -5
+
+
+def test_derive_metrics_raises_on_a_malformed_sample_instead_of_blanking() -> None:
+    """Bug: a suppress block hides a broken field access instead of raising — a sample whose
+    `window_ms` isn't a plain number (a schema drift a real report never produces) would
+    otherwise be silently blanked to Nones rather than surfacing the bug that produced it."""
+    report = {
+        "outcome": {"kind": "child_exited", "code": 0},
+        "signals": [],
+        "checkpoint": {"status": "not_negotiated"},
+        "configuration": {"sample_interval_ms": 50},
+        "samples": [
+            {
+                "captured_at_ms": 10,
+                "window_ms": ["not", "a", "number"],  # present, but not a plain number
+                "aggregate_footprint_bytes": {"status": "available", "value": 10},
+            }
+        ],
+    }
+    with pytest.raises(TypeError):
+        orchestrator._derive_metrics(report, None)
 
 
 def test_version_pin_refuses_a_changed_triple(tmp_path: Path) -> None:

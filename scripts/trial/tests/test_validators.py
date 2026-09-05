@@ -287,16 +287,11 @@ first sample after the signal."""
 def test_intervention_overshoot_is_none_without_an_intervention_or_limit() -> None:
     """Bug: assumes `configuration.max_footprint_bytes` always exists — KeyErrors on an observe \
 report."""
+    # An observe report can never carry a `policy_intervention` outcome (observe mode has nothing
+    # to enforce with) — this is a real observe report's actual shape, an uneventful exit.
     observe_report = {
-        "outcome": {"kind": "policy_intervention", "at_ms": 10},
-        "signals": [
-            {
-                "at_ms": 10,
-                "signal": 15,
-                "target": "owned_process_group",
-                "result": "delivered",
-            }
-        ],
+        "outcome": {"kind": "child_exited", "code": 0},
+        "signals": [],
         "configuration": {"sample_interval_ms": 50},  # observe mode: no max_footprint_bytes
         "samples": [],
     }
@@ -309,6 +304,31 @@ report."""
         "samples": [],
     }
     assert v.intervention_overshoot(uneventful_report) is None
+
+
+def test_intervention_overshoot_returns_none_when_the_emergency_pairing_is_broken() -> None:
+    """Bug: `configuration["emergency_footprint_bytes"]` KeyErrors instead of returning None when
+    `max_footprint_bytes` is present without its schema-invariant partner."""
+    report = {
+        "outcome": {"kind": "policy_intervention", "at_ms": 900},
+        "signals": [
+            {
+                "at_ms": 880,
+                "signal": 15,
+                "target": "owned_process_group",
+                "result": "delivered",
+                "reason": "footprint",
+            }
+        ],
+        "configuration": {"max_footprint_bytes": 100},  # emergency_footprint_bytes missing
+        "samples": [
+            {
+                "captured_at_ms": 870,
+                "aggregate_footprint_bytes": {"status": "available", "value": 90},
+            }
+        ],
+    }
+    assert v.intervention_overshoot(report) is None
 
 
 def test_sample_quality_counts_unavailable_and_p95() -> None:

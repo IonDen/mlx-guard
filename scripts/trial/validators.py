@@ -216,8 +216,9 @@ def intervention_overshoot(report: Report) -> dict[str, int | bool] | None:
     nothing to measure an overshoot against. The observed value is the LAST sample with
     ``captured_at_ms <= signals[0].at_ms`` and an available footprint — never a later, post-signal
     sample (which would inflate the reading with footprint the policy never acted on), and never
-    just the first post-signal sample either. ``overshoot_bytes`` may be negative: a wall-time
-    intervention can fire with the observed footprint still under the limit.
+    just the first post-signal sample either; this assumes samples arrive in non-decreasing
+    ``captured_at_ms`` order, true of every real report. ``overshoot_bytes`` may be negative: a
+    wall-time intervention can fire with the observed footprint still under the limit.
     """
     if report["outcome"]["kind"] != "policy_intervention":
         return None
@@ -238,8 +239,17 @@ def intervention_overshoot(report: Report) -> dict[str, int | bool] | None:
     if observed is None:
         return None
 
+    # `max_footprint_bytes` and `emergency_footprint_bytes` are a schema invariant: a valid
+    # enforce-mode report always carries both together (report.rs's `mode_valid` check), so a
+    # report with the former but not the latter is corrupt, not merely enforce-vs-observe. Read it
+    # with `.get()` and decline to report an overshoot rather than KeyError on that corruption —
+    # everything else about a malformed report is still left to raise.
+    emergency_footprint_bytes = configuration.get("emergency_footprint_bytes")
+    if emergency_footprint_bytes is None:
+        return None
+
     limit_bytes = int(limit_bytes)
-    emergency_threshold_bytes = int(configuration["emergency_footprint_bytes"])
+    emergency_threshold_bytes = int(emergency_footprint_bytes)
     return {
         "observed_at_intervention_bytes": observed,
         "limit_bytes": limit_bytes,
