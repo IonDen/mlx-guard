@@ -230,3 +230,104 @@ def test_redaction_flags_home_and_login() -> None:
     assert v.redaction_clean("ran from ionden's box\n", forbidden=("/Users/", "ionden")) == [
         "ran from ionden's box"
     ]
+
+
+def test_percentile_is_nearest_rank() -> None:
+    """Bug: linear interpolation or an off-by-one index picks the wrong rank."""
+    # nearest-rank p95 of 1..20 is the 2nd-largest, 19 — not an interpolated 19.05.
+    assert v.percentile(list(range(1, 21)), 95) == 19
+    assert v.percentile([5], 95) == 5
+    with pytest.raises(ValueError):
+        v.percentile([], 95)
+
+
+def test_intervention_overshoot_uses_the_last_sample_before_the_signal() -> None:
+    """Bug: uses the global peak (a later post-signal sample inflates the overshoot) or the \
+first sample after the signal."""
+    report = {
+        "outcome": {"kind": "policy_intervention", "at_ms": 900},
+        "signals": [
+            {
+                "at_ms": 880,
+                "signal": 15,
+                "target": "owned_process_group",
+                "result": "delivered",
+                "reason": "footprint",
+            }
+        ],
+        "configuration": {"max_footprint_bytes": 100, "emergency_footprint_bytes": 150},
+        "samples": [
+            {
+                "captured_at_ms": 800,
+                "aggregate_footprint_bytes": {"status": "available", "value": 90},
+            },
+            {
+                "captured_at_ms": 850,
+                "aggregate_footprint_bytes": {"status": "available", "value": 95},
+            },
+            {
+                "captured_at_ms": 880,  # equal to at_ms: still "before or at" the signal
+                "aggregate_footprint_bytes": {"status": "available", "value": 98},
+            },
+            {
+                "captured_at_ms": 920,  # after the signal: must never be used
+                "aggregate_footprint_bytes": {"status": "available", "value": 500},
+            },
+        ],
+    }
+    assert v.intervention_overshoot(report) == {
+        "observed_at_intervention_bytes": 98,
+        "limit_bytes": 100,
+        "overshoot_bytes": -2,
+        "emergency_threshold_bytes": 150,
+        "within_band": True,
+    }
+
+
+def test_intervention_overshoot_is_none_without_an_intervention_or_limit() -> None:
+    """Bug: assumes `configuration.max_footprint_bytes` always exists — KeyErrors on an observe \
+report."""
+    observe_report = {
+        "outcome": {"kind": "policy_intervention", "at_ms": 10},
+        "signals": [
+            {
+                "at_ms": 10,
+                "signal": 15,
+                "target": "owned_process_group",
+                "result": "delivered",
+            }
+        ],
+        "configuration": {"sample_interval_ms": 50},  # observe mode: no max_footprint_bytes
+        "samples": [],
+    }
+    assert v.intervention_overshoot(observe_report) is None
+
+    uneventful_report = {
+        "outcome": {"kind": "child_exited", "code": 0},
+        "signals": [],
+        "configuration": {"max_footprint_bytes": 100, "emergency_footprint_bytes": 150},
+        "samples": [],
+    }
+    assert v.intervention_overshoot(uneventful_report) is None
+
+
+def test_sample_quality_counts_unavailable_and_p95() -> None:
+    """Bug: p95 computed over available samples only, hiding the slow partial samples that \
+matter for 0081."""
+    report = {
+        "samples": [
+            {"window_ms": 1, "aggregate_footprint_bytes": {"status": "available", "value": 10}},
+            {"window_ms": 2, "aggregate_footprint_bytes": {"status": "available", "value": 20}},
+            {
+                "window_ms": 500,  # the slow one: only visible if partial samples aren't excluded
+                "aggregate_footprint_bytes": {"status": "partial", "known_subtotal": 5},
+            },
+        ]
+    }
+    quality = v.sample_quality(report)
+    assert quality == {
+        "sample_count": 3,
+        "unavailable_samples": 1,
+        "sample_window_p95_ms": 500,
+        "sample_window_max_ms": 500,
+    }

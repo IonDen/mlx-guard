@@ -64,6 +64,14 @@ class ArmResult:
     report_path: str | None = None
     predicted_band: str | None = None
     band_mismatch: bool | None = None
+    first_sample_captured_at_ms: int | None = None
+    unavailable_samples: int | None = None
+    sample_window_p95_ms: int | None = None
+    sample_window_max_ms: int | None = None
+    # Nested rather than flattened (documented here, not repeated at each call site): mirrors
+    # validators.intervention_overshoot's own dict shape one-for-one, so result.json and arms.json
+    # carry exactly what that function returns, verbatim, with no risk of the two drifting apart.
+    intervention_overshoot: dict[str, int | bool] | None = None
 
 
 class VersionPinError(RuntimeError):
@@ -192,6 +200,11 @@ def _derive_metrics(
         "self_consistency_band": None,
         "predicted_band": predicted_band,
         "band_mismatch": None,
+        "first_sample_captured_at_ms": None,
+        "unavailable_samples": None,
+        "sample_window_p95_ms": None,
+        "sample_window_max_ms": None,
+        "intervention_overshoot": None,
     }
     with contextlib.suppress(v.ShapeError):
         metrics["peak_bytes"] = v.peak(report)
@@ -201,6 +214,18 @@ def _derive_metrics(
             metrics["self_consistency_band"] = bands.predict_band(values, limit_bytes)
     if predicted_band is not None:
         metrics["band_mismatch"] = metrics["observed_band"] != predicted_band
+    # Independent of the block above and each other: a report missing `window_ms`/`captured_at_ms`
+    # (every hand-rolled band-logic fixture in this test suite) must not blank out peak/band
+    # metrics that don't need those fields, and vice versa.
+    with contextlib.suppress(KeyError, TypeError):
+        metrics["first_sample_captured_at_ms"] = v.first_sample_captured_at_ms(report)
+    with contextlib.suppress(KeyError, TypeError):
+        quality = v.sample_quality(report)
+        metrics["unavailable_samples"] = quality["unavailable_samples"]
+        metrics["sample_window_p95_ms"] = quality["sample_window_p95_ms"]
+        metrics["sample_window_max_ms"] = quality["sample_window_max_ms"]
+    with contextlib.suppress(KeyError, TypeError):
+        metrics["intervention_overshoot"] = v.intervention_overshoot(report)
     return metrics
 
 
@@ -220,6 +245,11 @@ def _result_to_json(result: ArmResult, attempt: Path) -> dict[str, Any]:
         "observed_band": result.observed_band,
         "predicted_band": result.predicted_band,
         "band_mismatch": result.band_mismatch,
+        "first_sample_captured_at_ms": result.first_sample_captured_at_ms,
+        "unavailable_samples": result.unavailable_samples,
+        "sample_window_p95_ms": result.sample_window_p95_ms,
+        "sample_window_max_ms": result.sample_window_max_ms,
+        "intervention_overshoot": result.intervention_overshoot,
     }
 
 
@@ -299,6 +329,11 @@ def run_arm(
         "self_consistency_band": None,
         "predicted_band": predicted_band,
         "band_mismatch": None,
+        "first_sample_captured_at_ms": None,
+        "unavailable_samples": None,
+        "sample_window_p95_ms": None,
+        "sample_window_max_ms": None,
+        "intervention_overshoot": None,
     }
     if report is not None:
         with contextlib.suppress(KeyError, TypeError):

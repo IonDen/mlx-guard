@@ -179,3 +179,87 @@ def assert_resume(marker: Mapping[str, Any], c1_meta: Mapping[str, Any], c1_repo
 def redaction_clean(text: str, *, forbidden: tuple[str, ...]) -> list[str]:
     """Lines containing any forbidden fragment (home paths, login name, cache overrides)."""
     return [line for line in text.splitlines() if any(f in line for f in forbidden)]
+
+
+def sample_windows_ms(report: Report) -> list[int]:
+    """Every sample's ``window_ms``, in report order."""
+    return [int(s["window_ms"]) for s in report["samples"]]
+
+
+def percentile(values: Sequence[int], percent: int) -> int:
+    """Nearest-rank percentile: sort ascending, index ``ceil(n * percent / 100) - 1``.
+
+    Matches the nearest-rank definition ``reference_runtime_calibration.rs``'s ``percentile95``
+    helper uses for the escalation-envelope measurements. Raises ``ValueError`` on an empty
+    sequence — there is no percentile of nothing.
+    """
+    if not values:
+        raise ValueError("percentile of an empty sequence")
+    ordered = sorted(values)
+    index = -(-(len(ordered) * percent) // 100) - 1
+    return ordered[index]
+
+
+def first_sample_captured_at_ms(report: Report) -> int | None:
+    """Return the first sample's ``captured_at_ms``, or None when no sample was ever taken."""
+    samples: Sequence[Mapping[str, Any]] = report["samples"]
+    if not samples:
+        return None
+    return int(samples[0]["captured_at_ms"])
+
+
+def intervention_overshoot(report: Report) -> dict[str, int | bool] | None:
+    """Footprint observed at the moment of the first intervention signal, against the limit.
+
+    None unless the outcome is a policy intervention with at least one signal and a resolved
+    ``max_footprint_bytes`` (enforce mode only) — an observe report, or an uneventful exit, has
+    nothing to measure an overshoot against. The observed value is the LAST sample with
+    ``captured_at_ms <= signals[0].at_ms`` and an available footprint — never a later, post-signal
+    sample (which would inflate the reading with footprint the policy never acted on), and never
+    just the first post-signal sample either. ``overshoot_bytes`` may be negative: a wall-time
+    intervention can fire with the observed footprint still under the limit.
+    """
+    if report["outcome"]["kind"] != "policy_intervention":
+        return None
+    signals: Sequence[Mapping[str, Any]] = report["signals"]
+    if not signals:
+        return None
+    configuration: Mapping[str, Any] = report["configuration"]
+    limit_bytes = configuration.get("max_footprint_bytes")
+    if limit_bytes is None:
+        return None
+    at_ms = signals[0]["at_ms"]
+
+    observed: int | None = None
+    for sample in report["samples"]:
+        footprint = sample["aggregate_footprint_bytes"]
+        if sample["captured_at_ms"] <= at_ms and footprint["status"] == "available":
+            observed = int(footprint["value"])
+    if observed is None:
+        return None
+
+    limit_bytes = int(limit_bytes)
+    emergency_threshold_bytes = int(configuration["emergency_footprint_bytes"])
+    return {
+        "observed_at_intervention_bytes": observed,
+        "limit_bytes": limit_bytes,
+        "overshoot_bytes": observed - limit_bytes,
+        "emergency_threshold_bytes": emergency_threshold_bytes,
+        "within_band": observed < emergency_threshold_bytes,
+    }
+
+
+def sample_quality(report: Report) -> dict[str, int]:
+    """Sample-window health: counts plus the p95/max window over EVERY sample.
+
+    The percentile and max deliberately run over every sample's ``window_ms``, not only samples
+    with an available footprint — a slow ``partial`` sample's window is exactly the signal 0081
+    cares about, and restricting to available samples would hide it.
+    """
+    windows = sample_windows_ms(report)
+    return {
+        "sample_count": len(report["samples"]),
+        "unavailable_samples": unavailable_count(report),
+        "sample_window_p95_ms": percentile(windows, 95) if windows else 0,
+        "sample_window_max_ms": max(windows) if windows else 0,
+    }

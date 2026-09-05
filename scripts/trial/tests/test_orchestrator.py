@@ -74,6 +74,44 @@ EMERGENCY_REPORT = """{
 }"""
 
 
+REPORT_WITH_QUALITY = """{
+  "outcome": {"kind": "child_exited", "code": 0},
+  "signals": [],
+  "checkpoint": {"status": "not_negotiated"},
+  "transitions": [],
+  "configuration": {"sample_interval_ms": 50},
+  "samples": [
+    {"captured_at_ms": 10, "window_ms": 1,
+     "aggregate_footprint_bytes": {"status": "available", "value": 10}},
+    {"captured_at_ms": 20, "window_ms": 5,
+     "aggregate_footprint_bytes": {"status": "available", "value": 20}},
+    {"captured_at_ms": 30, "window_ms": 500,
+     "aggregate_footprint_bytes": {"status": "partial", "known_subtotal": 5}}
+  ]
+}"""
+
+REPORT_WITH_INTERVENTION = """{
+  "outcome": {
+    "kind": "policy_intervention", "at_ms": 900, "final_footprint_bytes": {"status": "unknown"}
+  },
+  "signals": [
+    {"at_ms": 880, "signal": 9, "target": "owned_process_group",
+     "result": "delivered", "reason": "footprint"}
+  ],
+  "checkpoint": {"status": "not_negotiated"},
+  "transitions": [
+    {"at_ms": 880, "from": "normal", "to": "emergency", "aggregate_footprint_bytes": 200}
+  ],
+  "configuration": {"max_footprint_bytes": 100, "emergency_footprint_bytes": 150},
+  "samples": [
+    {"captured_at_ms": 800, "window_ms": 2,
+     "aggregate_footprint_bytes": {"status": "available", "value": 90}},
+    {"captured_at_ms": 850, "window_ms": 3,
+     "aggregate_footprint_bytes": {"status": "available", "value": 95}}
+  ]
+}"""
+
+
 def multi_sample_report(values: list[int]) -> dict[str, object]:
     return {
         "outcome": {"kind": "child_exited", "code": 0},
@@ -338,6 +376,49 @@ def test_only_can_carry_c2s_resume_paths_through_to_the_launcher(
         ]
     )
     assert rejected == 2
+
+
+def test_result_json_carries_the_three_measurements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug: metrics computed but not persisted, so the bundle cannot cite them."""
+    binary = write_fake_binary(tmp_path / "fake-mlx-guard.sh")
+    monkeypatch.setenv("FAKE_REPORT_BODY", REPORT_WITH_QUALITY)
+    monkeypatch.setenv("FAKE_EXIT_CODE", "0")
+    orchestrator.run_arm(make_spec("l0"), tmp_path, binary, dry_run=False)
+    result_l0 = json.loads((tmp_path / "arms" / "l0" / "attempt-1" / "result.json").read_text())
+    assert result_l0["first_sample_captured_at_ms"] == 10
+    assert result_l0["unavailable_samples"] == 1
+    assert result_l0["sample_window_p95_ms"] == 500
+    assert result_l0["sample_window_max_ms"] == 500
+    assert result_l0["intervention_overshoot"] is None
+
+    monkeypatch.setenv("FAKE_REPORT_BODY", REPORT_WITH_INTERVENTION)
+    spec_l1 = orchestrator.ArmSpec(
+        arm_id="l1",
+        mode="run",
+        argv=("/bin/echo", "hi"),
+        sample_interval_ms=50,
+        limit_bytes=100,
+        wall_time_ms=None,
+        validator=v.assert_emergency_footprint,
+        notes="test arm with an intervention",
+    )
+    orchestrator.run_arm(spec_l1, tmp_path, binary, dry_run=False)
+    result_l1 = json.loads((tmp_path / "arms" / "l1" / "attempt-1" / "result.json").read_text())
+    assert result_l1["intervention_overshoot"] == {
+        "observed_at_intervention_bytes": 95,
+        "limit_bytes": 100,
+        "overshoot_bytes": -5,
+        "emergency_threshold_bytes": 150,
+        "within_band": True,
+    }
+
+    bundle = tmp_path / "bundle"
+    orchestrator.assemble(tmp_path, bundle)
+    arms_index = {row["arm_id"]: row for row in json.loads((bundle / "arms.json").read_text())}
+    assert arms_index["l0"]["sample_window_max_ms"] == 500
+    assert arms_index["l1"]["intervention_overshoot"]["overshoot_bytes"] == -5
 
 
 def test_version_pin_refuses_a_changed_triple(tmp_path: Path) -> None:
