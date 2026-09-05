@@ -117,6 +117,21 @@ REPORT_WITH_INTERVENTION = """{
   ]
 }"""
 
+# A shape-valid report (a real uneventful exit — assert_child_exit passes it clean) whose one
+# sample's `window_ms` is present but not a plain number, so metrics DERIVATION fails even though
+# validation does not.
+MALFORMED_SAMPLE_REPORT = """{
+  "outcome": {"kind": "child_exited", "code": 0},
+  "signals": [],
+  "checkpoint": {"status": "not_negotiated"},
+  "transitions": [],
+  "configuration": {"sample_interval_ms": 50},
+  "samples": [
+    {"captured_at_ms": 10, "window_ms": ["not", "a", "number"],
+     "aggregate_footprint_bytes": {"status": "available", "value": 10}}
+  ]
+}"""
+
 
 def multi_sample_report(values: list[int]) -> dict[str, object]:
     return {
@@ -446,6 +461,39 @@ def test_derive_metrics_raises_on_a_malformed_sample_instead_of_blanking() -> No
     }
     with pytest.raises(TypeError):
         orchestrator._derive_metrics(report, None)
+
+
+def test_run_arm_records_a_metrics_failure_instead_of_blanking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug: the outer suppress around `_derive_metrics` hides a broken derivation, marking the
+    arm done anyway with every metric silently blanked to None."""
+    binary = write_fake_binary(tmp_path / "fake-mlx-guard.sh")
+    monkeypatch.setenv("FAKE_REPORT_BODY", MALFORMED_SAMPLE_REPORT)
+    monkeypatch.setenv("FAKE_EXIT_CODE", "0")
+    spec = make_spec("l0")  # validator: assert_child_exit(report, 0) — the shape itself is fine
+    result = orchestrator.run_arm(spec, tmp_path, binary, dry_run=False)
+
+    # The report's SHAPE validated clean; only deriving its measurements failed. Both are recorded
+    # (validator_ok True, a real metrics_error) — and mark_done still refuses on the latter alone.
+    assert result.validator_ok is True
+    assert result.validator_error is None
+    assert result.metrics_error is not None
+    assert "TypeError" in result.metrics_error
+    assert result.peak_bytes is None  # blanked to the safe default, never a partial/garbage value
+
+    arm_root = tmp_path / "arms" / "l0"
+    assert not orchestrator.is_done(arm_root)  # not marked done: the arm must retry, not be kept
+
+    attempt = arm_root / "attempt-1"
+    assert (attempt / "result.json").exists()  # evidence survives on disk for forensics
+    assert not (arm_root / "status").exists()
+
+    result_json = json.loads((attempt / "result.json").read_text())
+    assert result_json["metrics_error"] is not None
+    assert "TypeError" in result_json["metrics_error"]
+    assert result_json["validator_ok"] is True
+    assert result_json["peak_bytes"] is None
 
 
 def test_version_pin_refuses_a_changed_triple(tmp_path: Path) -> None:

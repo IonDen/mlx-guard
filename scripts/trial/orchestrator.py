@@ -56,6 +56,11 @@ class ArmResult:
     duration_s: float | None = None
     validator_ok: bool | None = None
     validator_error: str | None = None
+    # Distinct from validator_error: the report's SHAPE can be valid (validator_ok True) while
+    # deriving its measurements still fails (a schema-drift or field-access bug in this harness,
+    # not a defect in the arm's own run) — mark_done refuses whenever either is set, so a metrics
+    # failure retries into a fresh attempt directory exactly like a validator failure does.
+    metrics_error: str | None = None
     peak_bytes: int | None = None
     sample_count: int | None = None
     ring_wrapped: bool | None = None
@@ -243,6 +248,7 @@ def _result_to_json(result: ArmResult, attempt: Path) -> dict[str, Any]:
         "duration_s": result.duration_s,
         "validator_ok": result.validator_ok,
         "validator_error": result.validator_error,
+        "metrics_error": result.metrics_error,
         "peak_bytes": result.peak_bytes,
         "sample_count": result.sample_count,
         "ring_wrapped": result.ring_wrapped,
@@ -340,29 +346,39 @@ def run_arm(
         "sample_window_max_ms": None,
         "intervention_overshoot": None,
     }
+    metrics_error: str | None = None
     if report is not None:
-        with contextlib.suppress(KeyError, TypeError):
+        try:
             metrics = _derive_metrics(report, spec.limit_bytes, predicted_band)
-        if validator_error is not None and metrics.get("band_mismatch"):
-            # The validator was chosen from the PREDICTED band; a mismatch means it just
-            # asserted the wrong shape, not that the shape itself is bad. Confirm the report is a
-            # valid instance of whatever band actually happened before accepting it as evidence.
-            observed = metrics.get("observed_band")
-            fallback = (
-                v.assert_graceful_footprint
-                if observed == "graceful"
-                else v.assert_emergency_footprint
-                if observed == "emergency"
-                else None
-            )
-            if fallback is not None:
-                try:
-                    fallback(report)
-                    validator_error = None
-                except v.ShapeError as exc:
-                    validator_error = (
-                        f"{type(exc).__name__}: {exc} (also failed the observed-band check)"
-                    )
+        except (KeyError, TypeError) as exc:
+            # A shape-valid report whose measurements still can't be derived (a schema drift or a
+            # field-access bug in this harness) is a defect we must see, not a result to record
+            # silently as all-None metrics — leave `metrics` at its safe default above and refuse
+            # `mark_done` below, same as a validator failure, so the attempt directory survives
+            # for forensics and the arm retries into a fresh one rather than being accepted.
+            metrics_error = f"{type(exc).__name__}: {exc}"
+        else:
+            if validator_error is not None and metrics.get("band_mismatch"):
+                # The validator was chosen from the PREDICTED band; a mismatch means it just
+                # asserted the wrong shape, not that the shape itself is bad. Confirm the report is
+                # a valid instance of whatever band actually happened before accepting it as
+                # evidence.
+                observed = metrics.get("observed_band")
+                fallback = (
+                    v.assert_graceful_footprint
+                    if observed == "graceful"
+                    else v.assert_emergency_footprint
+                    if observed == "emergency"
+                    else None
+                )
+                if fallback is not None:
+                    try:
+                        fallback(report)
+                        validator_error = None
+                    except v.ShapeError as exc:
+                        validator_error = (
+                            f"{type(exc).__name__}: {exc} (also failed the observed-band check)"
+                        )
 
     result = ArmResult(
         arm_id=spec.arm_id,
@@ -373,13 +389,14 @@ def run_arm(
         duration_s=duration_s,
         validator_ok=validator_error is None,
         validator_error=validator_error,
+        metrics_error=metrics_error,
         report_path=str(report_path.relative_to(attempt)),
         **metrics,
     )
     (attempt / "result.json").write_text(
         json.dumps(_result_to_json(result, attempt), indent=2) + "\n"
     )
-    if validator_error is None:
+    if validator_error is None and metrics_error is None:
         mark_done(arm_root, attempt)
     return result
 
