@@ -80,17 +80,33 @@ def _assert_cooperative_wall_time(report: Mapping[str, object]) -> None:
     v.assert_cooperative(report, reason="wall_time")
 
 
+def _resume_flags(
+    resume_report: Mapping[str, str] | None, c1_checkpoints: Mapping[str, str] | None
+) -> tuple[str, ...]:
+    """Render C2's ``--resume-report``/``--c1-checkpoints`` pair, or refuse a half-given pair."""
+    report = None if resume_report is None else resume_report.get("C2")
+    checkpoints = None if c1_checkpoints is None else c1_checkpoints.get("C2")
+    if (report is None) != (checkpoints is None):
+        raise ValueError("C2 needs both --resume-report and --c1-checkpoints")
+    if report is None or checkpoints is None:
+        return ()
+    return ("--resume-report", report, "--c1-checkpoints", checkpoints)
+
+
 def build_arms(
     *,
     mflux_model: str = MFLUX_MODEL,
     limit_bytes: Mapping[str, int] | None = None,
     wall_time_ms: Mapping[str, int] | None = None,
     checkpoint_timeout_ms: Mapping[str, int] | None = None,
+    resume_report: Mapping[str, str] | None = None,
+    c1_checkpoints: Mapping[str, str] | None = None,
 ) -> list[ArmSpec]:
     """Build the full trial matrix, in run order: T0, L0, L1a/b, L2, L3, F0, F1a/b, F2, F3, C0-2."""
     lora_l0 = _lora_argv(from_spec="mlx-lm")
     lora_l1plus = _lora_argv(from_spec="mlx-lm[train]")
     mflux_argv = _mflux_argv(model=mflux_model)
+    resume_flags = _resume_flags(resume_report, c1_checkpoints)
 
     return [
         ArmSpec(
@@ -291,15 +307,16 @@ def build_arms(
                     _lookup(checkpoint_timeout_ms, "C2"),
                     "<checkpoint-timeout>",
                 ),
+                *resume_flags,
             ),
             sample_interval_ms=50,
             limit_bytes=_lookup(limit_bytes, "C2"),
             wall_time_ms=None,
             validator=lambda report: v.assert_child_exit(report, 0),
             notes=(
-                "resume from C1's artifact (--resume-report/--c1-checkpoints added by hand at "
-                "launch, once C1's attempt directory is known); wait >= 30s after C1 "
-                "(PYTHON_API.md walkthrough)"
+                "resume from C1's artifact (--resume-report/--c1-checkpoints come from the "
+                "orchestrator's own --resume-report/--c1-checkpoints flags, once C1's attempt "
+                "directory is known); wait >= 30s after C1 (PYTHON_API.md walkthrough)"
             ),
         ),
     ]

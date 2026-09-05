@@ -293,6 +293,53 @@ def test_band_mismatch_is_recorded_not_failed(
     assert orchestrator.is_done(tmp_path / "arms" / "L3")
 
 
+def test_only_can_carry_c2s_resume_paths_through_to_the_launcher(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Bug: `orchestrator.py` has no `--resume-report`/`--c1-checkpoints` flags, so a real C2
+    resume launch can never be driven through the CLI — only a hand-edited `ArmSpec`."""
+    binary = write_fake_binary(tmp_path / "fake-mlx-guard.sh")
+    argv = [
+        "--trial-root",
+        str(tmp_path),
+        "--binary",
+        str(binary),
+        "--only",
+        "C2",
+        "--limit-bytes",
+        "1",
+        "--checkpoint-timeout-ms",
+        "1000",
+        "--resume-report",
+        "../../C1/attempt-1/reports/c1.json",
+        "--c1-checkpoints",
+        "../../C1/attempt-1/checkpoints",
+        "--dry-run",
+    ]
+    exit_code = orchestrator.main(argv)
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "--resume-report" in captured.out
+    assert "../../C1/attempt-1/reports/c1.json" in captured.out
+    assert "--c1-checkpoints" in captured.out
+    assert "../../C1/attempt-1/checkpoints" in captured.out
+
+    rejected = orchestrator.main(
+        [
+            "--trial-root",
+            str(tmp_path),
+            "--binary",
+            str(binary),
+            "--resume-report",
+            "../../C1/attempt-1/reports/c1.json",
+            "--c1-checkpoints",
+            "../../C1/attempt-1/checkpoints",
+            "--dry-run",
+        ]
+    )
+    assert rejected == 2
+
+
 def test_version_pin_refuses_a_changed_triple(tmp_path: Path) -> None:
     """Bug: L2 launched against a different mlx-lm than L1 calibrated."""
     orchestrator.record_version(tmp_path, "L", "mlx-lm==0.31.3")

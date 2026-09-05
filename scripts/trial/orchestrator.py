@@ -606,6 +606,16 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="resolved checkpoint timeout for --only's arm (C1)",
     )
     parser.add_argument(
+        "--resume-report",
+        default=None,
+        help="C2 only: path to C1's report.json, passed through to the launcher unchanged",
+    )
+    parser.add_argument(
+        "--c1-checkpoints",
+        default=None,
+        help="C2 only: path to C1's checkpoint root, passed through to the launcher unchanged",
+    )
+    parser.add_argument(
         "--derive-from",
         default=None,
         metavar="ARM_A[,ARM_B]",
@@ -628,6 +638,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     ``--dry-run`` prints every arm's argv; ``--assemble`` collects done arms' evidence.
     """
     args = _parse_args(argv if argv is not None else sys.argv[1:])
+
+    if (args.resume_report is not None or args.c1_checkpoints is not None) and args.only is None:
+        print("--resume-report/--c1-checkpoints require --only", file=sys.stderr)
+        return 2
 
     if args.assemble is not None:
         written = assemble(args.trial_root, args.assemble)
@@ -664,6 +678,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             build_kwargs["wall_time_ms"] = {args.only: args.wall_time_ms}
         if args.checkpoint_timeout_ms is not None:
             build_kwargs["checkpoint_timeout_ms"] = {args.only: args.checkpoint_timeout_ms}
+        if args.resume_report is not None:
+            build_kwargs["resume_report"] = {args.only: args.resume_report}
+        if args.c1_checkpoints is not None:
+            build_kwargs["c1_checkpoints"] = {args.only: args.c1_checkpoints}
     specs = arm_table.build_arms(**build_kwargs)
 
     if args.only is not None:
