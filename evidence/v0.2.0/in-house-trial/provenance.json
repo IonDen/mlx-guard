@@ -1,0 +1,21 @@
+{
+  "commit": "4d8796a323eb3de2cd93c2a056a98d323f939721",
+  "branch": "trial/in-house-recipes",
+  "worktree_clean": true,
+  "rust_tree_equals": "b6a0504",
+  "binary": {
+    "version": "mlx-guard 0.1.0",
+    "sha256": "3ddb3497789e218e3a95fd38ff95c7f2640f256452678705a37db81043eadd8f",
+    "profile": "release",
+    "wheel_filename": null
+  },
+  "macos": {
+    "ProductVersion": "26.6.2",
+    "BuildVersion": "25G83"
+  },
+  "chip": "Apple M1 Max",
+  "memory_bytes": 34359738368,
+  "power_source": "ac",
+  "memory_pressure_free_percent": 87.0,
+  "captured_at": "2026-09-06T15:58:07.668350+00:00"
+}

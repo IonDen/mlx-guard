@@ -1,0 +1,6 @@
+{
+  "bare_exit": 64,
+  "bare_stderr": "mlx-guard: interactive terminal input is unsupported",
+  "remedy_exit": 0,
+  "remedy_stderr": "mlx-guard: child_exited at 3072ms; 53 samples, 0 signals"
+}

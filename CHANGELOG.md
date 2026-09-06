@@ -42,6 +42,11 @@ versions follow Semantic Versioning.
   timing across real supervised runs. Reference measurements from the M1 Max 32 GB host are
   published in `evidence/v0.2.0/m1-max-32gb/` and summarized in `docs/POLICY.md`, with a
   dispatch-only workflow for shared-VM corroboration.
+- An in-house trial exercises mlx-guard against two real, published command recipes: an `mlx-lm`
+  LoRA fine-tune and an `mflux` image generation. Under enforced footprint limits it covers a limit
+  with headroom that stays silent, a graceful footprint TERM on each recipe, and a wall-time
+  cooperative checkpoint with a resume from it. The schema-v1 reports, checksummed journals, and
+  provenance are published in `evidence/v0.2.0/in-house-trial/`.
 - Reports record `checkpoint.request_id`, `checkpoint.reason`, and `checkpoint.artifact`
   (path-free `kind`/`size_bytes` facts echoed from a completed acknowledgement), so a later
   process can join an interrupted run back to whatever the worker actually saved.
