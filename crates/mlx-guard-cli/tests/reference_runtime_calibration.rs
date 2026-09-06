@@ -185,6 +185,24 @@ fn scenario_diagnostic(stderr: &[u8]) -> Option<String> {
     (!residual.is_empty()).then_some(residual)
 }
 
+#[test]
+fn scenario_diagnostic_drops_the_launch_banner_but_keeps_a_real_anomaly() {
+    // Catches the filter over-matching (swallowing a real anomaly line) or under-matching
+    // (recording the expected launch banner as though it were a diagnostic).
+    let banner = b"mlx-guard: enforcing a 100-byte footprint limit; emergency KILL at 110 bytes, about 10% above the limit\n";
+    assert_eq!(scenario_diagnostic(banner), None);
+    assert_eq!(
+        scenario_diagnostic(b"mlx-guard: artifact read failed\n"),
+        Some("mlx-guard: artifact read failed".to_owned())
+    );
+    let mixed = b"mlx-guard: enforcing a 100-byte footprint limit; emergency KILL at 110 bytes, about 10% above the limit\nmlx-guard: artifact read failed\n";
+    assert_eq!(
+        scenario_diagnostic(mixed),
+        Some("mlx-guard: artifact read failed".to_owned())
+    );
+    assert_eq!(scenario_diagnostic(b""), None);
+}
+
 fn scenario_record(
     output_directory: &Path,
     name: &str,

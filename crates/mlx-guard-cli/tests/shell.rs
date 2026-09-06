@@ -48,6 +48,23 @@ impl Drop for TestDirectory {
 }
 
 #[cfg(target_os = "macos")]
+/// Assert a successful `run`'s stderr is exactly the one launch-banner line and nothing else, so an
+/// unexpected diagnostic, panic fragment, or stray warning on the same stream still fails the test
+/// (the strictness the old `stderr.is_empty()` assertions gave, kept now that the banner is present).
+fn assert_only_launch_banner(stderr: &[u8]) {
+    let text = String::from_utf8_lossy(stderr);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "a successful run's stderr must be only the launch banner: {text:?}"
+    );
+    assert!(
+        lines[0].contains("emergency KILL"),
+        "the one stderr line must be the launch banner: {text:?}"
+    );
+}
+
 fn wait_for_first_sample(journal_path: &std::path::Path) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
@@ -209,11 +226,7 @@ fn run_wall_limit_drives_policy_term_and_returns_intervention_status() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("emergency KILL"),
-        "run must announce the emergency threshold at launch: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_only_launch_banner(&output.stderr);
     assert!(String::from_utf8_lossy(&output.stdout).starts_with("mlx-guard: policy_intervention"));
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
@@ -270,11 +283,7 @@ fn run_preserves_a_fast_child_exit_and_finalizes_its_report() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("emergency KILL"),
-        "run must announce the emergency threshold at launch: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_only_launch_banner(&output.stderr);
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -359,11 +368,7 @@ fn raw_child_output_is_not_control_data_or_a_persisted_guard_artifact() {
         .expect("the command must run");
 
     assert_eq!(output.status.code(), Some(0));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("emergency KILL"),
-        "run must announce the emergency threshold at launch: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_only_launch_banner(&output.stderr);
     assert!(output.stdout.starts_with(child_output.as_bytes()));
     for entry in fs::read_dir(&directory.0).unwrap() {
         let bytes = fs::read(entry.unwrap().path()).unwrap();
@@ -401,11 +406,7 @@ fn run_emergency_footprint_breach_kills_the_owned_group() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("emergency KILL"),
-        "run must announce the emergency threshold at launch: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_only_launch_banner(&output.stderr);
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -455,11 +456,7 @@ fn first_sigint_is_forwarded_and_the_child_signal_status_is_preserved() {
     let output = guard.wait_with_output().expect("supervisor must terminate");
 
     assert_eq!(output.status.code(), Some(130));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("emergency KILL"),
-        "run must announce the emergency threshold at launch: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_only_launch_banner(&output.stderr);
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -513,11 +510,7 @@ fn repeated_terminal_signal_escalates_to_group_kill() {
     let output = guard.wait_with_output().expect("supervisor must terminate");
 
     assert_eq!(output.status.code(), Some(137));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("emergency KILL"),
-        "run must announce the emergency threshold at launch: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_only_launch_banner(&output.stderr);
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -699,11 +692,7 @@ fn policy_kills_a_worker_that_outlives_term_grace() {
         .expect("the command must run");
 
     assert_eq!(output.status.code(), Some(75));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("emergency KILL"),
-        "run must announce the emergency threshold at launch: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert_only_launch_banner(&output.stderr);
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )

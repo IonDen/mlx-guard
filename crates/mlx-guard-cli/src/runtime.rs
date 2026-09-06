@@ -139,11 +139,7 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
         advisory: NativeAdvisoryObserver::new(),
         calibration: ObserveCalibration::new(),
         report_samples: VecDeque::with_capacity(MAX_SAMPLE_HISTORY_CAPACITY),
-        policy: PolicyMachine::observe(
-            sample_config.max_sample_age(),
-            options.common.sample_interval,
-            MAX_MISSING_SAMPLES,
-        ),
+        policy: observe_policy_machine(&sample_config),
         observation_failed: false,
         terminal_signals,
         terminal_signal_count: 0,
@@ -1684,6 +1680,19 @@ fn sampling_config(common: &CommonOptions) -> Result<SamplingConfig, RuntimeResu
     })
 }
 
+/// Build the observe-mode policy machine with the same floored quality window the sampler uses.
+///
+/// The policy machine re-checks each sample's collection window against its own config, so it must
+/// carry the floored window (not the raw `--sample-interval`), or observe mode would misread a
+/// slow-but-healthy sample as observation failure exactly as the run path did before the floor.
+fn observe_policy_machine(sample_config: &SamplingConfig) -> PolicyMachine {
+    PolicyMachine::observe(
+        sample_config.max_sample_age(),
+        sample_config.max_sample_window(),
+        MAX_MISSING_SAMPLES,
+    )
+}
+
 fn observed_value(value: &Observed<u64>) -> Option<u64> {
     match value {
         Observed::Available { value } => Some(*value),
@@ -1960,7 +1969,7 @@ mod tests {
     use super::{
         CommonOptions, DEFAULT_CHECKPOINT_TIMEOUT, MAX_MISSING_SAMPLES, MIN_SAMPLE_AGE,
         MIN_SAMPLE_WINDOW, REQUIRED_BREACH_SAMPLES, RunOptions, TERM_GRACE, launch_banner,
-        run_policy_config, sample_quality_bounds, sampling_config,
+        observe_policy_machine, run_policy_config, sample_quality_bounds, sampling_config,
     };
     use mlx_guard_core::{
         Action, MAX_SAMPLE_HISTORY_CAPACITY, PolicyConfig, PolicyMachine, SamplingConfig,
@@ -2099,6 +2108,12 @@ mod tests {
         // Catches a launch banner that hides the emergency band a run authorises: choosing a limit
         // authorises KILL about 10% above it, and the banner must state that ceiling.
         let policy = run_policy_config(&run_options(Duration::from_millis(50)));
+        // Pin the +10 % band arithmetic independently of the banner formatting, so a regression in
+        // the band derivation (e.g. 5 % instead of 10 %, or the wrong field reaching the banner)
+        // cannot pass while the banner still prints the words "emergency KILL" and "10%":
+        // run_options sets a 1_000_000-byte limit, so the emergency band is limit + limit/10.
+        assert_eq!(policy.limit_bytes, 1_000_000);
+        assert_eq!(policy.emergency_bytes, 1_100_000);
         let banner = launch_banner(&policy);
         assert!(
             banner.contains(&policy.limit_bytes.to_string()),
@@ -2110,6 +2125,21 @@ mod tests {
         );
         assert!(banner.contains("emergency KILL"), "{banner}");
         assert!(banner.contains("10%"), "{banner}");
+    }
+
+    #[test]
+    fn the_observe_policy_uses_the_floored_window_not_the_raw_interval() {
+        // Catches observe mode building its policy machine with the raw --sample-interval instead of
+        // the floored sampler window. `apply_sample` re-checks `sample.window` against the POLICY's
+        // own `max_sample_window`, so a raw 10 ms bound here would TERM a slow-but-healthy observe
+        // run exactly as before the floor — the run path was fixed but observe's wiring is separate.
+        let sample_config = sampling_config(&common_options(Duration::from_millis(10))).unwrap();
+        let policy = observe_policy_machine(&sample_config);
+        assert_eq!(
+            policy.max_sample_window(),
+            sample_config.max_sample_window()
+        );
+        assert_eq!(policy.max_sample_window(), MIN_SAMPLE_WINDOW);
     }
 
     #[test]
