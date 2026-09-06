@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ArtifactErrorRecord, Capabilities, CheckpointRecord, EscapeEvidence, PrivacyDefaults,
-    ReportConfiguration, ReportV1, RunIdentity, SampleWindow, SignalRecord, TerminalKind,
-    TerminalOutcome, TransitionRecord,
+    ArtifactErrorRecord, CalibrationArtifact, Capabilities, CheckpointRecord, EscapeEvidence,
+    PrivacyDefaults, ReportConfiguration, ReportV1, RunIdentity, SampleWindow, SignalRecord,
+    TerminalKind, TerminalOutcome, TransitionRecord,
 };
 
 /// Header for the version-1 binary journal format.
@@ -214,6 +214,7 @@ pub enum JournalEntry {
     Checkpoint(CheckpointRecord),
     Escape(EscapeEvidence),
     ArtifactError(ArtifactErrorRecord),
+    Calibration(Box<CalibrationArtifact>),
     Outcome(TerminalOutcome),
 }
 
@@ -462,6 +463,12 @@ impl SecureJournal {
                 JournalDurability::Buffered,
             )?;
         }
+        if let Some(calibration) = &report.calibration {
+            self.append_next(
+                JournalEntry::Calibration(Box::new(calibration.clone())),
+                JournalDurability::Buffered,
+            )?;
+        }
         self.append_next(
             JournalEntry::Outcome(report.outcome.clone()),
             JournalDurability::Sync,
@@ -656,6 +663,7 @@ impl JournalRecovery {
         let mut escape = None;
         let mut artifact_errors = Vec::new();
         let mut outcome = None;
+        let mut calibration = None;
         for (index, record) in self.records.iter().enumerate() {
             match &record.entry {
                 JournalEntry::Header(value) if header.is_none() && index == 0 => {
@@ -673,6 +681,9 @@ impl JournalRecovery {
                 }
                 JournalEntry::Escape(value) if escape.is_none() => escape = Some(value.clone()),
                 JournalEntry::ArtifactError(value) => artifact_errors.push(value.clone()),
+                JournalEntry::Calibration(value) if calibration.is_none() => {
+                    calibration = Some((**value).clone());
+                }
                 JournalEntry::Outcome(value)
                     if outcome.is_none() && index + 1 == self.records.len() =>
                 {
@@ -680,6 +691,7 @@ impl JournalRecovery {
                 }
                 JournalEntry::Header(_)
                 | JournalEntry::SampleHistoryReset
+                | JournalEntry::Calibration(_)
                 | JournalEntry::Checkpoint(_)
                 | JournalEntry::Escape(_)
                 | JournalEntry::Outcome(_) => {
@@ -702,6 +714,7 @@ impl JournalRecovery {
             escape: escape.ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRecord))?,
             artifact_errors,
             outcome: outcome.ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRecord))?,
+            calibration,
             privacy: header.privacy,
         };
         report

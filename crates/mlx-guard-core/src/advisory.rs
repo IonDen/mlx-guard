@@ -1,18 +1,15 @@
 #![allow(unsafe_code)]
 
 use std::time::Duration;
-use std::{error::Error, fmt};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
     AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
-    AdvisorySource, FootprintSample, MemoryPressureLevel, ObservationError, ObservationFailureKind,
-    Observed, SampleOutcome, SampleWindow, UnavailableReason,
+    AdvisorySource, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationGuidance,
+    FootprintSample, MemoryPressureLevel, ObservationError, ObservationFailureKind, Observed,
+    SampleOutcome, SampleWindow, UnavailableReason,
 };
-
-/// The only calibration artifact schema major understood by this package.
-pub const CALIBRATION_SCHEMA_VERSION: u32 = 1;
 
 /// One system-wide advisory snapshot captured independently from the worker footprint.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -153,109 +150,6 @@ fn stale_timestamp<T>(observation: &Observed<T>) -> Option<u64> {
 
 fn duration_ms(duration: Duration) -> u64 {
     u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
-}
-
-/// Guidance deliberately avoids selecting a destructive threshold from one run.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CalibrationGuidance {
-    ChooseExplicitLimitFromRepeatedRepresentativeRuns,
-}
-
-/// Bounded evidence produced by an observe-only run.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct CalibrationArtifact {
-    pub schema_version: u32,
-    pub observation_only: bool,
-    pub safety_certified: bool,
-    pub total_samples: u64,
-    pub complete_samples: u64,
-    pub incomplete_samples: u64,
-    pub observed_duration_ms: u64,
-    pub peak_aggregate_footprint_bytes: Observed<u64>,
-    pub peak_growth_bytes_per_second: Observed<i64>,
-    pub automatic_limit_bytes: Option<u64>,
-    pub guidance: CalibrationGuidance,
-}
-
-impl CalibrationArtifact {
-    /// Validate observe-only invariants before persistence or use as limit evidence.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`CalibrationError::InvalidArtifact`] for impossible counters, a selected automatic
-    /// limit, a safety claim, or an incoherent peak.
-    pub fn validate(&self) -> Result<(), CalibrationError> {
-        let counters_match =
-            self.complete_samples.checked_add(self.incomplete_samples) == Some(self.total_samples);
-        let footprint_matches = matches!(
-            (&self.peak_aggregate_footprint_bytes, self.complete_samples),
-            (Observed::Unknown, 0) | (Observed::Available { .. }, 1..)
-        );
-        let growth_matches = !matches!(
-            self.peak_growth_bytes_per_second,
-            Observed::Available { value } if value <= 0
-        );
-        if self.schema_version != CALIBRATION_SCHEMA_VERSION
-            || !self.observation_only
-            || self.safety_certified
-            || self.automatic_limit_bytes.is_some()
-            || !counters_match
-            || !footprint_matches
-            || !growth_matches
-        {
-            return Err(CalibrationError::InvalidArtifact);
-        }
-        Ok(())
-    }
-
-    /// Serialize a validated calibration artifact with a final newline.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed validation or JSON error.
-    pub fn to_json_pretty(&self) -> Result<String, CalibrationError> {
-        self.validate()?;
-        let mut encoded = serde_json::to_string_pretty(self).map_err(CalibrationError::Json)?;
-        encoded.push('\n');
-        Ok(encoded)
-    }
-
-    /// Parse and validate a calibration artifact.
-    ///
-    /// # Errors
-    ///
-    /// Returns a typed validation or JSON error.
-    pub fn from_json(value: &str) -> Result<Self, CalibrationError> {
-        let artifact: Self = serde_json::from_str(value).map_err(CalibrationError::Json)?;
-        artifact.validate()?;
-        Ok(artifact)
-    }
-}
-
-/// Calibration artifact validation or serialization failure.
-#[derive(Debug)]
-pub enum CalibrationError {
-    InvalidArtifact,
-    Json(serde_json::Error),
-}
-
-impl fmt::Display for CalibrationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::InvalidArtifact => "calibration artifact is internally inconsistent",
-            Self::Json(_) => "calibration artifact JSON is malformed",
-        })
-    }
-}
-
-impl Error for CalibrationError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Json(error) => Some(error),
-            Self::InvalidArtifact => None,
-        }
-    }
 }
 
 /// Observe-only projection over the same bounded footprint samples used by enforcement.

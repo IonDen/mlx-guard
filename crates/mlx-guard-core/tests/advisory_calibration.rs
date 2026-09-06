@@ -50,6 +50,37 @@ fn system_snapshot(at_ms: u64, pressure: Observed<MemoryPressureLevel>) -> Advis
 }
 
 #[test]
+fn the_calibration_peak_survives_beyond_the_report_sample_ring() {
+    // Catches deriving the calibration peak from the bounded (4,096-sample) report ring instead of
+    // an unbounded running max: the peak lands in the first sample, then every later one is smaller,
+    // so a ring-derived peak would evict and lose it once the ring wraps. This is the property that
+    // makes the emitted calibration section worth more than a `jq` maximum over `.samples[]`.
+    let mut calibration = ObserveCalibration::new();
+    let peak = 1_000_000;
+    let _ = calibration.record_sample(
+        &complete_sample(0, 1, peak),
+        ms(2),
+        &system_snapshot(2, Observed::Unknown),
+    );
+    let total = mlx_guard_core::MAX_SAMPLE_HISTORY_CAPACITY as u64 + 100;
+    for sequence in 1..total {
+        let at_ms = sequence + 1;
+        let _ = calibration.record_sample(
+            &complete_sample(sequence, at_ms, 1),
+            ms(at_ms + 1),
+            &system_snapshot(at_ms + 1, Observed::Unknown),
+        );
+    }
+    let artifact = calibration.artifact();
+    assert_eq!(artifact.total_samples, total);
+    assert_eq!(artifact.complete_samples, total);
+    assert_eq!(
+        artifact.peak_aggregate_footprint_bytes,
+        Observed::Available { value: peak }
+    );
+}
+
+#[test]
 fn observe_path_uses_sampler_windows_and_advisory_metrics_without_policy_actions() {
     // Catches a separate observe data path or advisory value becoming an enforcement input.
     let mut calibration = ObserveCalibration::new();

@@ -1009,6 +1009,7 @@ struct ErrorTally {
     invalid_privacy: usize,
     invalid_event_order: usize,
     invalid_advisory_metrics: usize,
+    invalid_calibration: usize,
     json: usize,
 }
 
@@ -1022,6 +1023,7 @@ impl ErrorTally {
             ReportError::InvalidPrivacy => self.invalid_privacy += 1,
             ReportError::InvalidEventOrder => self.invalid_event_order += 1,
             ReportError::InvalidAdvisoryMetrics => self.invalid_advisory_metrics += 1,
+            ReportError::InvalidCalibration => self.invalid_calibration += 1,
             ReportError::Json(_) => self.json += 1,
         }
     }

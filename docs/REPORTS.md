@@ -99,6 +99,15 @@ independently, and a `SupervisorError` transition record and a final `policy_int
 can both appear in the same report — both facts are true; the in-flight parent-exit intervention owns
 the outcome, and the transition is only evidence of what the sampler saw while it was in flight.
 
+An observe report also carries a `calibration` section: total, complete, and incomplete sample
+counts; the observed duration; the highest complete aggregate footprint; and the highest positive
+growth rate. It always records `observation_only: true`, `safety_certified: false`, and no automatic
+limit. Its peak is an unbounded running maximum, so it holds the whole run's highest footprint even
+after the 4,096-sample history ring has evicted the sample it came from — the number a limit is
+chosen from. The section is present only on observe reports; it is absent from enforcing runs and
+from reports written before this release, and validation accepts a report without it. When present,
+it must be an observe report and the artifact's own invariants must hold.
+
 Advisory values retain their original schema-v1 fields. New writers may also add `pressure_level`
 and per-field `metadata` with the metric scope, public API source, observation timestamp, and
 freshness. Readers remain compatible with earlier schema-v1 reports where those additive fields are

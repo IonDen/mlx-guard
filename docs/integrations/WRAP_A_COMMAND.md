@@ -218,7 +218,9 @@ Run the real command under `observe` with representative arguments, read the pea
 the way the ladder above does, and set `--max-footprint` above it with headroom for run-to-run
 variation, never as a fraction of total machine memory. Repeat the observe run rather than trusting
 one of them: the number you want is the highest repeatable peak, not whichever peak the first run
-happened to produce.
+happened to produce. Whatever limit you set, enforcement authorizes a little more: the emergency
+KILL band sits about 10 % above it (`limit + max(1 byte, limit / 10)`), so the real ceiling is the
+limit plus that margin.
 
 Two details decide whether the peak you read is the peak that matters.
 
@@ -239,8 +241,8 @@ them changes the number `observe` reports. Measure with the same cache settings 
 will use, or the limit you derive belongs to a workload you are not running.
 
 Recalibrate after a change in the workload, in MLX, in macOS, or in the machine.
-[Observe and calibration](../OBSERVE_AND_CALIBRATION.md) covers the artifact and the partial-sample
-rules in full.
+[Observe and calibration](../OBSERVE_AND_CALIBRATION.md) covers the report's `calibration` section
+and the partial-sample rules in full.
 
 Fine-tunes and generations of this shape are what the maintainers' in-house trial exercises end to
 end on the reference host (M1 Max, 32 GB). Their output is real workload output, not something this

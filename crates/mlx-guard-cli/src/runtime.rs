@@ -5,19 +5,19 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use mlx_guard_core::{
-    Actuation, ActuationFailure, ActuationOutcome, Capabilities, CheckpointArtifactRecord,
-    CheckpointBinding, CheckpointChannel, CheckpointDisposition, CheckpointNonce, CheckpointRecord,
-    CheckpointStatus, CheckpointWorkerEndpoint, ChildStatus, ClientReady, EscapeEvidence, Event,
-    FootprintSampler, IdentityTracker, InterventionEngine, InterventionRecord, JournalDurability,
-    JournalEntry, JournalHeader, JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY,
-    NativeAdvisoryObserver, NativeProcessInventory, ObserveCalibration, Observed, OnParentExit,
-    OwnedProcess, ParentWatch, PersistenceAttempt, PlatformSupport, PolicyConfig, PolicyMachine,
-    PolicyState, PrivacyDefaults, ProcessIdentity, ProcessInterventionActuator,
-    REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode, ResilientJournal, RootOutcome,
-    RunIdentity, SamplingConfig, SecureJournal, SignalReason, SignalRecord, SignalResult,
-    SignalTarget, StdioMode, SupervisorOutcome, TerminalKind, TerminalOutcome,
-    TerminalSignalMonitor, TransitionRecord, UnavailableReason, VERSION, checkpoint_signal_usr1,
-    hangup_is_ignored, platform_support,
+    Actuation, ActuationFailure, ActuationOutcome, CalibrationArtifact, Capabilities,
+    CheckpointArtifactRecord, CheckpointBinding, CheckpointChannel, CheckpointDisposition,
+    CheckpointNonce, CheckpointRecord, CheckpointStatus, CheckpointWorkerEndpoint, ChildStatus,
+    ClientReady, EscapeEvidence, Event, FootprintSampler, IdentityTracker, InterventionEngine,
+    InterventionRecord, JournalDurability, JournalEntry, JournalHeader, JournalRecord,
+    MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver, NativeProcessInventory,
+    ObserveCalibration, Observed, OnParentExit, OwnedProcess, ParentWatch, PersistenceAttempt,
+    PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults, ProcessIdentity,
+    ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode,
+    ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal, SignalReason,
+    SignalRecord, SignalResult, SignalTarget, StdioMode, SupervisorOutcome, TerminalKind,
+    TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason, VERSION,
+    checkpoint_signal_usr1, hangup_is_ignored, platform_support,
 };
 
 use crate::completion::{
@@ -35,6 +35,26 @@ const MAX_MISSING_SAMPLES: u32 = 3;
 // so the default matches TERM_GRACE's order of magnitude. `--checkpoint-timeout` overrides it.
 const DEFAULT_CHECKPOINT_TIMEOUT: Duration = Duration::from_secs(1);
 const TERM_GRACE: Duration = Duration::from_secs(1);
+
+/// Absolute floors for the sampling-quality bounds, independent of `--sample-interval`.
+///
+/// A sample's usability depends partly on how long its process-tree enumeration took
+/// (`max_sample_window`) and how stale it is once the policy processes it (`max_sample_age`).
+/// Enumeration cost grows with the process tree and with machine load, not with how often we
+/// sample, so tying these bounds to the interval let an ordinary reading on a busy box — or any
+/// short interval — be misread as observation failure; three of those in a row send TERM to a
+/// healthy run. These bounds gate freshness, which is absolute time, so they never fall below a
+/// fixed floor. `MIN_SAMPLE_AGE >= MIN_SAMPLE_WINDOW`, which keeps the derived age `>=` the window
+/// as `SamplingConfig::new` requires.
+const MIN_SAMPLE_WINDOW: Duration = Duration::from_millis(250);
+const MIN_SAMPLE_AGE: Duration = Duration::from_millis(500);
+
+/// Derive the `(max_sample_window, max_sample_age)` sampling-quality bounds for an interval.
+fn sample_quality_bounds(interval: Duration) -> (Duration, Duration) {
+    let window = interval.max(MIN_SAMPLE_WINDOW);
+    let age = interval.saturating_mul(2).max(MIN_SAMPLE_AGE);
+    (window, age)
+}
 
 /// Complete user-visible result of one parsed command execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -214,6 +234,7 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
             Err(result) => return result,
         };
     let policy_config = run_policy_config(options);
+    let banner = launch_banner(&policy_config);
     let policy =
         match PolicyMachine::enforce_with_initial_request_id(policy_config, initial_request_id) {
             Ok(policy) => policy,
@@ -265,6 +286,9 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
             );
         }
     };
+    // The workload is now launched; announce the ceiling this run authorises. Printed only on a
+    // successful launch, so a configuration or launch failure never emits a spurious banner.
+    eprintln!("{banner}");
     let checkpoint_signal = checkpoint_signal_usr1();
     let binding = CheckpointBinding::new(
         &mut checkpoint_channel,
@@ -1052,12 +1076,14 @@ impl ObserveRuntime {
             owned_group_survivors,
             parent_exited_at_ms: self.parent_watch.exited_at_ms,
         };
+        let calibration = self.calibration.artifact();
         Self::record_terminal(
             &mut self.journal,
             &mut self.sequence,
             &self.sampler,
             &self.report_samples,
             self.escape_detected,
+            &calibration,
             terminal,
         );
         let notice = self.journal.stderr_notice();
@@ -1280,6 +1306,7 @@ impl ObserveRuntime {
         sampler: &FootprintSampler,
         report_samples: &VecDeque<mlx_guard_core::SampleWindow>,
         escape_detected: bool,
+        calibration: &CalibrationArtifact,
         outcome: TerminalOutcome,
     ) {
         Self::record_recent_sample_history(journal, sequence, sampler, report_samples);
@@ -1306,6 +1333,12 @@ impl ObserveRuntime {
                 },
                 escaped_count: (escaped_count > 0).then_some(escaped_count),
             }),
+            JournalDurability::Buffered,
+        );
+        record_resilient(
+            journal,
+            sequence,
+            JournalEntry::Calibration(Box::new(calibration.clone())),
             JournalDurability::Buffered,
         );
         record_resilient(
@@ -1553,6 +1586,7 @@ fn observe_configuration(
     common: &CommonOptions,
     parent_watch: &ParentWatchState,
 ) -> ReportConfiguration {
+    let (window, age) = sample_quality_bounds(common.sample_interval);
     ReportConfiguration {
         mode: ReportMode::Observe,
         max_footprint_bytes: None,
@@ -1563,8 +1597,8 @@ fn observe_configuration(
         max_missing_samples: MAX_MISSING_SAMPLES,
         wall_time_ms: None,
         sample_interval_ms: duration_ms(common.sample_interval),
-        max_sample_age_ms: duration_ms(common.sample_interval.saturating_mul(2)),
-        max_sample_window_ms: duration_ms(common.sample_interval),
+        max_sample_age_ms: duration_ms(age),
+        max_sample_window_ms: duration_ms(window),
         checkpoint_timeout_ms: None,
         term_grace_ms: duration_ms(TERM_GRACE),
         on_parent_exit: Some(parent_watch.on_parent_exit),
@@ -1596,6 +1630,7 @@ fn run_configuration(options: &RunOptions, parent_watch: &ParentWatchState) -> R
 fn run_policy_config(options: &RunOptions) -> PolicyConfig {
     let limit = options.max_footprint_bytes;
     let threshold_step = policy_band_step(limit);
+    let (window, age) = sample_quality_bounds(options.common.sample_interval);
     PolicyConfig {
         limit_bytes: limit,
         warning_bytes: limit.saturating_sub(threshold_step),
@@ -1605,8 +1640,8 @@ fn run_policy_config(options: &RunOptions) -> PolicyConfig {
         emergency_bytes: limit.saturating_add(threshold_step),
         required_breach_samples: REQUIRED_BREACH_SAMPLES,
         max_missing_samples: MAX_MISSING_SAMPLES,
-        max_sample_age: options.common.sample_interval.saturating_mul(2),
-        max_sample_window: options.common.sample_interval,
+        max_sample_age: age,
+        max_sample_window: window,
         checkpoint_timeout: Some(
             options
                 .checkpoint_timeout
@@ -1617,6 +1652,18 @@ fn run_policy_config(options: &RunOptions) -> PolicyConfig {
     }
 }
 
+/// The one-line notice a `run` writes to stderr before the workload starts.
+///
+/// It states the emergency KILL threshold, which sits about 10% above the limit the user chose, so
+/// the ceiling a run actually authorises is visible up front rather than only in the final report.
+fn launch_banner(policy: &PolicyConfig) -> String {
+    format!(
+        "mlx-guard: enforcing a {limit}-byte footprint limit; emergency KILL at {emergency} bytes, about 10% above the limit",
+        limit = policy.limit_bytes,
+        emergency = policy.emergency_bytes,
+    )
+}
+
 /// Claim the caller's readiness descriptor, or fail the command before anything is launched.
 fn client_ready(raw_descriptor: Option<i32>) -> Result<ClientReady, RuntimeResult> {
     ClientReady::take(raw_descriptor).map_err(|error| {
@@ -1625,10 +1672,11 @@ fn client_ready(raw_descriptor: Option<i32>) -> Result<ClientReady, RuntimeResul
 }
 
 fn sampling_config(common: &CommonOptions) -> Result<SamplingConfig, RuntimeResult> {
+    let (window, age) = sample_quality_bounds(common.sample_interval);
     SamplingConfig::new(
         common.sample_interval,
-        common.sample_interval.saturating_mul(2),
-        common.sample_interval,
+        age,
+        window,
         MAX_SAMPLE_HISTORY_CAPACITY,
     )
     .map_err(|error| {
@@ -1905,6 +1953,19 @@ mod tests {
     use super::{RunLaunchFailure, early_exit_or_failure};
     use mlx_guard_core::{RootOutcome, SupervisorOutcome};
 
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    use super::{
+        CommonOptions, DEFAULT_CHECKPOINT_TIMEOUT, MAX_MISSING_SAMPLES, MIN_SAMPLE_AGE,
+        MIN_SAMPLE_WINDOW, REQUIRED_BREACH_SAMPLES, RunOptions, TERM_GRACE, launch_banner,
+        run_policy_config, sample_quality_bounds, sampling_config,
+    };
+    use mlx_guard_core::{
+        Action, MAX_SAMPLE_HISTORY_CAPACITY, PolicyConfig, PolicyMachine, SamplingConfig,
+    };
+
     fn sample() -> Event {
         Event::Sample(SampleEvent {
             captured_at: Duration::from_millis(10),
@@ -1937,6 +1998,134 @@ mod tests {
             at: Duration::from_millis(11),
             signal: SignalNumber::new(15).unwrap(),
         }
+    }
+
+    fn common_options(interval: Duration) -> CommonOptions {
+        CommonOptions {
+            sample_interval: interval,
+            report_path: PathBuf::from("/dev/null"),
+            cwd: None,
+            clear_env: false,
+            env: BTreeMap::new(),
+            client_ready_fd: None,
+            on_parent_exit: OnParentExitOption::Terminate,
+            command: vec![OsString::from("true")],
+        }
+    }
+
+    fn run_options(interval: Duration) -> RunOptions {
+        RunOptions {
+            max_footprint_bytes: 1_000_000,
+            wall_time: None,
+            checkpoint_timeout: None,
+            common: common_options(interval),
+        }
+    }
+
+    #[test]
+    fn sample_quality_window_has_a_floor_independent_of_a_short_interval() {
+        // Catches reverting the derivation to `max_sample_window = interval` (0081): a 10 ms
+        // interval must not pin the window to 10 ms, or a sample-tree enumeration slower than one
+        // interval — a normal reading on a busy box — is misread as observation failure.
+        let (window, age) = sample_quality_bounds(Duration::from_millis(10));
+        assert_eq!(window, MIN_SAMPLE_WINDOW);
+        assert_eq!(age, MIN_SAMPLE_AGE);
+        assert!(window > Duration::from_millis(10));
+    }
+
+    #[test]
+    fn sample_quality_bounds_stay_coherent_across_the_supported_interval_range() {
+        // Catches a floor that makes age < window (`SamplingConfig::new` rejects it, so the run
+        // cannot start) or a window below the interval.
+        for interval_ms in [10_u64, 50, 100, 250, 500, 1_000, 10_000] {
+            let interval = Duration::from_millis(interval_ms);
+            let (window, age) = sample_quality_bounds(interval);
+            assert!(window >= interval, "window >= interval at {interval_ms} ms");
+            assert!(
+                window >= MIN_SAMPLE_WINDOW,
+                "window floor at {interval_ms} ms"
+            );
+            assert!(age >= window, "age >= window at {interval_ms} ms");
+            assert!(
+                age >= interval.saturating_mul(2),
+                "age >= 2*interval at {interval_ms} ms"
+            );
+            assert!(
+                SamplingConfig::new(interval, age, window, MAX_SAMPLE_HISTORY_CAPACITY).is_ok(),
+                "SamplingConfig accepts the derived bounds at {interval_ms} ms"
+            );
+        }
+    }
+
+    #[test]
+    fn a_slow_but_healthy_sample_stream_at_a_short_interval_never_terms() {
+        // The 0081 failure end to end: at a 10 ms interval, enumeration that takes 100 ms (a big
+        // tree or a starved machine — still a real, healthy reading well below the limit) must not
+        // accumulate observation failures into a TERM. Red before the floor: window == 10 ms makes
+        // every 100 ms reading "wide", and three in a row send TERM into SupervisorError.
+        let (window, age) = sample_quality_bounds(Duration::from_millis(10));
+        let config = PolicyConfig {
+            limit_bytes: 1_000_000,
+            warning_bytes: 900_000,
+            recovery_bytes: 800_000,
+            emergency_bytes: 1_100_000,
+            required_breach_samples: REQUIRED_BREACH_SAMPLES,
+            max_missing_samples: MAX_MISSING_SAMPLES,
+            max_sample_age: age,
+            max_sample_window: window,
+            checkpoint_timeout: Some(DEFAULT_CHECKPOINT_TIMEOUT),
+            term_grace: TERM_GRACE,
+            wall_time: None,
+        };
+        let mut machine = PolicyMachine::enforce(config).unwrap();
+        for i in 0..10_u64 {
+            let at = Duration::from_millis(i * 10);
+            let actions = machine.apply(Event::Sample(SampleEvent {
+                captured_at: at,
+                processed_at: at,
+                window: Duration::from_millis(100),
+                aggregate_bytes: Some(4_096),
+            }));
+            assert!(
+                !actions.iter().any(Action::is_signal),
+                "healthy slow sample {i} must not signal: {actions:?}"
+            );
+        }
+        assert_eq!(machine.state(), PolicyState::Normal);
+    }
+
+    #[test]
+    fn the_launch_banner_names_the_limit_and_the_emergency_kill_threshold() {
+        // Catches a launch banner that hides the emergency band a run authorises: choosing a limit
+        // authorises KILL about 10% above it, and the banner must state that ceiling.
+        let policy = run_policy_config(&run_options(Duration::from_millis(50)));
+        let banner = launch_banner(&policy);
+        assert!(
+            banner.contains(&policy.limit_bytes.to_string()),
+            "limit: {banner}"
+        );
+        assert!(
+            banner.contains(&policy.emergency_bytes.to_string()),
+            "emergency: {banner}"
+        );
+        assert!(banner.contains("emergency KILL"), "{banner}");
+        assert!(banner.contains("10%"), "{banner}");
+    }
+
+    #[test]
+    fn run_and_sampler_configs_floor_the_quality_bounds_at_a_short_interval() {
+        // Catches a derivation site that still pins a bound to the interval: both the run policy
+        // config and the sampler config must carry the floor, not 10 ms, at a 10 ms interval.
+        let interval = Duration::from_millis(10);
+        let (window, age) = sample_quality_bounds(interval);
+
+        let policy = run_policy_config(&run_options(interval));
+        assert_eq!(policy.max_sample_window, window);
+        assert_eq!(policy.max_sample_age, age);
+
+        let sampler = sampling_config(&common_options(interval)).unwrap();
+        assert_eq!(sampler.max_sample_window(), window);
+        assert_eq!(sampler.max_sample_age(), age);
     }
 
     #[test]

@@ -47,7 +47,8 @@ mlx-guard observe --report reports/observe-1.json -- python train.py --epochs 1
 ```
 
 Choose a limit from the observed peaks plus workload-specific headroom, not from total machine
-memory; the
+memory; enforcement authorizes about 10 % above the number you set (the emergency KILL band), so the
+ceiling is a little higher than the limit itself. The
 [calibration guide](https://github.com/IonDen/mlx-guard/blob/main/docs/OBSERVE_AND_CALIBRATION.md)
 explains the procedure. Then enforce it:
 

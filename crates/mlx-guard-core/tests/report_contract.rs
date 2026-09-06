@@ -3,11 +3,12 @@ use std::time::Duration;
 
 use mlx_guard_core::{
     AdvisoryMetrics, AdvisoryScope, AdvisorySnapshot, ArtifactErrorCode, ArtifactErrorRecord,
-    ArtifactKind, Capabilities, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus,
-    ChildStatus, EscapeEvidence, MemoryPressureLevel, ObservationError, Observed, OnParentExit,
-    ParentWatch, PolicyState, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration,
-    ReportError, ReportMode, ReportV1, RunIdentity, SampleWindow, SignalReason, SignalRecord,
-    SignalResult, SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
+    ArtifactKind, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationGuidance,
+    Capabilities, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus, ChildStatus,
+    EscapeEvidence, MemoryPressureLevel, ObservationError, Observed, OnParentExit, ParentWatch,
+    PolicyState, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError,
+    ReportMode, ReportV1, RunIdentity, SampleWindow, SignalReason, SignalRecord, SignalResult,
+    SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
 };
 
 fn identity() -> RunIdentity {
@@ -110,8 +111,76 @@ fn report() -> ReportV1 {
             owned_group_survivors: None,
             parent_exited_at_ms: None,
         },
+        calibration: None,
         privacy,
     }
+}
+
+fn valid_calibration_artifact() -> CalibrationArtifact {
+    CalibrationArtifact {
+        schema_version: CALIBRATION_SCHEMA_VERSION,
+        observation_only: true,
+        safety_certified: false,
+        total_samples: 3,
+        complete_samples: 2,
+        incomplete_samples: 1,
+        observed_duration_ms: 100,
+        peak_aggregate_footprint_bytes: Observed::Available { value: 4096 },
+        peak_growth_bytes_per_second: Observed::Unknown,
+        automatic_limit_bytes: None,
+        guidance: CalibrationGuidance::ChooseExplicitLimitFromRepeatedRepresentativeRuns,
+    }
+}
+
+fn observe_report() -> ReportV1 {
+    let mut report = report();
+    report.configuration.mode = ReportMode::Observe;
+    report.configuration.max_footprint_bytes = None;
+    report.configuration.warning_footprint_bytes = None;
+    report.configuration.recovery_footprint_bytes = None;
+    report.configuration.emergency_footprint_bytes = None;
+    report.configuration.wall_time_ms = None;
+    report.configuration.checkpoint_timeout_ms = None;
+    report
+}
+
+#[test]
+fn an_enforce_report_rejects_a_calibration_section() {
+    // Catches emitting the observe-only calibration section on an enforcing run: the section
+    // states observation_only, so a run that enforced a limit must never carry one.
+    let mut enforcing = report();
+    assert!(enforcing.validate().is_ok());
+    enforcing.calibration = Some(valid_calibration_artifact());
+    assert!(matches!(
+        enforcing.validate(),
+        Err(ReportError::InvalidCalibration)
+    ));
+}
+
+#[test]
+fn an_observe_report_accepts_a_valid_calibration_section() {
+    // Catches the validator refusing the legitimate observe calibration section.
+    let mut observing = observe_report();
+    assert!(
+        observing.validate().is_ok(),
+        "the base observe report must validate before adding calibration"
+    );
+    observing.calibration = Some(valid_calibration_artifact());
+    assert!(observing.validate().is_ok());
+}
+
+#[test]
+fn a_report_rejects_an_internally_inconsistent_calibration_section() {
+    // Catches the report validator failing to run the artifact's own invariant checks: an observe
+    // artifact never certifies safety, and the report must refuse one that claims it does.
+    let mut observing = observe_report();
+    let mut artifact = valid_calibration_artifact();
+    artifact.safety_certified = true;
+    observing.calibration = Some(artifact);
+    assert!(matches!(
+        observing.validate(),
+        Err(ReportError::InvalidCalibration)
+    ));
 }
 
 #[test]

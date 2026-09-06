@@ -55,9 +55,12 @@ The checkpoint acknowledgement timeout defaults to one second and accepts `--che
 within `10ms..=60s`. The former 100ms default was missed by a real cooperative worker on a loaded
 3-CPU machine, and interventions happen under exactly that kind of pressure; the timeout still
 fails closed, so an unresponsive worker receives TERM when it expires. TERM grace is one second.
-Maximum sample age is twice `--sample-interval`; maximum collection-window width equals the
-interval. TERM grace and the sampling-derived maxima are not configurable. The effective values
-are recorded in each report.
+The maximum collection-window width is the larger of `--sample-interval` and 250 ms; the maximum
+sample age is the larger of twice `--sample-interval` and 500 ms. These bounds have a fixed floor
+because how long a reading takes to gather, and how stale it is once processed, follow the process
+tree and machine load rather than the sampling frequency — so a reading slower than one short
+interval is still a good reading, not an observation failure. TERM grace and these sampling-derived
+maxima are not user-configurable, and the effective values are recorded in each report.
 
 ## Escalation envelope
 
@@ -95,6 +98,14 @@ A sample is usable only when it contains an aggregate, was captured no later tha
 is no older than the configured maximum age, and fits inside the configured collection window. A
 usable sample resets the missing-sample count. Missing, stale, reversed, or overly wide samples do
 not count as zero.
+
+The collection-window and age bounds have an absolute floor — 250 ms and 500 ms — independent of the
+sampling interval. Process-tree enumeration cost scales with the tree and with machine load, so a
+reading that took longer than one short interval is still a good reading; only a genuine sustained
+inability to read memory, past the floor for the consecutive-missing limit, fails closed. On the
+reference M1 Max, the per-sample collection window under real `mlx_lm.lora` fine-tunes held at a p95
+of 1 ms (2 ms maximum) with at most one unavailable sample per run, against these bounds, recorded in
+`evidence/v0.2.0/in-house-trial/arms.json`.
 
 At the configured consecutive-missing limit, observe mode stops with a supervisor error but does not
 signal the command. Enforcement mode fails closed: it sends TERM, enters supervisor-error, and later

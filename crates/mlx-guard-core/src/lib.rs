@@ -61,12 +61,14 @@ pub use process_control::{
 };
 pub use report::{
     AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
-    AdvisorySource, ArtifactErrorCode, ArtifactErrorRecord, ArtifactKind, Capabilities,
-    CapturePolicy, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus, ChildStatus,
-    EscapeEvidence, MemoryPressureLevel, ObservationError, Observed, OnParentExit, ParentWatch,
-    PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1,
-    RetentionPolicy, RunIdentity, SampleWindow, SignalReason, SignalRecord, SignalResult,
-    SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason, UploadPolicy,
+    AdvisorySource, ArtifactErrorCode, ArtifactErrorRecord, ArtifactKind,
+    CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationError, CalibrationGuidance,
+    Capabilities, CapturePolicy, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus,
+    ChildStatus, EscapeEvidence, MemoryPressureLevel, ObservationError, Observed, OnParentExit,
+    ParentWatch, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError,
+    ReportMode, ReportV1, RetentionPolicy, RunIdentity, SampleWindow, SignalReason, SignalRecord,
+    SignalResult, SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
+    UploadPolicy,
 };
 #[cfg(unix)]
 pub use sampling::{
@@ -79,7 +81,6 @@ pub use sampling::{
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(unix)]
 pub use advisory::{
-    AdvisorySnapshot, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationError,
-    CalibrationGuidance, NativeAdvisoryObserver, ObserveCalibration, PrelaunchSummary,
+    AdvisorySnapshot, NativeAdvisoryObserver, ObserveCalibration, PrelaunchSummary,
     PrelaunchWarning,
 };
