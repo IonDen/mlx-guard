@@ -1,0 +1,13 @@
+{
+  "derived_from": [
+    "L1a",
+    "L1b"
+  ],
+  "derivation": "headroom",
+  "limit_bytes": 5102780100,
+  "predicted_band": null,
+  "largest_step_near_bytes": null,
+  "emergency_threshold_bytes": null,
+  "source_peak_bytes": 4082224080,
+  "source_late_peak_bytes": null
+}

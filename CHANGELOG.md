@@ -42,6 +42,11 @@ versions follow Semantic Versioning.
   timing across real supervised runs. Reference measurements from the M1 Max 32 GB host are
   published in `evidence/v0.2.0/m1-max-32gb/` and summarized in `docs/POLICY.md`, with a
   dispatch-only workflow for shared-VM corroboration.
+- An in-house trial exercises mlx-guard against two real, published command recipes: an `mlx-lm`
+  LoRA fine-tune and an `mflux` image generation. Under enforced footprint limits it covers a limit
+  with headroom that stays silent, a graceful footprint TERM on each recipe, and a wall-time
+  cooperative checkpoint with a resume from it. The schema-v1 reports, checksummed journals, and
+  provenance are published in `evidence/v0.2.0/in-house-trial/`.
 - Reports record `checkpoint.request_id`, `checkpoint.reason`, and `checkpoint.artifact`
   (path-free `kind`/`size_bytes` facts echoed from a completed acknowledgement), so a later
   process can join an interrupted run back to whatever the worker actually saved.
@@ -118,6 +123,12 @@ versions follow Semantic Versioning.
   exists to police — now also cancels the checkpoint request and escalates to termination, where
   previously nothing stood between the policy and the signal call. Permission denial can now
   originate from either the inspection or the signal itself.
+- The wrap-a-command LoRA recipe now installs mlx-lm's `train` extra, which carries the `datasets`
+  package the Hub dataset path imports; the recipe as printed before this release loaded the model
+  and then stopped on that import.
+- The wrap-a-command page now states that `mlx-guard` refuses an interactive terminal on standard
+  input, and its transcripts include the `< /dev/null` redirect that avoids it. The README and
+  support matrix describe the same boundary instead of `job control` alone.
 
 ## [0.1.0] - 2026-08-12
 

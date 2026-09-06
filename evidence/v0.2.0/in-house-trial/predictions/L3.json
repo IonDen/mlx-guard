@@ -1,0 +1,13 @@
+{
+  "derived_from": [
+    "L1a",
+    "L1b"
+  ],
+  "derivation": "graceful",
+  "limit_bytes": 3628918080,
+  "predicted_band": "emergency",
+  "largest_step_near_bytes": 2049736704,
+  "emergency_threshold_bytes": 3991809888,
+  "source_peak_bytes": null,
+  "source_late_peak_bytes": 3810363984
+}
