@@ -484,7 +484,8 @@ def assemble(trial_root: Path, bundle_dir: Path) -> list[Path]:
             journal_path = report_path.with_name(f".{report_path.name}.journal")
             if journal_path.exists():
                 journal_dest = reports_dir / f".{arm_id}.json.journal"
-                journal_dest.write_text(journal_path.read_text())
+                # The journal is a binary checksummed WAL, not text — copy bytes verbatim.
+                journal_dest.write_bytes(journal_path.read_bytes())
                 written.append(journal_dest)
 
         prediction_path = arm_root / "prediction.json"
@@ -534,10 +535,13 @@ def compute_derivation(
     """Derive a limit (and, for ``graceful``, a band prediction) from named done arms' reports.
 
     ``headroom``: the limit is 125% of the highest peak among the named arms' own peaks — no band
-    prediction. ``graceful``: the named arm with the higher ``bands.late_peak`` is chosen; the
-    limit is ``bands.derive_limit`` of that peak, and the predicted band comes from
-    ``bands.predict_band`` on that arm's own samples against the derived limit. Every named arm
-    must already be done (``resolved_report_path`` refuses otherwise).
+    prediction. ``graceful``: the named arm with the LOWER ``bands.late_peak`` is chosen (a
+    must-fire limit must sit below every run's footprint, so keying off the lowest calibration
+    peak guarantees a breach across run-to-run variance; keying off the highest is sensitive to a
+    cold-start outlier and can leave the limit above a normal run's peak); the limit is
+    ``bands.derive_limit`` of that peak, and the predicted band comes from ``bands.predict_band``
+    on that arm's own samples against the derived limit. Every named arm must already be done
+    (``resolved_report_path`` refuses otherwise).
     """
     reports = [
         (arm_id, json.loads(resolved_report_path(trial_root / "arms" / arm_id).read_text()))
@@ -560,7 +564,12 @@ def compute_derivation(
     late_peaks = [
         (arm_id, report, bands.late_peak(v.available_values(report))) for arm_id, report in reports
     ]
-    _chosen_id, chosen_report, chosen_late_peak = max(late_peaks, key=lambda row: row[2])
+    # MIN, not max: a must-fire limit has to sit below every run's footprint. Keying off the
+    # LOWEST calibration late-peak guarantees a breach across run-to-run variance; keying off the
+    # highest is sensitive to a cold-start outlier and can leave the limit above a normal run's
+    # peak, so the arm never fires (L3, 2026-09-06: L1a spiked to 3.80 GiB, the rest clustered at
+    # 3.52). See test_derive_graceful_uses_the_min_over_named_arms.
+    _chosen_id, chosen_report, chosen_late_peak = min(late_peaks, key=lambda row: row[2])
     values = v.available_values(chosen_report)
     limit = bands.derive_limit(chosen_late_peak)
     return {

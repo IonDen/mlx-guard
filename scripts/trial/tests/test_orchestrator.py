@@ -284,6 +284,22 @@ def test_assemble_collects_python_mode_reports(
     assert dest in written
 
 
+def test_assemble_copies_a_binary_journal_verbatim(tmp_path: Path) -> None:
+    """Bug: the retained journal is copied as text but is a binary checksummed WAL.
+
+    read_text/write_text on the non-UTF-8 journal crashes assemble with UnicodeDecodeError.
+    """
+    make_done_arm(tmp_path, "L2", multi_sample_report([100]))
+    journal = tmp_path / "arms" / "L2" / "attempt-1" / ".report.json.journal"
+    journal_bytes = bytes([0xD4, 0x00, 0xFF, 0x01]) + b"journal-record"
+    journal.write_bytes(journal_bytes)
+    bundle = tmp_path / "bundle"
+    orchestrator.assemble(tmp_path, bundle)
+    dest = bundle / "reports" / ".L2.json.journal"
+    assert dest.exists()
+    assert dest.read_bytes() == journal_bytes
+
+
 def test_derive_headroom_uses_the_max_over_named_arms(tmp_path: Path) -> None:
     """Bug: uses the first named arm only."""
     make_done_arm(tmp_path, "L1a", multi_sample_report([100]))
@@ -291,6 +307,21 @@ def test_derive_headroom_uses_the_max_over_named_arms(tmp_path: Path) -> None:
     derived = orchestrator.compute_derivation(tmp_path, ["L1a", "L1b"], "headroom")
     assert derived["limit_bytes"] == bands.headroom_limit(200, 125)
     assert derived["source_peak_bytes"] == 200
+
+
+def test_derive_graceful_uses_the_min_over_named_arms(tmp_path: Path) -> None:
+    """Bug: the must-fire limit is keyed off the MAX calibration late-peak.
+
+    One high cold-start outlier run then inflates the limit above a normal run's footprint, so the
+    arm never breaches (observed live 2026-09-06: L1a spiked to 3.80 GiB, L1b/L2/L3 clustered at
+    ~3.52 GiB, and L3's max-derived 3.62 GiB limit sat above its 3.52 GiB peak). The must-fire
+    limit must key off the LOWER peak to breach across run-to-run variance.
+    """
+    make_done_arm(tmp_path, "L1a", multi_sample_report([200]))  # high, cold-start outlier
+    make_done_arm(tmp_path, "L1b", multi_sample_report([100]))  # representative steady peak
+    derived = orchestrator.compute_derivation(tmp_path, ["L1a", "L1b"], "graceful")
+    assert derived["source_late_peak_bytes"] == 100
+    assert derived["limit_bytes"] == bands.derive_limit(100)
 
 
 def test_derive_graceful_writes_prediction_before_launch(tmp_path: Path) -> None:
