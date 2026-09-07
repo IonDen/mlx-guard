@@ -65,6 +65,7 @@ fn assert_only_launch_banner(stderr: &[u8]) {
     );
 }
 
+#[cfg(target_os = "macos")]
 fn wait_for_first_sample(journal_path: &std::path::Path) {
     let deadline = Instant::now() + Duration::from_secs(3);
     loop {
