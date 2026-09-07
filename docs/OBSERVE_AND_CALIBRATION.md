@@ -37,13 +37,23 @@ Pressure notifications are best effort and system-wide. An absent first event is
 warning or critical event produces a pre-launch warning, but v0.1 does not invent a rejection
 threshold. The same applies when footprint or advisory capabilities are unavailable.
 
-## Calibration artifact
+## Calibration section
 
-An observe run records total, complete, and incomplete sample counts; observed duration; the highest
-complete aggregate footprint; and the highest positive growth rate. The artifact always records
-`observation_only: true`, `safety_certified: false`, and no automatic limit.
+Every observe report carries a `calibration` section. It records total, complete, and incomplete
+sample counts; the observed duration; the highest complete aggregate footprint; and the highest
+positive growth rate. It always records `observation_only: true`, `safety_certified: false`, and no
+automatic limit. Read the peak with:
 
-Use the artifact to choose a limit deliberately:
+```bash
+jq '.calibration.peak_aggregate_footprint_bytes' reports/observe.json
+```
+
+Unlike a maximum taken over `.samples[]`, this peak is an unbounded running maximum, so it survives
+the 4,096-sample history ring and still reflects a long run's early, highest footprint rather than
+whatever the ring happened to retain. The section is present only on observe reports; enforcing runs
+and reports written before it existed do not carry one, and reading those back still validates.
+
+Use the section to choose a limit deliberately:
 
 1. Repeat the intended workload with representative models, batch sizes, concurrency, data, and
    other applications running on the Mac.
@@ -51,7 +61,9 @@ Use the artifact to choose a limit deliberately:
    subtotal as a peak.
 3. Choose an explicit limit above the highest repeatable complete peak, with operator-selected
    headroom for run-to-run variation and growth between sample intervals. No fixed percentage is
-   universally safe.
+   universally safe. Enforcement then adds its own margin above the number you set: the emergency
+   KILL band sits about 10 % above the limit (`limit + max(1 byte, limit / 10)`), so the ceiling you
+   authorize is a little higher than the limit itself.
 4. Validate the chosen limit in staging and recalibrate after workload, MLX, macOS, or hardware
    changes.
 

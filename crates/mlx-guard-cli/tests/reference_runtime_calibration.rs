@@ -171,6 +171,38 @@ fn run_guard(report_path: &Path, mode_args: &[&str], worker_args: &[String]) -> 
         .unwrap()
 }
 
+/// The residual stderr worth recording as a scenario diagnostic, with the expected pre-launch
+/// banner (`run` announces the emergency threshold before launching) filtered out so it never reads
+/// as an anomaly in the calibration evidence.
+fn scenario_diagnostic(stderr: &[u8]) -> Option<String> {
+    let text = String::from_utf8_lossy(stderr);
+    let residual = text
+        .lines()
+        .filter(|line| !line.starts_with("mlx-guard: enforcing a"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let residual = residual.trim().to_owned();
+    (!residual.is_empty()).then_some(residual)
+}
+
+#[test]
+fn scenario_diagnostic_drops_the_launch_banner_but_keeps_a_real_anomaly() {
+    // Catches the filter over-matching (swallowing a real anomaly line) or under-matching
+    // (recording the expected launch banner as though it were a diagnostic).
+    let banner = b"mlx-guard: enforcing a 100-byte footprint limit; emergency KILL at 110 bytes, about 10% above the limit\n";
+    assert_eq!(scenario_diagnostic(banner), None);
+    assert_eq!(
+        scenario_diagnostic(b"mlx-guard: artifact read failed\n"),
+        Some("mlx-guard: artifact read failed".to_owned())
+    );
+    let mixed = b"mlx-guard: enforcing a 100-byte footprint limit; emergency KILL at 110 bytes, about 10% above the limit\nmlx-guard: artifact read failed\n";
+    assert_eq!(
+        scenario_diagnostic(mixed),
+        Some("mlx-guard: artifact read failed".to_owned())
+    );
+    assert_eq!(scenario_diagnostic(b""), None);
+}
+
 fn scenario_record(
     output_directory: &Path,
     name: &str,
@@ -197,8 +229,7 @@ fn scenario_record(
         signals: report.signals.iter().map(|signal| signal.signal).collect(),
         escape_detected,
         sample_count: report.samples.len(),
-        diagnostic: (!output.stderr.is_empty())
-            .then(|| String::from_utf8(output.stderr).unwrap().trim().to_owned()),
+        diagnostic: scenario_diagnostic(&output.stderr),
     };
     (record, report)
 }
@@ -264,7 +295,7 @@ fn late_storage_error(output_directory: &Path) -> ScenarioRecord {
         signals: vec![15],
         escape_detected: None,
         sample_count: 0,
-        diagnostic: Some(String::from_utf8(output.stderr).unwrap().trim().to_owned()),
+        diagnostic: scenario_diagnostic(&output.stderr),
     }
 }
 

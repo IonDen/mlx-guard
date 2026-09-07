@@ -7,6 +7,16 @@ versions follow Semantic Versioning.
 
 ### Added
 
+- Observe reports now carry a `calibration` section — total, complete, and incomplete sample counts,
+  the observed duration, the highest complete aggregate footprint, and the highest positive growth
+  rate, always with `observation_only: true` and `safety_certified: false`. Its peak is an unbounded
+  running maximum, so it holds a long run's early, highest footprint even after the 4,096-sample
+  history ring has evicted the sample it came from — the number a limit is chosen from. The field is
+  additive: enforcing runs and reports written before this release do not carry one, and reading
+  those back still validates.
+- `mlx-guard run` prints the emergency KILL threshold to stderr before the workload starts, so the
+  ceiling a run authorizes — about 10 % above the limit — is visible up front rather than only in
+  the final report.
 - `mlx-guard run` accepts `--checkpoint-timeout DURATION` (`10ms..=60s`) to bound how long a
   requested cooperative checkpoint waits for the worker's authenticated acknowledgement.
 - Reports record `outcome.child_status`, the root command's own exit status, independently of
@@ -86,6 +96,14 @@ versions follow Semantic Versioning.
 
 ### Fixed
 
+- A healthy but slow-to-sample workload is no longer at risk of a spurious TERM. A reading was
+  previously judged usable only if its process-tree enumeration finished within one
+  `--sample-interval`, so on a large process tree, a busy machine, or a short interval an ordinary
+  reading could exceed that; three in a row counted as observation failure and terminated a run that
+  was well under its limit. The freshness bounds now have a floor independent of the interval — a
+  250 ms collection window and a 500 ms sample age — so only a genuine sustained inability to read
+  memory fails closed. On the reference M1 Max, real `mlx_lm.lora` fine-tunes held a 1 ms window p95
+  against these bounds.
 - A command that finished in the instant between the supervisor's first identity inspection and
   its checkpoint endpoint negotiation no longer turns the run into a supervisor failure (exit 70).
   It keeps its own exit status, exactly as a command that finishes before the inspection always

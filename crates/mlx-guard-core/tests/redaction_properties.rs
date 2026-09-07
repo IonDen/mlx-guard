@@ -23,7 +23,8 @@ use std::time::{Duration, Instant};
 
 use mlx_guard_core::{
     AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
-    AdvisorySource, ArtifactKind, CapturePolicy, CheckpointArtifactRecord, CheckpointRecord,
+    AdvisorySource, ArtifactKind, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact,
+    CalibrationGuidance, CapturePolicy, CheckpointArtifactRecord, CheckpointRecord,
     CheckpointStatus, ChildStatus, EscapeEvidence, MemoryPressureLevel, ObservationError, Observed,
     OnParentExit, ParentWatch, PolicyState, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportError,
     ReportMode, ReportV1, RetentionPolicy, RunIdentity, SampleWindow, SignalReason, SignalRecord,
@@ -1009,6 +1010,7 @@ struct ErrorTally {
     invalid_privacy: usize,
     invalid_event_order: usize,
     invalid_advisory_metrics: usize,
+    invalid_calibration: usize,
     json: usize,
 }
 
@@ -1022,6 +1024,7 @@ impl ErrorTally {
             ReportError::InvalidPrivacy => self.invalid_privacy += 1,
             ReportError::InvalidEventOrder => self.invalid_event_order += 1,
             ReportError::InvalidAdvisoryMetrics => self.invalid_advisory_metrics += 1,
+            ReportError::InvalidCalibration => self.invalid_calibration += 1,
             ReportError::Json(_) => self.json += 1,
         }
     }
@@ -1063,6 +1066,32 @@ fn adversarial_field_values_never_panic_validation() {
         }
     }
     assert!(started.elapsed() < MAX_CASE_RUNTIME);
+
+    // `validate_calibration` runs last (after configuration, privacy, and events), so the random
+    // pool below almost never isolates it — any earlier-failing mutation preempts it. Prove the
+    // report validator reaches it deterministically: a calibration section on an enforce report is
+    // rejected as InvalidCalibration.
+    let mut calibration_case = base.clone();
+    calibration_case.calibration = Some(CalibrationArtifact {
+        schema_version: CALIBRATION_SCHEMA_VERSION,
+        observation_only: true,
+        safety_certified: false,
+        total_samples: 1,
+        complete_samples: 1,
+        incomplete_samples: 0,
+        observed_duration_ms: 1,
+        peak_aggregate_footprint_bytes: Observed::Available { value: 1 },
+        peak_growth_bytes_per_second: Observed::Unknown,
+        automatic_limit_bytes: None,
+        guidance: CalibrationGuidance::ChooseExplicitLimitFromRepeatedRepresentativeRuns,
+    });
+    assert!(
+        matches!(
+            calibration_case.validate(),
+            Err(ReportError::InvalidCalibration)
+        ),
+        "a calibration section on an enforce report must reach validate_calibration and be rejected"
+    );
 
     let mut generator = Generator(SEED_PROPERTY_4);
     let mut ok_count = 0usize;

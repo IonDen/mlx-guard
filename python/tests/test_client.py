@@ -558,7 +558,12 @@ with worker:
             )
 
         checkpoint = result.report.payload["checkpoint"]
-        self.assertEqual(result.stderr, b"", result.stderr)
+        # `run` prints the emergency-band banner on stderr as it launches; whether it reaches the
+        # captured buffer is timing-dependent, so tolerate it being present or absent, but nothing
+        # other than that banner should appear.
+        for line in (result.stderr or b"").splitlines():
+            if line:
+                self.assertIn(b"emergency KILL", line, result.stderr)
         self.assertIsInstance(checkpoint, Mapping)
         assert isinstance(checkpoint, Mapping)
         self.assertEqual(checkpoint["status"], "acknowledged_unverified_durability")

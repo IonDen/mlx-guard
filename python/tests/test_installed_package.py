@@ -100,7 +100,12 @@ class InstalledPackageTests(unittest.TestCase):
             os.kill(client.pid, signal.SIGKILL)
             _, client_stderr = client.communicate(timeout=5)
             self.assertEqual(client.returncode, -signal.SIGKILL)
-            self.assertEqual(client_stderr, "")
+            # The supervisor prints the emergency-band banner on the inherited stderr as it
+            # launches the workload. Whether that reaches the pipe before the client is killed is a
+            # race, so tolerate it being present or absent; nothing else should appear on stderr.
+            for line in client_stderr.splitlines():
+                if line:
+                    self.assertIn("emergency KILL", line, client_stderr)
 
             deadline = time.monotonic() + 5
             while not report.exists() and time.monotonic() < deadline:

@@ -292,6 +292,15 @@ impl PolicyMachine {
         self.state
     }
 
+    /// Return the effective maximum sample-collection window this machine enforces.
+    ///
+    /// The policy's measurement-quality gate is configured separately from the sampler's; exposing
+    /// it lets a caller confirm the two agree, so a report's declared window is the one enforced.
+    #[must_use]
+    pub const fn max_sample_window(&self) -> Duration {
+        self.config.max_sample_window
+    }
+
     /// Return the stable decision-contract version used by this machine.
     #[must_use]
     pub const fn contract_version(&self) -> u16 {

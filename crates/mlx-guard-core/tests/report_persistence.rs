@@ -8,9 +8,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use mlx_guard_core::{
-    ArtifactKind, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus, JournalEntry,
-    JournalHeader, JournalRecord, JournalRecovery, JournalRecoveryStatus, ReportV1, RunIdentity,
-    SecureJournal, SignalReason, StorageErrorKind,
+    ArtifactKind, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationGuidance,
+    CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus, JournalEntry, JournalHeader,
+    JournalRecord, JournalRecovery, JournalRecoveryStatus, Observed, ReportMode, ReportV1,
+    RunIdentity, SecureJournal, SignalReason, StorageErrorKind,
 };
 
 struct TestDirectory(PathBuf);
@@ -147,6 +148,44 @@ fn a_replayed_checkpoint_carries_the_request_id_reason_and_artifact() {
 
     let recovered = JournalRecovery::read(&journal_path).unwrap();
     assert_eq!(recovered.to_report().unwrap(), resumable);
+}
+
+#[test]
+fn an_observe_calibration_section_survives_the_journal_round_trip() {
+    // Catches the observe-only calibration section being dropped by journal append or replay:
+    // the whole-run peak lives only in this section (the sample ring is bounded), so losing it on
+    // recovery would silently discard the calibration evidence a limit is chosen from.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let mut observing = report();
+    observing.configuration.mode = ReportMode::Observe;
+    observing.configuration.max_footprint_bytes = None;
+    observing.configuration.warning_footprint_bytes = None;
+    observing.configuration.recovery_footprint_bytes = None;
+    observing.configuration.emergency_footprint_bytes = None;
+    observing.configuration.wall_time_ms = None;
+    observing.configuration.checkpoint_timeout_ms = None;
+    observing.calibration = Some(CalibrationArtifact {
+        schema_version: CALIBRATION_SCHEMA_VERSION,
+        observation_only: true,
+        safety_certified: false,
+        total_samples: 5,
+        complete_samples: 4,
+        incomplete_samples: 1,
+        observed_duration_ms: 250,
+        peak_aggregate_footprint_bytes: Observed::Available { value: 8192 },
+        peak_growth_bytes_per_second: Observed::Available { value: 512 },
+        automatic_limit_bytes: None,
+        guidance: CalibrationGuidance::ChooseExplicitLimitFromRepeatedRepresentativeRuns,
+    });
+    let journal_path = {
+        let mut journal = SecureJournal::initialize(&report_path).unwrap();
+        journal.append_report(&observing).unwrap();
+        journal.journal_path().to_path_buf()
+    };
+
+    let recovered = JournalRecovery::read(&journal_path).unwrap();
+    assert_eq!(recovered.to_report().unwrap(), observing);
 }
 
 #[test]
