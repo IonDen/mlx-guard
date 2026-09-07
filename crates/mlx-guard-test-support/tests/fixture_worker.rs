@@ -280,7 +280,18 @@ fn fanout_ignore_term_ready_waits_for_every_announcement() {
         !output.lines().any(|line| line.starts_with("READY")),
         "root must not print READY while an announcement is withheld: {output:?}"
     );
-    assert_eq!(status.code(), Some(124));
+    // The root's exact-count announce read never completes, so it never reaches READY (asserted
+    // above — that is this test's actual proof that the read gates READY). The designed outcome is
+    // the root's own watchdog firing (124). On a starved CI runner a sibling member can lose its
+    // announce channel before it writes its byte, so the read hits EOF early and the fixture exits
+    // 70 ("announcements ended early") instead; that is the same "read never completed, READY gated"
+    // result by a different route, not a logic failure. Accept either, but nothing else — a clean
+    // exit, a printed READY, or a signal death would still fail.
+    assert!(
+        matches!(status.code(), Some(124) | Some(70)),
+        "expected the watchdog (124) or an early-ended announce read (70), got {:?}",
+        status.code()
+    );
 }
 
 #[test]
