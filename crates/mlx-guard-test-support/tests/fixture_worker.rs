@@ -264,23 +264,36 @@ fn fanout_ignore_term_ready_waits_for_every_announcement() {
     // so the root's exact-count read never completes; a correct root therefore never reaches
     // READY and is instead caught by its own watchdog. This is the failing-test proof that the
     // read loop actually gates READY, not just that TERM-immunity happens to be installed early.
-    let mut child = Command::new(FIXTURE)
+    let output = Command::new(FIXTURE)
         .args(["fanout-ignore-term", "4", "2000"])
         .env("MLX_GUARD_FIXTURE_WITHHOLD_ANNOUNCE", "1")
         .stdout(Stdio::piped())
-        .spawn()
-        .expect("fixture must launch");
-    let mut stdout = child.stdout.take().expect("fixture stdout must be piped");
-    let mut output = String::new();
-    stdout
-        .read_to_string(&mut output)
-        .expect("fixture stdout must be readable to EOF");
-    let status = child.wait().expect("watchdog must finish");
+        .stderr(Stdio::piped())
+        .output()
+        .expect("fixture must run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        !output.lines().any(|line| line.starts_with("READY")),
-        "root must not print READY while an announcement is withheld: {output:?}"
+        !stdout.lines().any(|line| line.starts_with("READY")),
+        "root must not print READY while an announcement is withheld: stdout={stdout:?} stderr={stderr:?}"
     );
-    assert_eq!(status.code(), Some(124));
+    // The root's exact-count announce read never completes, so it never reaches READY (asserted
+    // above — this test's actual proof that the read gates READY). The designed outcome is the
+    // root's own watchdog firing (124). On a starved CI runner the spawned members can be killed
+    // before they park; because the root holds no writer of its own, every write-end of the
+    // announce pipe then closes and the read hits EOF early, so the fixture exits 70 with the
+    // "announcements ended early" message. Accept that exact 70 as the same "read never completed,
+    // READY gated" result — but require the message, so every other 70 (a pipe, clone, or member
+    // spawn failure, each with its own message) still fails, as do a clean exit, a printed READY,
+    // and a signal death (`code()` is `None`). A real setup regression is therefore not masked.
+    let code = output.status.code();
+    let early_end =
+        code == Some(70) && stderr.contains("fanout-ignore-term announcements ended early");
+    assert!(
+        code == Some(124) || early_end,
+        "expected the watchdog (124) or an early-ended announce read (70 with \
+         \"announcements ended early\"), got code={code:?} stderr={stderr:?}"
+    );
 }
 
 #[test]
