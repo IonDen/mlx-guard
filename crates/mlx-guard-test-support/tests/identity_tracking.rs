@@ -234,6 +234,35 @@ fn seventy_synthetic_escapees_count_seventy_not_thousands() {
 }
 
 #[test]
+fn retained_escape_evidence_is_capped_while_the_count_keeps_rising() {
+    // Catches removing the `escaped.len() < MAX_ESCAPED_EVIDENCE` guard in
+    // IdentityTracker::update: the retained evidence set would then grow with every distinct
+    // escapee instead of stopping at 64, which is the 0051 unbounded-growth shape. The soak gate
+    // asserts this cap directly, independent of RSS-measurement noise.
+    let root = ProcessIdentity {
+        pid: 100,
+        start_abstime: 1,
+    };
+    let mut tracker = IdentityTracker::new(root, 100).unwrap();
+    // 130 distinct descendants of root, each in a foreign process group: descendant relevance
+    // clears the not-tracked skip, so all 130 are recognized as distinct escapes in one snapshot.
+    let mut bound = vec![observation(100, 1, 1, 100, Some(1))];
+    bound.extend((0..130).map(|index| observation(1_000 + index, 2, 100, 900, Some(1))));
+    let frame = tracker.update(snapshot(bound));
+    assert!(frame.escape_observed);
+    assert_eq!(
+        tracker.escaped_count(),
+        130,
+        "every distinct escape stays counted past the evidence cap"
+    );
+    assert_eq!(
+        tracker.escaped_evidence_len(),
+        64,
+        "retained evidence is capped at MAX_ESCAPED_EVIDENCE"
+    );
+}
+
+#[test]
 fn a_reobserved_escapee_is_never_recounted() {
     // Catches an escapee inside the evidence cap contributing one increment per sample.
     let root = ProcessIdentity {

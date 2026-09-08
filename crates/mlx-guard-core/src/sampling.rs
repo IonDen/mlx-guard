@@ -330,4 +330,13 @@ impl FootprintSampler {
     pub fn escaped_count(&self) -> u64 {
         self.tracker.escaped_count()
     }
+
+    /// Number of distinct escaped identities currently retained as bounded evidence.
+    ///
+    /// Saturates at the tracker's evidence cap while [`Self::escaped_count`] keeps rising; a soak
+    /// asserts the cap holds under sustained escaping churn.
+    #[must_use]
+    pub fn escaped_evidence_len(&self) -> usize {
+        self.tracker.escaped_evidence_len()
+    }
 }

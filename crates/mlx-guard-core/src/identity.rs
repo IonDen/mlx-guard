@@ -196,6 +196,16 @@ impl IdentityTracker {
         self.escaped_count
     }
 
+    /// Number of distinct escaped identities currently retained as evidence.
+    ///
+    /// Saturates at [`MAX_ESCAPED_EVIDENCE`]; [`Self::escaped_count`] keeps rising past it. A
+    /// long soak asserts this stays capped, so unbounded per-identity retention — the 0051
+    /// growth shape — fails closed independent of RSS-measurement noise.
+    #[must_use]
+    pub fn escaped_evidence_len(&self) -> usize {
+        self.escaped.len()
+    }
+
     /// Revalidate a non-atomic snapshot and derive only currently bound live members.
     #[must_use]
     pub fn update(&mut self, snapshot: ProcessSnapshot) -> TrackingFrame {
