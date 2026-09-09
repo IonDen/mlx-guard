@@ -620,12 +620,44 @@ impl Drop for ChurnProcessGroup {
 }
 
 const CHURN_DEFAULT_SECONDS: u64 = 30;
-const CHURN_MAX_SECONDS: u64 = 300;
+/// Matches the endurance and soak reference durations so the churn chunk can join the
+/// reference-host soak bundle at the same length.
+const CHURN_MAX_SECONDS: u64 = 1_800;
 const CHURN_MAX_RSS_BYTES: u64 = 20 * 1024 * 1024;
 const CHURN_MAX_FOOTPRINT_GROWTH_BYTES: u64 = 4 * 1024 * 1024;
 
+#[derive(Serialize)]
+struct ChurnResult {
+    schema_version: u16,
+    requested_duration_seconds: u64,
+    actual_duration_nanoseconds: u64,
+    sample_interval_milliseconds: u64,
+    total_samples: u64,
+    root_samples: u64,
+    cpu_seconds: f64,
+    cpu_percent_of_one_core: f64,
+    starting_footprint_bytes: u64,
+    final_footprint_bytes: u64,
+    footprint_growth_bytes: u64,
+    maximum_resident_bytes: u64,
+    p95_window_nanoseconds: u64,
+    final_history_length: usize,
+}
+
+fn write_churn_output(result: &ChurnResult) {
+    let Some(path) = std::env::var_os("MLX_GUARD_CHURN_OUTPUT") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, serde_json::to_vec_pretty(result).unwrap()).unwrap();
+}
+
 #[test]
 #[ignore = "bounded pid-churn endurance acceptance"]
+#[allow(clippy::too_many_lines)]
 fn pid_churn_sampler_rss_stays_bounded_despite_many_distinct_children() {
     let run_seconds = std::env::var("MLX_GUARD_CHURN_SECONDS")
         .map_or(CHURN_DEFAULT_SECONDS, |value| value.parse::<u64>().unwrap());
@@ -698,6 +730,24 @@ fn pid_churn_sampler_rss_stays_bounded_despite_many_distinct_children() {
          max_rss={max_resident} p95_window={p95:?}",
         elapsed_s = elapsed.as_secs()
     );
+
+    // Written before the bounds are judged so a failing run still leaves its measurements behind.
+    write_churn_output(&ChurnResult {
+        schema_version: 1,
+        requested_duration_seconds: run_seconds,
+        actual_duration_nanoseconds: u64::try_from(elapsed.as_nanos()).unwrap(),
+        sample_interval_milliseconds: 50,
+        total_samples,
+        root_samples: distinct_root_samples,
+        cpu_seconds: cpu_used,
+        cpu_percent_of_one_core: cpu_percent,
+        starting_footprint_bytes: footprint_started,
+        final_footprint_bytes: final_footprint,
+        footprint_growth_bytes: final_footprint.saturating_sub(footprint_started),
+        maximum_resident_bytes: max_resident,
+        p95_window_nanoseconds: u64::try_from(p95.as_nanos()).unwrap(),
+        final_history_length: sampler.history_len(),
+    });
 
     assert!(total_samples >= 10, "too few samples: {total_samples}");
     assert!(
