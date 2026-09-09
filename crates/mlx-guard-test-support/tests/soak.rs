@@ -85,14 +85,15 @@ fn setsid_churn_accumulates_distinct_escapes_with_the_evidence_cap_held() {
     // Catches a churn mode that never actually escapes (children keeping the owned group) or that
     // reuses one identity: distinct escapees must climb past the 64-entry evidence cap while the
     // retained evidence set stays capped. Fast, non-ignored smoke coverage for the setsid-churn
-    // fixture the reference soak drives at length.
+    // fixture mode; the long soaks drive the same setsid-stall escapees from a shell loop. The
+    // deadline leaves the 3 vCPU CI runner several times the reference host's clearing time.
     let inventory = NativeProcessInventory::new();
-    let mut process = OwnedProcess::launch(&fixture("setsid-churn", 6, 4_000)).unwrap();
+    let mut process = OwnedProcess::launch(&fixture("setsid-churn", 6, 9_000)).unwrap();
     let mut output = BufReader::new(process.take_stdout().unwrap());
     read_phase(&mut output, "READY mode=setsid-churn");
     let mut sampler = soak_sampler_for(&process, inventory);
     let epoch = Instant::now();
-    let deadline = Instant::now() + Duration::from_millis(3_500);
+    let deadline = Instant::now() + Duration::from_secs(8);
     while Instant::now() < deadline && sampler.escaped_count() < 80 {
         sampler.sample_native(&inventory, epoch);
         thread::sleep(Duration::from_millis(2));
@@ -144,6 +145,10 @@ const SOAK_MAX_P95_WINDOW: Duration = Duration::from_millis(10);
 /// staying below what unbounded per-pid retention costs at reference length: dropping the 64-entry
 /// evidence cap retains ~30 bytes per escape, over 2 MiB at 1800 s.
 const SOAK_MAX_BINARY_RSS_DELTA_BYTES: u64 = 1024 * 1024;
+/// The real binary's own CPU share over the run: measured 3.37 % of one core over 60 s at 10 ms
+/// sampling (debug build, two spawners). The ceiling leaves margin for a loaded host while staying
+/// far below the ~25 % the per-sample escape-list rebuild cost before it was removed.
+const SOAK_MAX_BINARY_CPU_PERCENT: f64 = 8.0;
 /// Spawners driving the real binary. The supervisor re-inspects every tracked pid each sample, and
 /// a tracked child that exited since the previous sample makes that sample unusable (one exit, one
 /// missing sample); three consecutive missing samples fail observation closed and end the run with
@@ -328,6 +333,13 @@ fn assert_soak_bounds(result: &SoakResult) {
         "evidence cap breached: {}",
         result.escaped_evidence_len
     );
+    if result.tight_bounds_applied {
+        // A tracker that never retains evidence at all would also stay under the cap.
+        assert_eq!(
+            result.escaped_evidence_len, 64,
+            "evidence list did not fill to the cap under sustained churn"
+        );
+    }
     assert!(
         result.final_history_length <= 256,
         "history_len={}",
@@ -401,7 +413,10 @@ fn escaping_churn_supervisor_footprint_stays_bounded() {
     let footprint_started = current_footprint_bytes(inventory);
     let mut max_resident = maximum_resident_bytes();
     let mut total_samples = 0_u64;
-    let mut windows = Vec::new();
+    // Pre-sized so the harness's own per-sample bookkeeping does not reallocate mid-run and show
+    // up in the footprint it measures (a doubling at 131,072 entries once cost 2 MiB of "growth").
+    let mut windows =
+        Vec::with_capacity(usize::try_from(duration.as_millis() / 10).unwrap() + 4_096);
     let mut observations = vec![SoakObservation {
         elapsed_milliseconds: 0,
         distinct_escapes: 0,
@@ -491,16 +506,104 @@ fn escaping_churn_supervisor_footprint_stays_bounded() {
     assert_soak_bounds(&result);
 }
 
+/// Count the samples the policy could not use and the longest run of them, from the per-sample
+/// "aggregate available" flags in report order. The supervisor fails observation closed at three
+/// consecutive unusable samples, so the longest streak says how close a run sat to that edge.
+fn unusable_sample_summary(available: impl IntoIterator<Item = bool>) -> (u64, u64) {
+    let mut unusable = 0_u64;
+    let mut streak = 0_u64;
+    let mut longest = 0_u64;
+    for usable in available {
+        if usable {
+            streak = 0;
+        } else {
+            unusable += 1;
+            streak += 1;
+            longest = longest.max(streak);
+        }
+    }
+    (unusable, longest)
+}
+
+/// CPU seconds (user + system) consumed so far by another process, read through
+/// `proc_pid_rusage` and converted from Mach absolute-time units.
+fn process_cpu_seconds(pid: i32) -> Option<f64> {
+    let mut info = std::mem::MaybeUninit::<libc::rusage_info_v0>::zeroed();
+    // SAFETY: the V0 buffer is writable and proc_pid_rusage fills the whole structure on success.
+    let status = unsafe {
+        libc::proc_pid_rusage(
+            pid,
+            libc::RUSAGE_INFO_V0,
+            info.as_mut_ptr().cast::<libc::rusage_info_t>(),
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    // SAFETY: the successful call initialized the structure.
+    let info = unsafe { info.assume_init() };
+    let mut timebase = MachTimebaseInfo { numer: 0, denom: 0 };
+    // SAFETY: mach_timebase_info writes the two fields of the provided structure and returns
+    // KERN_SUCCESS (0) on every supported host.
+    let status = unsafe { mach_timebase_info(&raw mut timebase) };
+    if status != 0 || timebase.denom == 0 {
+        return None;
+    }
+    let ticks = info.ri_user_time.saturating_add(info.ri_system_time);
+    #[allow(clippy::cast_precision_loss)]
+    let nanos = ticks as f64 * f64::from(timebase.numer) / f64::from(timebase.denom);
+    Some(nanos / 1e9)
+}
+
+/// `mach_timebase_info_data_t`: the numerator/denominator that converts Mach absolute-time ticks
+/// to nanoseconds (125/3 on Apple Silicon). Declared here because the `libc` binding is deprecated
+/// in favour of a crate this workspace does not pin.
+#[repr(C)]
+struct MachTimebaseInfo {
+    numer: u32,
+    denom: u32,
+}
+
+unsafe extern "C" {
+    fn mach_timebase_info(info: *mut MachTimebaseInfo) -> libc::c_int;
+}
+
+#[test]
+fn unusable_sample_summary_counts_and_finds_the_longest_streak() {
+    // Catches a summary that counts but never tracks the streak (or resets it wrongly): the
+    // sequence below has four unusable samples whose longest run is two, not four and not one.
+    let flags = [true, false, false, true, false, true, true, false];
+    assert_eq!(unusable_sample_summary(flags), (4, 2));
+    assert_eq!(unusable_sample_summary([true, true]), (0, 0));
+    assert_eq!(unusable_sample_summary([false, false, false]), (3, 3));
+}
+
+#[derive(Serialize)]
+struct BinarySoakObservation {
+    elapsed_milliseconds: u64,
+    footprint_bytes: u64,
+    cpu_seconds: f64,
+}
+
 #[derive(Serialize)]
 struct BinarySoakResult {
     schema_version: u16,
     requested_duration_seconds: u64,
+    warmup_seconds: u64,
     sample_interval_milliseconds: u64,
     spawners: usize,
     baseline_footprint_bytes: u64,
     peak_footprint_bytes: u64,
     footprint_delta_bytes: u64,
+    cpu_seconds: f64,
+    cpu_percent_of_one_core: f64,
     escaped_count: u64,
+    total_samples: u64,
+    unusable_samples: u64,
+    longest_unusable_streak: u64,
+    outcome_kind: String,
+    ran_to_terminal_signal: bool,
+    raw_observations: Vec<BinarySoakObservation>,
     tight_bounds_applied: bool,
     reference_run: bool,
 }
@@ -566,75 +669,136 @@ fn real_binary_supervising_escaping_churn_stays_bounded() {
         .ok()
         .and_then(|observation| observation.footprint_bytes)
         .unwrap();
+    let cpu_baseline = process_cpu_seconds(guard_pid).unwrap();
     let mut peak = baseline;
+    let mut cpu_latest = cpu_baseline;
     let started = Instant::now();
     let mut next_progress = Duration::from_secs(30);
+    let mut raw_observations = vec![BinarySoakObservation {
+        elapsed_milliseconds: 0,
+        footprint_bytes: baseline,
+        cpu_seconds: 0.0,
+    }];
+    let mut exited_early = false;
     while started.elapsed() < duration {
+        // A supervisor that dies mid-run (gave up observation, crashed) ends the measurement now
+        // rather than after the full window; the outcome assertion below names the failure.
+        if guard.try_wait().unwrap().is_some() {
+            exited_early = true;
+            break;
+        }
         if let Ok(observation) = inventory.inspect(guard_pid)
             && let Some(footprint) = observation.footprint_bytes
         {
             peak = peak.max(footprint);
         }
+        if let Some(cpu) = process_cpu_seconds(guard_pid) {
+            cpu_latest = cpu;
+        }
         if started.elapsed() >= next_progress {
+            raw_observations.push(BinarySoakObservation {
+                elapsed_milliseconds: u64::try_from(started.elapsed().as_millis()).unwrap(),
+                footprint_bytes: peak,
+                cpu_seconds: cpu_latest - cpu_baseline,
+            });
             eprintln!(
-                "binary soak elapsed_s={} baseline={baseline} peak={peak} delta={}",
+                "binary soak elapsed_s={} baseline={baseline} peak={peak} delta={} cpu_s={:.2}",
                 started.elapsed().as_secs(),
-                peak.saturating_sub(baseline)
+                peak.saturating_sub(baseline),
+                cpu_latest - cpu_baseline
             );
             next_progress += Duration::from_secs(30);
         }
         thread::sleep(Duration::from_millis(200));
     }
+    let measured = started.elapsed();
+    if let Some(cpu) = process_cpu_seconds(guard_pid) {
+        cpu_latest = cpu;
+    }
 
     // End the observe run: the native parent forwards the terminal signal to the owned group and
     // writes the final report before it exits.
-    // SAFETY: guard_pid is this test's direct child, launched just above and not yet reaped.
-    unsafe {
-        libc::kill(guard_pid, libc::SIGTERM);
+    if !exited_early {
+        // SAFETY: guard_pid is this test's direct child, launched above and not yet reaped.
+        unsafe {
+            libc::kill(guard_pid, libc::SIGTERM);
+        }
     }
     let _ = guard.wait();
 
     let report_text = std::fs::read_to_string(&report_path).unwrap();
+    // Keep the schema-v1 report for diagnosis when a location is given; the temporary directory
+    // is removed below whatever the verdict.
+    if let Some(copy) = std::env::var_os("MLX_GUARD_SOAK_BINARY_REPORT") {
+        std::fs::write(copy, &report_text).unwrap();
+    }
+    std::fs::remove_dir_all(&base).ok();
     let report = mlx_guard_core::ReportV1::from_json(&report_text).unwrap();
-    // The run must have ended on this test's SIGTERM. A supervisor that gave up on observation
-    // first (three consecutive missing samples under churn the binary cannot follow) exits 70 and
-    // relinquishes the churn, and its footprint over a truncated run proves nothing.
-    assert_eq!(
-        report.outcome.kind,
-        mlx_guard_core::TerminalKind::ChildSignaled { signal: 15 },
-        "the binary did not run to the test's SIGTERM (spawners={spawners}); outcome={:?}",
-        report.outcome.kind
-    );
+    let ran_to_terminal_signal =
+        report.outcome.kind == mlx_guard_core::TerminalKind::ChildSignaled { signal: 15 };
     let escaped_count = report.escape.escaped_count.unwrap_or(0);
+    let total_samples = u64::try_from(report.samples.len()).unwrap();
+    let (unusable_samples, longest_unusable_streak) =
+        unusable_sample_summary(report.samples.iter().map(|sample| {
+            matches!(
+                sample.aggregate_footprint_bytes,
+                mlx_guard_core::Observed::Available { .. }
+            )
+        }));
     let delta = peak.saturating_sub(baseline);
+    let cpu_used = cpu_latest - cpu_baseline;
+    let cpu_percent = cpu_used / measured.as_secs_f64() * 100.0;
     let bounds_applied = run_seconds >= 60;
 
     eprintln!(
-        "binary soak complete elapsed_s={} spawners={spawners} baseline={baseline} peak={peak} delta={delta} escaped_count={escaped_count}",
-        duration.as_secs()
+        "binary soak complete elapsed_s={} spawners={spawners} baseline={baseline} peak={peak} \
+         delta={delta} cpu_percent={cpu_percent:.3} escaped_count={escaped_count} \
+         samples={total_samples} unusable={unusable_samples} longest_streak={longest_unusable_streak} \
+         outcome={:?}",
+        measured.as_secs(),
+        report.outcome.kind
     );
 
     write_binary_soak_output(&BinarySoakResult {
-        schema_version: 1,
+        schema_version: 2,
         requested_duration_seconds: run_seconds,
+        warmup_seconds: warmup.as_secs(),
         sample_interval_milliseconds: 10,
         spawners,
         baseline_footprint_bytes: baseline,
         peak_footprint_bytes: peak,
         footprint_delta_bytes: delta,
+        cpu_seconds: cpu_used,
+        cpu_percent_of_one_core: cpu_percent,
         escaped_count,
+        total_samples,
+        unusable_samples,
+        longest_unusable_streak,
+        outcome_kind: format!("{:?}", report.outcome.kind),
+        ran_to_terminal_signal,
+        raw_observations,
         tight_bounds_applied: bounds_applied,
         reference_run: run_seconds == SOAK_REFERENCE_SECONDS,
     });
 
-    std::fs::remove_dir_all(&base).ok();
-
+    // The run must have ended on this test's SIGTERM. A supervisor that gave up on observation
+    // first (three consecutive missing samples under churn the binary cannot follow) exits 70 and
+    // relinquishes the churn, and its footprint over a truncated run proves nothing.
+    assert!(
+        ran_to_terminal_signal,
+        "the binary did not run to the test's SIGTERM (spawners={spawners}, measured {}s of {}s); \
+         outcome={:?}",
+        measured.as_secs(),
+        duration.as_secs(),
+        report.outcome.kind
+    );
     assert!(
         escaped_count > 0,
         "the binary counted no escapes under churn"
     );
     if bounds_applied {
-        let floor = SOAK_BINARY_MIN_ESCAPES_PER_SECOND * run_seconds;
+        // The report counts escapes from launch, so the floor spans warm-up plus the window.
+        let floor = SOAK_BINARY_MIN_ESCAPES_PER_SECOND * (run_seconds + warmup.as_secs());
         assert!(
             escaped_count >= floor,
             "binary escaped_count below floor: {escaped_count} < {floor}"
@@ -642,6 +806,10 @@ fn real_binary_supervising_escaping_churn_stays_bounded() {
         assert!(
             delta <= SOAK_MAX_BINARY_RSS_DELTA_BYTES,
             "binary footprint delta={delta} exceeds ceiling {SOAK_MAX_BINARY_RSS_DELTA_BYTES}"
+        );
+        assert!(
+            cpu_percent <= SOAK_MAX_BINARY_CPU_PERCENT,
+            "binary cpu_percent={cpu_percent:.3} exceeds ceiling {SOAK_MAX_BINARY_CPU_PERCENT}"
         );
     }
 }

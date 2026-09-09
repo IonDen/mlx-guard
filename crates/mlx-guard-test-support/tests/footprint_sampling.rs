@@ -687,7 +687,9 @@ fn pid_churn_sampler_rss_stays_bounded_despite_many_distinct_children() {
     let mut total_samples = 0_u64;
     let mut distinct_root_samples = 0_u64;
     let mut next_progress = Duration::from_secs(10);
-    let mut windows = Vec::new();
+    // Pre-sized so the harness's own bookkeeping does not reallocate inside the measured window.
+    let mut windows =
+        Vec::with_capacity(usize::try_from(duration.as_millis() / 50).unwrap() + 1_024);
 
     while started.elapsed() < duration {
         let sample = sampler.sample_native(&inventory, epoch);

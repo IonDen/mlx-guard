@@ -15,6 +15,12 @@ if [[ -e "$output_directory" ]]; then
     echo "output directory already exists: $output_directory" >&2
     exit 64
 fi
+absolute_output=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$output_directory")
+if [[ "$absolute_output" == "$repo_root" || "$absolute_output" == "$repo_root"/* ]]; then
+    echo "output directory must be outside the repository (its staging directory would dirty" >&2
+    echo "the worktree and block a resume); write it elsewhere and copy the JSON files in" >&2
+    exit 64
+fi
 seconds=${MLX_GUARD_SOAK_REFERENCE_SECONDS:-1800}
 if ! [[ $seconds =~ ^[1-9][0-9]*$ ]] || (( seconds > 1800 )); then
     echo "MLX_GUARD_SOAK_REFERENCE_SECONDS must be an integer in 1..=1800, got: $seconds" >&2
@@ -36,7 +42,19 @@ fi
 
 # The staging directory is deterministic so an interrupted run resumes; it is never a temp dir.
 staging_directory="${output_directory}.staging"
-mkdir -p "$staging_directory"
+log_directory="$staging_directory/logs"
+mkdir -p "$log_directory"
+
+# An interrupted chunk leaves its churn shell running in its own process group, where Ctrl-C on
+# cargo never reaches it; end it here so a resume does not measure under leftover load.
+on_interrupt() {
+    echo "interrupted; ending churn processes" >&2
+    pkill -f 'mlx-guard-fixture' 2>/dev/null || true
+    pkill -f 'setsid-stall' 2>/dev/null || true
+    pkill -f 'lt [0-9]+; do' 2>/dev/null || true
+    exit 130
+}
+trap on_interrupt INT TERM
 commit=$(git rev-parse HEAD)
 provenance="$staging_directory/provenance.json"
 if [[ -f "$provenance" ]]; then
@@ -80,50 +98,72 @@ strays() {
         | grep -v grep || true
 }
 
-# run_chunk NAME OUTPUT_ENV SECONDS_ENV TEST_FILE TEST_NAME
-run_chunk() {
-    local name=$1 output_env=$2 seconds_env=$3 test_file=$4 test_name=$5
-    local artifact="$staging_directory/$name.json"
-    if [[ -f "$artifact" ]]; then
-        echo "[skip] $name (artifact exists)"
-        return
-    fi
-    echo "[run] $name (${seconds}s) -> $artifact"
-    env "$output_env=$artifact" "$seconds_env=$seconds" \
-        cargo test -p mlx-guard-test-support --test "$test_file" "$test_name" \
-        -- --ignored --exact --nocapture 2>&1 | tee "$staging_directory/$name.log"
-    if [[ ! -f "$artifact" ]]; then
-        echo "chunk $name finished without writing $artifact" >&2
-        exit 70
-    fi
-    local leftovers
+refuse_strays() {
+    local when=$1 leftovers
     leftovers=$(strays)
     if [[ -n "$leftovers" ]]; then
-        echo "processes still alive after chunk $name:" >&2
+        echo "processes still alive $when:" >&2
         echo "$leftovers" >&2
         exit 70
     fi
 }
 
+# run_chunk NAME OUTPUT_ENV SECONDS_ENV TEST_FILE TEST_NAME [EXTRA_ENV=VALUE ...]
+# A chunk counts as done only when its success sentinel exists: every chunk test writes its JSON
+# before judging its ceilings, so the artifact alone would let a failed chunk into the bundle.
+run_chunk() {
+    local name=$1 output_env=$2 seconds_env=$3 test_file=$4 test_name=$5
+    shift 5
+    local artifact="$staging_directory/$name.json"
+    local sentinel="$log_directory/$name.ok"
+    if [[ -f "$sentinel" && -f "$artifact" ]]; then
+        local staged_seconds
+        staged_seconds=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["requested_duration_seconds"])' "$artifact")
+        if [[ "$staged_seconds" != "$seconds" ]]; then
+            echo "chunk $name was staged for ${staged_seconds}s but this run wants ${seconds}s" >&2
+            exit 65
+        fi
+        echo "[skip] $name (passed earlier at ${seconds}s)"
+        return
+    fi
+    refuse_strays "before chunk $name"
+    echo "[run] $name (${seconds}s) -> $artifact"
+    rm -f "$artifact" "$sentinel"
+    env "$output_env=$artifact" "$seconds_env=$seconds" "$@" \
+        cargo test -p mlx-guard-test-support --test "$test_file" "$test_name" \
+        -- --ignored --exact --nocapture 2>&1 | tee "$log_directory/$name.log"
+    if [[ ! -f "$artifact" ]]; then
+        echo "chunk $name finished without writing $artifact" >&2
+        exit 70
+    fi
+    refuse_strays "after chunk $name"
+    : >"$sentinel"
+}
+
 run_chunk escaping-churn MLX_GUARD_SOAK_OUTPUT MLX_GUARD_SOAK_SECONDS \
     soak escaping_churn_supervisor_footprint_stays_bounded
 run_chunk real-binary MLX_GUARD_SOAK_BINARY_OUTPUT MLX_GUARD_SOAK_SECONDS \
-    soak real_binary_supervising_escaping_churn_stays_bounded
+    soak real_binary_supervising_escaping_churn_stays_bounded \
+    "MLX_GUARD_SOAK_BINARY_REPORT=$log_directory/real-binary-report.json"
 run_chunk endurance MLX_GUARD_ENDURANCE_OUTPUT MLX_GUARD_ENDURANCE_SECONDS \
     footprint_sampling thirty_minute_sampler_stays_inside_cpu_rss_and_history_bounds
 run_chunk pid-churn MLX_GUARD_CHURN_OUTPUT MLX_GUARD_CHURN_SECONDS \
     footprint_sampling pid_churn_sampler_rss_stays_bounded_despite_many_distinct_children
 
-# The bundle is committed: it must carry no unique machine identifier and no local path.
-if grep -rEl \
+# Only the JSON files are published for committing, and they must carry no unique machine
+# identifier and no local path. The cargo transcripts and the copied schema report stay in the
+# sibling logs directory: they name local paths by nature and are never committed.
+if grep -El \
     -e 'Serial Number' -e 'Hardware UUID' -e 'Provisioning UDID' -e 'Activation Lock' \
     -e '[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}' \
-    -e '/Users/' -e '/private/var/folders' \
+    -e '/Users/' -e '/home/' -e '/var/folders/' -e "$HOME" \
     "$staging_directory"/*.json; then
     echo "staged artifacts contain a unique identifier or local path; not publishing" >&2
     exit 70
 fi
 
-mkdir -p "$(dirname "$output_directory")"
-mv "$staging_directory" "$output_directory"
-echo "soak bundle written to $output_directory"
+mkdir -p "$(dirname "$output_directory")" "$output_directory"
+mv "$staging_directory"/*.json "$output_directory"/
+mv "$log_directory" "${output_directory}.logs"
+rmdir "$staging_directory"
+echo "soak bundle written to $output_directory (transcripts in ${output_directory}.logs)"
