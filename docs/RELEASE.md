@@ -27,6 +27,12 @@ the version in one commit and refreshes, by hand:
   `escalation-envelope.json` alongside the rest of the reference bundle whenever the checkpoint
   acknowledgement, TERM, or KILL path changed since the last release; re-run it standalone with
   `scripts/measure-escalation-envelope.sh m1-max-32gb <out>` if only that artifact is stale.
+- Soak gate: run `scripts/soak-reference-host.sh <out>` on the M1 Max whenever supervision,
+  sampling, identity-tracking, or intervention code changed since the last release, and commit the
+  bundle it writes to `evidence/vX.Y.Z/m1-max-32gb/soak/` with a README that records the measured
+  supervisor footprint, CPU, and sample-window numbers. The four chunks run 30 minutes each and
+  the script resumes a run that was interrupted, so a bundle costs about two hours of an otherwise
+  idle machine. The soak tests stay `#[ignore]`d in CI.
 - If a prior evidence bundle's README notes a supervision-behavior discontinuity and points ahead
   to this version (for example, "see the 0.2.0 bundle"), regenerate the reference-host bundle for
   this version so that reference does not linger unfulfilled.

@@ -45,6 +45,12 @@ duration. Escape evidence retains at most 64 identities plus a bounded count of 
 count is not capped by that list and keeps incrementing past it, so truncation is counted rather than
 silent. The per-sample frame carries only a boolean.
 
+The measured envelope for long runs under process churn, including runs whose children leave the
+owned group at tens of escapes per second, is recorded with each release's reference-host soak
+bundle under `evidence/` rather than here; that README states the supervisor footprint growth, CPU
+share, and end-of-run sample-window bounds the release was checked against and the host they were
+measured on.
+
 ## Interpretation limits
 
 The aggregate is a multi-call estimate, not an instantaneous machine-wide truth. Shared pages may be
