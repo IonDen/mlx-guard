@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "git_commit": "a5a5cb93abc306f572e789f245eeb535a7e9bc50",
+  "git_status_porcelain": "",
+  "captured_at_utc": "2026-09-09T08:02:15Z",
+  "requested_chunk_seconds": 1800,
+  "hardware": "Model Name: MacBook Pro\nModel Identifier: MacBookPro18,2\nChip: Apple M1 Max\nTotal Number of Cores: 10 (8 Performance and 2 Efficiency)\nMemory: 32 GB",
+  "macos": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83",
+  "kernel_release": "25.6.0",
+  "architecture": "arm64",
+  "rustc": "rustc 1.93.0 (254b59607 2026-01-19) (Homebrew)",
+  "build_profile": "debug"
+}
