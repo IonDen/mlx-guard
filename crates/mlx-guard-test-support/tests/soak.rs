@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::thread;
@@ -16,6 +17,24 @@ use mlx_guard_core::{
 use serde::Serialize;
 
 const FIXTURE: &str = env!("CARGO_BIN_EXE_mlx-guard-fixture");
+
+/// Path to the `mlx-guard` CLI binary, resolved as a sibling of this crate's fixture binary in the
+/// cargo target directory. `CARGO_BIN_EXE_mlx-guard` is not defined here — that variable exists
+/// only for the crate that declares the binary — so the real-binary soak requires the CLI binary
+/// to be built first (the reference-host soak script builds it) and fails clearly if it is not.
+fn mlx_guard_binary() -> std::path::PathBuf {
+    let path = std::path::Path::new(FIXTURE)
+        .parent()
+        .expect("fixture binary has a parent directory")
+        .join("mlx-guard");
+    assert!(
+        path.exists(),
+        "the mlx-guard CLI binary is not built at {}; build it with \
+         `cargo build -p mlx-guard-cli --bin mlx-guard` before running the real-binary soak",
+        path.display()
+    );
+    path
+}
 
 /// 10 ms sampling with a 256-sample ring, matching the churn endurance test in
 /// `footprint_sampling.rs`. A short window keeps every escapee observable across several samples.
@@ -117,6 +136,48 @@ const SOAK_MAX_CPU_PERCENT: f64 = 5.0;
 const SOAK_MIN_DISTINCT_ESCAPES: u64 = 3_000;
 /// The published reference sample-window bound; measured p95 here was well under 400 us.
 const SOAK_MAX_P95_WINDOW: Duration = Duration::from_millis(10);
+/// The real `mlx-guard` binary's own footprint-delta ceiling over the run. The 4.4 GB incident was
+/// the binary, not the in-process sampler, so this variant reads the binary's own footprint.
+/// Measured unmutated at 2 spawners / 10 ms after a 60 s warm-up: 32 KiB over 60 s and 96 KiB over
+/// 300 s (11,734 escapes), growing in 16 KiB page steps with plateaus, so roughly 8 bytes per
+/// escape and ~600 KiB by linear extrapolation to 1800 s. The ceiling leaves that margin while
+/// staying below what unbounded per-pid retention costs at reference length: dropping the 64-entry
+/// evidence cap retains ~30 bytes per escape, over 2 MiB at 1800 s.
+const SOAK_MAX_BINARY_RSS_DELTA_BYTES: u64 = 1024 * 1024;
+/// Spawners driving the real binary. The supervisor re-inspects every tracked pid each sample, and
+/// a tracked child that exited since the previous sample makes that sample unusable (one exit, one
+/// missing sample); three consecutive missing samples fail observation closed and end the run with
+/// exit 70. One serial spawner retires at most one escapee per ~65 ms, so at 10 ms sampling two
+/// spawners can never produce three consecutive missing samples while three can (measured: two
+/// spawners' longest missing streak was 2 over 723 samples; three spawners died within 5 s). The
+/// rate is therefore bounded by what the current binary can observe, ~30 escapes/s, not by the
+/// harness. `MLX_GUARD_SOAK_SPAWNERS` overrides it for experiments.
+const SOAK_BINARY_DEFAULT_SPAWNERS: usize = 2;
+/// Distinct-escape floor for the real binary, stated as measured rate x duration (design rule):
+/// two spawners measured ~33 escapes/s over a 90 s run; a third of that survives a loaded host and
+/// still puts an 1800 s run at 18,000 — far above the 64-entry cap.
+const SOAK_BINARY_MIN_ESCAPES_PER_SECOND: u64 = 10;
+
+/// Build the `/bin/sh -c` program that drives the escaping churn: `spawners` parallel subloops,
+/// each serially launching short-lived `mlx-guard-fixture setsid-stall` escapees, bounded by an
+/// iteration budget derived once from the lifetime (no `date` fork). Shared by the in-process
+/// group and the real-binary variant so both drive identical churn.
+fn escaping_churn_program(spawners: usize, lifetime: Duration) -> String {
+    assert!((1..=8).contains(&spawners));
+    let iterations = lifetime.as_millis() / u128::from(CHURN_ESCAPEE_HOLD_MS) + 64;
+    let subloop = format!(
+        "i=0; while [ \"$i\" -lt {iterations} ]; do '{FIXTURE}' setsid-stall 1 \
+         {CHURN_ESCAPEE_HOLD_MS} >/dev/null 2>&1; i=$((i+1)); done"
+    );
+    let mut program = String::new();
+    for _ in 0..spawners {
+        program.push('(');
+        program.push_str(&subloop);
+        program.push_str(") & ");
+    }
+    program.push_str("wait");
+    program
+}
 
 /// A long-lived escaping-churn workload the in-process sampler can supervise for the full soak.
 ///
@@ -134,19 +195,7 @@ struct EscapingChurnGroup {
 
 impl EscapingChurnGroup {
     fn spawn(spawners: usize, lifetime: Duration) -> Self {
-        assert!((1..=8).contains(&spawners));
-        let iterations = lifetime.as_millis() / u128::from(CHURN_ESCAPEE_HOLD_MS) + 64;
-        let subloop = format!(
-            "i=0; while [ \"$i\" -lt {iterations} ]; do '{FIXTURE}' setsid-stall 1 \
-             {CHURN_ESCAPEE_HOLD_MS} >/dev/null 2>&1; i=$((i+1)); done"
-        );
-        let mut program = String::new();
-        for _ in 0..spawners {
-            program.push('(');
-            program.push_str(&subloop);
-            program.push_str(") & ");
-        }
-        program.push_str("wait");
+        let program = escaping_churn_program(spawners, lifetime);
         let child = Command::new("/bin/sh")
             .args(["-c", &program])
             .stdin(Stdio::null())
@@ -440,4 +489,159 @@ fn escaping_churn_supervisor_footprint_stays_bounded() {
     };
     write_soak_output(&result);
     assert_soak_bounds(&result);
+}
+
+#[derive(Serialize)]
+struct BinarySoakResult {
+    schema_version: u16,
+    requested_duration_seconds: u64,
+    sample_interval_milliseconds: u64,
+    spawners: usize,
+    baseline_footprint_bytes: u64,
+    peak_footprint_bytes: u64,
+    footprint_delta_bytes: u64,
+    escaped_count: u64,
+    tight_bounds_applied: bool,
+    reference_run: bool,
+}
+
+fn write_binary_soak_output(result: &BinarySoakResult) {
+    let Some(path) = std::env::var_os("MLX_GUARD_SOAK_BINARY_OUTPUT") else {
+        return;
+    };
+    let path = std::path::PathBuf::from(path);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, serde_json::to_vec_pretty(&result).unwrap()).unwrap();
+}
+
+#[test]
+#[ignore = "reference-host real-binary escaping-churn soak acceptance"]
+#[allow(clippy::too_many_lines)]
+fn real_binary_supervising_escaping_churn_stays_bounded() {
+    let run_seconds = std::env::var("MLX_GUARD_SOAK_SECONDS")
+        .map_or(SOAK_DEFAULT_SECONDS, |value| value.parse::<u64>().unwrap());
+    assert!((1..=SOAK_MAX_SECONDS).contains(&run_seconds));
+    let spawners = std::env::var("MLX_GUARD_SOAK_SPAWNERS")
+        .map_or(SOAK_BINARY_DEFAULT_SPAWNERS, |value| {
+            value.parse::<usize>().unwrap()
+        });
+    // Tight-bounds runs take the baseline only after the binary's steady state is reached: the
+    // 4,096-sample report ring fills in 41 s at 10 ms sampling (a 30 s warm-up still measured
+    // ~900 KiB of ring fill as "growth"), and the allocator settles inside that window too.
+    let warmup = if run_seconds >= 60 {
+        Duration::from_secs(60)
+    } else {
+        Duration::from_millis(500)
+    };
+    let duration = Duration::from_secs(run_seconds);
+
+    // The CLI requires the report's parent directory to already exist, be user-owned, and be 0700.
+    let base = std::env::temp_dir().join(format!("mlx-guard-binary-soak-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(&base).unwrap();
+    std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let report_path = base.join("soak.json");
+
+    // The real supervisor observes a long-lived escaping churn. Observe never intervenes, so the
+    // binary's own footprint reflects sustained sampling of many distinct escaped pids — the value
+    // the 0051 incident grew without bound — rather than any workload memory spike.
+    let program = escaping_churn_program(spawners, warmup + duration + Duration::from_secs(10));
+    let mut guard = Command::new(mlx_guard_binary())
+        .args(["observe", "--sample-interval", "10ms", "--report"])
+        .arg(&report_path)
+        .args(["--", "/bin/sh", "-c", &program])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let guard_pid = i32::try_from(guard.id()).unwrap();
+
+    thread::sleep(warmup);
+    let inventory = NativeProcessInventory::new();
+    let baseline = inventory
+        .inspect(guard_pid)
+        .ok()
+        .and_then(|observation| observation.footprint_bytes)
+        .unwrap();
+    let mut peak = baseline;
+    let started = Instant::now();
+    let mut next_progress = Duration::from_secs(30);
+    while started.elapsed() < duration {
+        if let Ok(observation) = inventory.inspect(guard_pid)
+            && let Some(footprint) = observation.footprint_bytes
+        {
+            peak = peak.max(footprint);
+        }
+        if started.elapsed() >= next_progress {
+            eprintln!(
+                "binary soak elapsed_s={} baseline={baseline} peak={peak} delta={}",
+                started.elapsed().as_secs(),
+                peak.saturating_sub(baseline)
+            );
+            next_progress += Duration::from_secs(30);
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+
+    // End the observe run: the native parent forwards the terminal signal to the owned group and
+    // writes the final report before it exits.
+    // SAFETY: guard_pid is this test's direct child, launched just above and not yet reaped.
+    unsafe {
+        libc::kill(guard_pid, libc::SIGTERM);
+    }
+    let _ = guard.wait();
+
+    let report_text = std::fs::read_to_string(&report_path).unwrap();
+    let report = mlx_guard_core::ReportV1::from_json(&report_text).unwrap();
+    // The run must have ended on this test's SIGTERM. A supervisor that gave up on observation
+    // first (three consecutive missing samples under churn the binary cannot follow) exits 70 and
+    // relinquishes the churn, and its footprint over a truncated run proves nothing.
+    assert_eq!(
+        report.outcome.kind,
+        mlx_guard_core::TerminalKind::ChildSignaled { signal: 15 },
+        "the binary did not run to the test's SIGTERM (spawners={spawners}); outcome={:?}",
+        report.outcome.kind
+    );
+    let escaped_count = report.escape.escaped_count.unwrap_or(0);
+    let delta = peak.saturating_sub(baseline);
+    let bounds_applied = run_seconds >= 60;
+
+    eprintln!(
+        "binary soak complete elapsed_s={} spawners={spawners} baseline={baseline} peak={peak} delta={delta} escaped_count={escaped_count}",
+        duration.as_secs()
+    );
+
+    write_binary_soak_output(&BinarySoakResult {
+        schema_version: 1,
+        requested_duration_seconds: run_seconds,
+        sample_interval_milliseconds: 10,
+        spawners,
+        baseline_footprint_bytes: baseline,
+        peak_footprint_bytes: peak,
+        footprint_delta_bytes: delta,
+        escaped_count,
+        tight_bounds_applied: bounds_applied,
+        reference_run: run_seconds == SOAK_REFERENCE_SECONDS,
+    });
+
+    std::fs::remove_dir_all(&base).ok();
+
+    assert!(
+        escaped_count > 0,
+        "the binary counted no escapes under churn"
+    );
+    if bounds_applied {
+        let floor = SOAK_BINARY_MIN_ESCAPES_PER_SECOND * run_seconds;
+        assert!(
+            escaped_count >= floor,
+            "binary escaped_count below floor: {escaped_count} < {floor}"
+        );
+        assert!(
+            delta <= SOAK_MAX_BINARY_RSS_DELTA_BYTES,
+            "binary footprint delta={delta} exceeds ceiling {SOAK_MAX_BINARY_RSS_DELTA_BYTES}"
+        );
+    }
 }
