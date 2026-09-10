@@ -60,8 +60,12 @@ Only live observations with validated identities and the owned PGID enter the ag
 owned member lacks footprint data, the result is `incomplete` with known bytes and the missing
 identities. A newly listed relevant PID may fail inspection before its start token is known; every
 such failure except confirmed disappearance also makes the result incomplete, with the PID and typed
-failure retained rather than an invented identity. Arithmetic overflow is a separate result. Missing
-root evidence also makes the aggregate incomplete until root exit was actually observed.
+failure retained rather than an invented identity. A tracked member that exited since the previous
+sample is confirmed disappearance too: it is recorded as a `Disappeared` event and the aggregate over
+the remaining live members stays complete, so a command that retires children quickly does not read
+as an inability to measure. Arithmetic overflow is a separate result. Missing root evidence also
+makes the aggregate incomplete until root exit was actually observed; the root's own disappearance
+is never treated as a member exit.
 
 Summing per-process physical footprint can double count pages shared by related processes. The
 aggregate is a repeatable intervention input for the observed tree, not a unique-page total or a
