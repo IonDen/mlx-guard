@@ -47,8 +47,9 @@ catch.
   whose footprint is read from outside the measured process.
 - Distinct escapes is a floor, not a census. A child that leaves the owned group and its parent
   link faster than one sample interval is never observed, so the count can only undercount.
-- The real-binary chunk runs two spawners because the current binary treats a tracked child's exit
-  as one unusable sample and fails observation closed after three in a row; two serial spawners at
+- The real-binary chunk ran two spawners because the binary at commit `a5a5cb9`, before the
+  child-exit fix, treated a tracked child's exit as one unusable sample and failed observation
+  closed after three in a row; two serial spawners at
   10 ms sampling can never produce three consecutive exits, so the run measures sustained
   supervision at roughly 30 escapes per second rather than the harness's maximum rate.
 - The footprint-growth ceilings guard the retention class the 2026-08 supervisor growth belonged

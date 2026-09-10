@@ -41,11 +41,35 @@ impl Drop for TestDirectory {
     }
 }
 
-/// Best-effort cleanup of the `/bin/sh` loop a relinquishing supervisor leaves behind: it is no
-/// longer in any group this test owns, so match it by its command line.
+/// The churn loop, tagged with this test process's pid so cleanup and the post-exit check match
+/// only this run's loop, never a sibling checkout's.
+fn churn_program() -> String {
+    format!(
+        "while :; do /bin/sleep 0.05; done # mlx-guard-child-churn-{}",
+        std::process::id()
+    )
+}
+
+fn churn_loop_alive() -> bool {
+    Command::new("/usr/bin/pgrep")
+        .args([
+            "-f",
+            &format!("mlx-guard-child-churn-{}", std::process::id()),
+        ])
+        .stdout(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// Best-effort cleanup of the loop a relinquishing supervisor leaves behind: it is no longer in
+/// any group this test owns, so match it by its tagged command line.
 fn end_relinquished_churn() {
     let _ = Command::new("/usr/bin/pkill")
-        .args(["-f", "while :; do /bin/sleep 0.05; done"])
+        .args([
+            "-f",
+            &format!("mlx-guard-child-churn-{}", std::process::id()),
+        ])
         .status();
 }
 
@@ -56,7 +80,7 @@ fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
     let mut guard = Command::new(SUPERVISOR)
         .args(["observe", "--sample-interval", "50ms", "--report"])
         .arg(&report_path)
-        .args(["--", "/bin/sh", "-c", "while :; do /bin/sleep 0.05; done"])
+        .args(["--", "/bin/sh", "-c", &churn_program()])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         // Not piped: the workload inherits the supervisor's stderr, and a supervisor that gives up
@@ -91,9 +115,27 @@ fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
             signal: u8::try_from(libc::SIGTERM).unwrap()
         }
     );
-    assert!(
-        report.samples.len() >= 40,
-        "too few samples to have crossed the churn: {}",
-        report.samples.len()
+    // The observe calibration counts every sample of the run. Under churn every sample must have
+    // been complete, and enough of them must exist to have crossed the old failure point (five
+    // samples) many times over, without pinning a wall-clock rate a starved runner cannot keep.
+    let calibration = report
+        .calibration
+        .expect("observe reports carry calibration");
+    assert_eq!(
+        calibration.incomplete_samples, 0,
+        "a child's exit still made a sample incomplete: {calibration:?}"
     );
+    assert!(
+        calibration.complete_samples >= 30,
+        "too few complete samples to have crossed the churn: {calibration:?}"
+    );
+    // The supervisor forwards the terminal signal to its owned group; the loop must be gone.
+    let cleanup_deadline = Instant::now() + Duration::from_secs(2);
+    while churn_loop_alive() && Instant::now() < cleanup_deadline {
+        thread::sleep(Duration::from_millis(50));
+    }
+    if churn_loop_alive() {
+        end_relinquished_churn();
+        panic!("the churn loop outlived the supervisor's terminal-signal forwarding");
+    }
 }

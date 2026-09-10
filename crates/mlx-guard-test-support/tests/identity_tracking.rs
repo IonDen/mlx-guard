@@ -361,13 +361,21 @@ fn a_tracked_child_that_exited_between_samples_leaves_the_aggregate_complete() {
 
 #[test]
 fn a_disappeared_root_keeps_the_aggregate_incomplete() {
-    // Catches over-widening the exemption: root disappearance is not a member exit.
+    // Catches over-widening the exemption: root disappearance is not a member exit. The root is
+    // first seen as a zombie, which latches root-exit evidence and would otherwise let a later
+    // ESRCH read as complete; only the root clause of the failure filter keeps it incomplete.
     let root = ProcessIdentity {
         pid: 100,
         start_abstime: 1,
     };
     let mut tracker = IdentityTracker::new(root, 100).unwrap();
     let _ = tracker.update(snapshot(vec![observation(100, 1, 1, 100, Some(10))]));
+    let zombie_root = ProcessObservation {
+        exited: true,
+        ..observation(100, 1, 1, 0, None)
+    };
+    let latched = tracker.update(snapshot(vec![zombie_root]));
+    assert_eq!(latched.aggregate_footprint, AggregateFootprint::Complete(0));
     let frame = tracker.update(ProcessSnapshot {
         observations: Vec::new(),
         failures: vec![ObservationFailure {
