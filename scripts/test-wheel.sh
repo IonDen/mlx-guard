@@ -159,6 +159,7 @@ for required in \
     "${package_name}/crates/mlx-guard-core/src/lib.rs" \
     "${package_name}/docs/EXAMPLES.md" \
     "${package_name}/docs/RELEASE.md" \
+    "${package_name}/docs/STABILITY.md" \
     "${package_name}/docs/SUPPORT.md" \
     "${package_name}/docs/THREAT_MODEL.md" \
     "${package_name}/docs/integrations/PYTHON_ADAPTER.md" \

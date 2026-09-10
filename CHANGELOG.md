@@ -7,6 +7,11 @@ versions follow Semantic Versioning.
 
 ### Added
 
+- A stability table (`docs/STABILITY.md`) states, for each public surface (CLI grammar and flags,
+  exit codes, report schema v1, the journal, the checkpoint frame protocol, the Python API, the
+  Rust crates, the contract documents, defaults, and published measurement bounds), what may still
+  change before 1.0 and how, and what freezes at 1.0. The checkpoint protocol document gains the
+  byte offsets of every frame, pinned by a golden-frame test.
 - Observe reports now carry a `calibration` section — total, complete, and incomplete sample counts,
   the observed duration, the highest complete aggregate footprint, and the highest positive growth
   rate, always with `observation_only: true` and `safety_certified: false`. Its peak is an unbounded
@@ -76,6 +81,9 @@ versions follow Semantic Versioning.
 
 ### Changed
 
+- `ObserveConfig` and `RunConfig` are keyword-only. Positional construction, which the 0.1 classes
+  accepted, now raises `TypeError`; pass every field by name. Field names are part of the stable
+  Python API and field order is not, which is what the stability table promises.
 - CI skips the Rust and Python jobs and the dependency audit on pull requests that change only
   documentation (README, CHANGELOG, release notes, `docs/`, `evidence/`). The release-literals
   guard still runs on every pull request, since it reads those files for version strings, and
