@@ -140,14 +140,14 @@ const SOAK_MAX_P95_WINDOW: Duration = Duration::from_millis(10);
 /// The real `mlx-guard` binary's own footprint-delta ceiling over the run. The 4.4 GB incident was
 /// the binary, not the in-process sampler, so this variant reads the binary's own footprint.
 /// Measured unmutated after a 60 s warm-up: at six spawners (~100 escapes/s) 64 KiB over 60 s and
-/// 144 KiB over 300 s (34,571 escapes), flat from 180 s to the end of that run; at two spawners
-/// 112 KiB over 1800 s, flat from 480 s. The 1800 s six-spawner reference run confirms or corrects
-/// the plateau. Growth arrives in 16 KiB page steps and plateaus, so the ceiling leaves
+/// 144 KiB over 300 s and 256 KiB over 1800 s (178,677 escapes), flat from 690 s to the end; at
+/// two spawners 112 KiB over 1800 s, flat from 480 s. Growth arrives in 16 KiB page steps and
+/// plateaus, so the ceiling leaves
 /// several times that margin while staying below what unbounded per-pid retention costs at
 /// reference length: dropping the 64-entry evidence cap retained ~36 bytes per escape, 2.08 MiB
 /// over 1800 s at two spawners.
 const SOAK_MAX_BINARY_RSS_DELTA_BYTES: u64 = 1024 * 1024;
-/// The real binary's own CPU share over the run: measured 3.1 % of one core over 300 s at six
+/// The real binary's own CPU share over the run: measured 3.0 % of one core over 1800 s at six
 /// spawners and 3.4 % over 60 s at two (debug build, 10 ms sampling). The ceiling leaves margin
 /// for a loaded host while staying far below the ~25 % the per-sample escape-list rebuild cost
 /// before it was removed.
@@ -155,8 +155,8 @@ const SOAK_MAX_BINARY_CPU_PERCENT: f64 = 8.0;
 /// Spawners driving the real binary: the same six the in-process soak uses, ~100 escapes/s. A
 /// tracked child's exit used to cost one unusable sample, which capped this at two spawners (three
 /// could produce three consecutive exits at 10 ms and fail observation closed); an exit is now a
-/// containment event, and six spawners ran 300 s to SIGTERM with no unusable sample in the final
-/// 4,096-window ring. The JSON's `unusable_samples` (full-run calibration count) and
+/// containment event, and six spawners ran 1800 s to SIGTERM with zero unusable samples out of
+/// 130,220. The JSON's `unusable_samples` (full-run calibration count) and
 /// `longest_unusable_streak_in_final_window` fields show how close a run sat to that edge.
 /// `MLX_GUARD_SOAK_SPAWNERS` overrides it for experiments.
 const SOAK_BINARY_DEFAULT_SPAWNERS: usize = 6;
