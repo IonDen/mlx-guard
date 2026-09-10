@@ -49,9 +49,9 @@ catch.
   link faster than one sample interval is never observed, so the count can only undercount.
 - The real-binary chunk ran two spawners because the binary at commit `a5a5cb9`, before the
   child-exit fix, treated a tracked child's exit as one unusable sample and failed observation
-  closed after three in a row; two serial spawners at
-  10 ms sampling can never produce three consecutive exits, so the run measures sustained
-  supervision at roughly 30 escapes per second rather than the harness's maximum rate.
+  closed after three in a row; two serial spawners at 10 ms sampling can never produce three
+  consecutive exits, so the run measures sustained supervision at roughly 30 escapes per second
+  rather than the harness's maximum rate.
 - The footprint-growth ceilings guard the retention class the 2026-08 supervisor growth belonged
   to: memory that scales with distinct pids ever observed. The 64-entry evidence cap is asserted
   directly in the in-process chunk; the real-binary chunk sees it only through footprint growth.

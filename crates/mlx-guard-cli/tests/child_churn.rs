@@ -50,12 +50,15 @@ fn churn_program() -> String {
     )
 }
 
+/// Anchored: the tag ends the `sh -c` string, while the report directory (which also carries the
+/// prefix) never ends with it, and a longer pid must not match a shorter one's prefix.
+fn churn_tag_pattern() -> String {
+    format!("mlx-guard-child-churn-{}$", std::process::id())
+}
+
 fn churn_loop_alive() -> bool {
     Command::new("/usr/bin/pgrep")
-        .args([
-            "-f",
-            &format!("mlx-guard-child-churn-{}", std::process::id()),
-        ])
+        .args(["-f", &churn_tag_pattern()])
         .stdout(Stdio::null())
         .status()
         .map(|status| status.success())
@@ -66,16 +69,23 @@ fn churn_loop_alive() -> bool {
 /// any group this test owns, so match it by its tagged command line.
 fn end_relinquished_churn() {
     let _ = Command::new("/usr/bin/pkill")
-        .args([
-            "-f",
-            &format!("mlx-guard-child-churn-{}", std::process::id()),
-        ])
+        .args(["-f", &churn_tag_pattern()])
         .status();
+}
+
+/// Runs the cleanup on every exit path, including a panic in any assertion below.
+struct ChurnCleanup;
+
+impl Drop for ChurnCleanup {
+    fn drop(&mut self) {
+        end_relinquished_churn();
+    }
 }
 
 #[test]
 fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
     let directory = TestDirectory::new();
+    let _cleanup = ChurnCleanup;
     let report_path = directory.0.join("report.json");
     let mut guard = Command::new(SUPERVISOR)
         .args(["observe", "--sample-interval", "50ms", "--report"])
@@ -89,12 +99,11 @@ fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
         .spawn()
         .unwrap();
 
-    // Sixty samples' worth of churn: the old behaviour gave up inside the first five.
-    let deadline = Instant::now() + Duration::from_secs(3);
+    // Eighty samples' worth of churn at the nominal rate: the old behaviour gave up inside the
+    // first five.
+    let deadline = Instant::now() + Duration::from_secs(4);
     while Instant::now() < deadline {
         if let Some(status) = guard.try_wait().unwrap() {
-            // A relinquished loop would outlive the test; end it before failing.
-            end_relinquished_churn();
             panic!("the supervisor gave up on a healthy churning command: {status:?}");
         }
         thread::sleep(Duration::from_millis(50));
@@ -116,8 +125,9 @@ fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
         }
     );
     // The observe calibration counts every sample of the run. Under churn every sample must have
-    // been complete, and enough of them must exist to have crossed the old failure point (five
-    // samples) many times over, without pinning a wall-clock rate a starved runner cannot keep.
+    // been complete (the falsifier), and enough of them must exist to have crossed the old
+    // failure point (five samples) three times over; the starved CI runner managed 34 in 3 s, so
+    // the floor is not a wall-clock rate it can miss.
     let calibration = report
         .calibration
         .expect("observe reports carry calibration");
@@ -126,7 +136,7 @@ fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
         "a child's exit still made a sample incomplete: {calibration:?}"
     );
     assert!(
-        calibration.complete_samples >= 30,
+        calibration.complete_samples >= 15,
         "too few complete samples to have crossed the churn: {calibration:?}"
     );
     // The supervisor forwards the terminal signal to its owned group; the loop must be gone.
@@ -134,8 +144,8 @@ fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
     while churn_loop_alive() && Instant::now() < cleanup_deadline {
         thread::sleep(Duration::from_millis(50));
     }
-    if churn_loop_alive() {
-        end_relinquished_churn();
-        panic!("the churn loop outlived the supervisor's terminal-signal forwarding");
-    }
+    assert!(
+        !churn_loop_alive(),
+        "the churn loop outlived the supervisor's terminal-signal forwarding"
+    );
 }

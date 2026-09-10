@@ -370,9 +370,10 @@ fn a_disappeared_root_keeps_the_aggregate_incomplete() {
     };
     let mut tracker = IdentityTracker::new(root, 100).unwrap();
     let _ = tracker.update(snapshot(vec![observation(100, 1, 1, 100, Some(10))]));
+    // Shaped like Darwin's reading of a zombie: parent and group zero, footprint still reported.
     let zombie_root = ProcessObservation {
         exited: true,
-        ..observation(100, 1, 1, 0, None)
+        ..observation(100, 1, 0, 0, Some(10))
     };
     let latched = tracker.update(snapshot(vec![zombie_root]));
     assert_eq!(latched.aggregate_footprint, AggregateFootprint::Complete(0));

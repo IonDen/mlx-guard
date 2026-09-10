@@ -109,9 +109,9 @@ versions follow Semantic Versioning.
   at least one child per sample interval for three intervals (at the default 50 ms, a shell loop of
   50 ms tools) ended `observe` with exit 70 and made `run` terminate a healthy command. A confirmed
   exit is now a containment event and the sample stays complete over the members still alive; the
-  root's disappearance and every other failure kind still make the sample unusable. Cleanup
-  evidence for an owned group whose members exited before the final poll is complete for the same
-  reason.
+  root's disappearance and every other failure kind still make the sample unusable. The core
+  library's cleanup poll reports complete evidence for an owned group whose members exited before
+  the final poll for the same reason.
 - A healthy but slow-to-sample workload is no longer at risk of a spurious TERM. A reading was
   previously judged usable only if its process-tree enumeration finished within one
   `--sample-interval`, so on a large process tree, a busy machine, or a short interval an ordinary
