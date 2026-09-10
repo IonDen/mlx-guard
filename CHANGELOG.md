@@ -48,6 +48,14 @@ versions follow Semantic Versioning.
   packaged binary, then scan its persisted report and journal for a leak.
 - Python's `RunConfig` gained a keyword-only `checkpoint_timeout_ms` field (`10ms..=60s`),
   matching the CLI's `--checkpoint-timeout`.
+- A reference-host soak gate. Two opt-in escaping-churn soak tests supervise a workload whose
+  children `setsid` out of the owned group at tens of escapes per second for up to an hour, one
+  through the in-process sampler and one through the real `mlx-guard` binary, and assert that the
+  supervisor's own footprint growth, CPU share, retained escape evidence, and sample window stay
+  inside measured ceilings. `scripts/soak-reference-host.sh` runs them together with the existing
+  endurance and pid-churn tests as resumable 30-minute chunks and writes the release's soak
+  evidence bundle; the release checklist now requires that run whenever supervision code changed.
+  The pid-churn endurance test also writes a JSON artifact and accepts durations up to 1800 s.
 - A new escalation-envelope instrument measures checkpoint acknowledgement, TERM, and KILL
   timing across real supervised runs. Reference measurements from the M1 Max 32 GB host are
   published in `evidence/v0.2.0/m1-max-32gb/` and summarized in `docs/POLICY.md`, with a

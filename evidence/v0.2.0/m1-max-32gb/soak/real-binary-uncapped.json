@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "requested_duration_seconds": 1800,
+  "sample_interval_milliseconds": 10,
+  "spawners": 2,
+  "baseline_footprint_bytes": 4063544,
+  "peak_footprint_bytes": 6242616,
+  "footprint_delta_bytes": 2179072,
+  "escaped_count": 60026,
+  "tight_bounds_applied": true,
+  "reference_run": true
+}

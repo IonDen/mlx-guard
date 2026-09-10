@@ -32,6 +32,15 @@ const TIMEOUT_EXIT: i32 = 124;
 /// far inside the fixture crate's own hard ceiling.
 const FLOOD_MEMBER_WALL_MS: u64 = 2_000;
 
+/// Wall time each `setsid-churn` escapee lives before it exits and is replaced.
+///
+/// Five times the 10 ms sampling the soak uses, so each escapee overlaps several sampling
+/// windows and is observed before it exits (a child that leaves the owned group and its parent
+/// link faster than one sample interval is legitimately never counted — see
+/// `docs/IDENTITY_AND_CONTAINMENT.md`), while staying short enough that distinct pids keep
+/// accumulating across the run.
+const CHURN_MEMBER_HOLD_MS: u64 = 50;
+
 /// How long a daemonizing intermediate stays alive after its grandchild announces a new session.
 ///
 /// The grandchild is reachable as a descendant only through this parent link, and a fixture cannot
@@ -90,6 +99,7 @@ fn run() -> Result<(), RunError> {
         "escape-flood" => run_escape_flood(limits),
         "setsid-parent" => run_setsid_parent(limits),
         "setsid-stall" => run_setsid_stall(),
+        "setsid-churn" => run_setsid_churn(limits),
         "fast-root-exit" => run_fast_root_exit(limits),
         "term-then-exit" => run_term_then_exit(limits),
         "checkpoint-parent" => run_checkpoint_parent(limits),
@@ -600,6 +610,50 @@ fn run_setsid_stall() -> Result<(), RunError> {
     loop {
         thread::park();
     }
+}
+
+fn run_setsid_churn(limits: FixtureLimits) -> Result<(), RunError> {
+    let spawners = usize::try_from(limits.allocation_bytes())
+        .map_err(|_| RunError::fixture("spawner count does not fit usize"))?;
+    if !(1..=8).contains(&spawners) {
+        return Err(RunError::usage(
+            "setsid-churn spawner count must be within 1..=8",
+        ));
+    }
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    write_phase(&format!("READY mode=setsid-churn spawners={spawners}"))?;
+    let child_wall = CHURN_MEMBER_HOLD_MS.to_string();
+    let mut handles = Vec::with_capacity(spawners);
+    for _ in 0..spawners {
+        let executable = executable.clone();
+        let child_wall = child_wall.clone();
+        handles.push(thread::spawn(move || {
+            // Each escapee opens its own session (setsid-stall), so it leaves the owned group,
+            // stays observable for its own short wall time, then exits and is replaced. Distinct
+            // pids accumulate at the aggregate spawn rate with no `date` fork anywhere.
+            loop {
+                match Command::new(&executable)
+                    .args(["setsid-stall", "1", &child_wall])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    Ok(mut child) => {
+                        let _ = child.wait();
+                    }
+                    Err(_) => return,
+                }
+            }
+        }));
+    }
+    // The watchdog installed by start_watchdog(limits.wall_time()) exits this process at the
+    // fixture ceiling, taking the spawner threads and their live escapees with it.
+    for handle in handles {
+        let _ = handle.join();
+    }
+    Ok(())
 }
 
 fn run_fast_root_exit(limits: FixtureLimits) -> Result<(), RunError> {

@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "requested_duration_seconds": 1800,
+  "actual_duration_nanoseconds": 1800035301042,
+  "sample_interval_milliseconds": 50,
+  "total_samples": 31888,
+  "root_samples": 31888,
+  "cpu_seconds": 11.650269,
+  "cpu_percent_of_one_core": 0.647224473500932,
+  "starting_footprint_bytes": 1212728,
+  "final_footprint_bytes": 2048312,
+  "footprint_growth_bytes": 835584,
+  "maximum_resident_bytes": 3489792,
+  "p95_window_nanoseconds": 575875,
+  "final_history_length": 256
+}
