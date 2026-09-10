@@ -257,8 +257,9 @@ fn wire_format_v1_golden_frames() {
     assert_eq!(decoded.request_id(), 0x0102_0304_0506_0708);
     assert_eq!(decoded.deadline_at(), Duration::from_nanos(1_500_000_000));
 
-    // Every status and artifact-kind value, with has-size both ways, and no two bytes at the same
-    // position equal across cases, so a swapped push or a remapped value shows up.
+    // Every status and artifact-kind value with has-size both ways; the kind column is all-distinct
+    // and never equals the has-size byte in the same case, so a swapped push or a remapped value
+    // shows up.
     let cases = [
         (
             CheckpointWorkerStatus::Completed,
