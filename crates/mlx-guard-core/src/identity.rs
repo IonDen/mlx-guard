@@ -338,6 +338,10 @@ impl IdentityTracker {
                 events.push(ContainmentEvent::Disappeared(tracked.identity));
             }
         }
+        // A confirmed disappearance is an exit, not an inability to read memory: for a tracked
+        // member it is already recorded as `ContainmentEvent::Disappeared` above, and the
+        // aggregate over the remaining live members is complete. Only the root's disappearance
+        // and an enumeration failure (no pid) stay observation failures; every other kind does.
         let failures: Vec<_> = snapshot
             .failures
             .into_iter()
@@ -345,11 +349,6 @@ impl IdentityTracker {
                 failure.kind != ObservationFailureKind::Disappeared
                     || failure.pid.is_none()
                     || failure.pid == Some(self.root.pid)
-                    || failure.pid.is_some_and(|pid| {
-                        self.tracked
-                            .values()
-                            .any(|tracked| tracked.identity.pid == pid)
-                    })
             })
             .collect();
         events.extend(

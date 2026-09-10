@@ -321,6 +321,103 @@ fn an_exited_child_is_not_an_escape() {
 }
 
 #[test]
+fn a_tracked_child_that_exited_between_samples_leaves_the_aggregate_complete() {
+    // Catches treating a member's confirmed exit as an observation failure: the live members'
+    // footprints are complete, and three such samples in a row would otherwise fail closed.
+    let root = ProcessIdentity {
+        pid: 100,
+        start_abstime: 1,
+    };
+    let child = ProcessIdentity {
+        pid: 101,
+        start_abstime: 2,
+    };
+    let mut tracker = IdentityTracker::new(root, 100).unwrap();
+    let first = tracker.update(snapshot(vec![
+        observation(100, 1, 1, 100, Some(10)),
+        observation(101, 2, 100, 100, Some(20)),
+    ]));
+    assert_eq!(first.aggregate_footprint, AggregateFootprint::Complete(30));
+
+    let second = tracker.update(ProcessSnapshot {
+        observations: vec![observation(100, 1, 1, 100, Some(10))],
+        failures: vec![ObservationFailure {
+            pid: Some(101),
+            kind: ObservationFailureKind::Disappeared,
+        }],
+    });
+    assert_eq!(second.aggregate_footprint, AggregateFootprint::Complete(10));
+    assert!(
+        second.observation_failures.is_empty(),
+        "{:?}",
+        second.observation_failures
+    );
+    assert!(
+        second
+            .events
+            .contains(&ContainmentEvent::Disappeared(child))
+    );
+}
+
+#[test]
+fn a_disappeared_root_keeps_the_aggregate_incomplete() {
+    // Catches over-widening the exemption: root disappearance is not a member exit.
+    let root = ProcessIdentity {
+        pid: 100,
+        start_abstime: 1,
+    };
+    let mut tracker = IdentityTracker::new(root, 100).unwrap();
+    let _ = tracker.update(snapshot(vec![observation(100, 1, 1, 100, Some(10))]));
+    let frame = tracker.update(ProcessSnapshot {
+        observations: Vec::new(),
+        failures: vec![ObservationFailure {
+            pid: Some(100),
+            kind: ObservationFailureKind::Disappeared,
+        }],
+    });
+    assert!(
+        matches!(
+            frame.aggregate_footprint,
+            AggregateFootprint::Incomplete { .. }
+        ),
+        "{:?}",
+        frame.aggregate_footprint
+    );
+}
+
+#[test]
+fn a_denied_tracked_child_keeps_the_aggregate_incomplete() {
+    // Catches dropping every tracked-pid failure instead of only confirmed disappearance.
+    let root = ProcessIdentity {
+        pid: 100,
+        start_abstime: 1,
+    };
+    let child = ProcessIdentity {
+        pid: 101,
+        start_abstime: 2,
+    };
+    let mut tracker = IdentityTracker::new(root, 100).unwrap();
+    let _ = tracker.update(snapshot(vec![
+        observation(100, 1, 1, 100, Some(10)),
+        observation(101, 2, 100, 100, Some(20)),
+    ]));
+    let frame = tracker.update(ProcessSnapshot {
+        observations: vec![observation(100, 1, 1, 100, Some(10))],
+        failures: vec![ObservationFailure {
+            pid: Some(101),
+            kind: ObservationFailureKind::PermissionDenied,
+        }],
+    });
+    assert_eq!(
+        frame.aggregate_footprint,
+        AggregateFootprint::Incomplete {
+            known_bytes: 10,
+            missing_identities: vec![child],
+        }
+    );
+}
+
+#[test]
 fn native_inventory_binds_start_time_and_refuses_a_stale_direct_signal() {
     // Catches treating a live PID alone as identity before direct action.
     let inventory = NativeProcessInventory::new();
