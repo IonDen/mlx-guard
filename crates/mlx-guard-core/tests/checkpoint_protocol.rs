@@ -257,21 +257,47 @@ fn wire_format_v1_golden_frames() {
     assert_eq!(decoded.request_id(), 0x0102_0304_0506_0708);
     assert_eq!(decoded.deadline_at(), Duration::from_nanos(1_500_000_000));
 
-    let acknowledgement = CheckpointAcknowledgement::new(
-        nonce,
-        0x0102_0304_0506_0708,
-        CheckpointWorkerStatus::Completed,
-        Some(CheckpointArtifactMetadata {
-            kind: CheckpointArtifactKind::File,
-            size_bytes: Some(4096),
-        }),
-    )
-    .encode();
-    let mut expected_acknowledgement = vec![0, 0, 0, 57];
-    expected_acknowledgement.extend(magic_version(2));
-    expected_acknowledgement.extend_from_slice(&nonce_bytes);
-    expected_acknowledgement.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
-    expected_acknowledgement.extend_from_slice(&[1, 1, 1]);
-    expected_acknowledgement.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0x10, 0x00]);
-    assert_eq!(acknowledgement, expected_acknowledgement);
+    // Every status and artifact-kind value, with has-size both ways, and no two bytes at the same
+    // position equal across cases, so a swapped push or a remapped value shows up.
+    let cases = [
+        (
+            CheckpointWorkerStatus::Completed,
+            Some(CheckpointArtifactMetadata {
+                kind: CheckpointArtifactKind::Directory,
+                size_bytes: Some(4096),
+            }),
+            [1, 2, 1],
+            [0, 0, 0, 0, 0, 0, 0x10, 0x00],
+        ),
+        (
+            CheckpointWorkerStatus::Failed,
+            Some(CheckpointArtifactMetadata {
+                kind: CheckpointArtifactKind::Opaque,
+                size_bytes: None,
+            }),
+            [2, 3, 0],
+            [0; 8],
+        ),
+        (
+            CheckpointWorkerStatus::Cancelled,
+            Some(CheckpointArtifactMetadata {
+                kind: CheckpointArtifactKind::File,
+                size_bytes: Some(0),
+            }),
+            [3, 1, 1],
+            [0; 8],
+        ),
+        (CheckpointWorkerStatus::Completed, None, [1, 0, 0], [0; 8]),
+    ];
+    for (status, artifact, tail, size) in cases {
+        let acknowledgement =
+            CheckpointAcknowledgement::new(nonce, 0x0102_0304_0506_0708, status, artifact).encode();
+        let mut expected = vec![0, 0, 0, 57];
+        expected.extend(magic_version(2));
+        expected.extend_from_slice(&nonce_bytes);
+        expected.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+        expected.extend_from_slice(&tail);
+        expected.extend_from_slice(&size);
+        assert_eq!(acknowledgement, expected, "{status:?} {artifact:?}");
+    }
 }
