@@ -3,9 +3,10 @@
 use std::time::Duration;
 
 use mlx_guard_core::{
-    CheckpointAcknowledgement, CheckpointArtifactKind, CheckpointArtifactMetadata, CheckpointNonce,
-    CheckpointProtocol, CheckpointProtocolState, CheckpointRejection, CheckpointSignalConfig,
-    CheckpointSignalConfigError, CheckpointWorkerStatus, MAX_CHECKPOINT_FRAME_BYTES, SignalNumber,
+    CheckpointAcknowledgement, CheckpointArtifactKind, CheckpointArtifactMetadata, CheckpointHello,
+    CheckpointNonce, CheckpointProtocol, CheckpointProtocolState, CheckpointRejection,
+    CheckpointRequest, CheckpointSignalConfig, CheckpointSignalConfigError, CheckpointWorkerStatus,
+    MAX_CHECKPOINT_FRAME_BYTES, SignalNumber,
 };
 
 fn ms(value: u64) -> Duration {
@@ -211,4 +212,66 @@ fn checkpoint_signal_configuration_rejects_default_action_collisions() {
         CheckpointSignalConfig::new(user_signal, Duration::ZERO).unwrap_err(),
         CheckpointSignalConfigError::InvalidTimeout
     );
+}
+
+#[test]
+fn wire_format_v1_golden_frames() {
+    // Pins the byte layout the protocol document publishes, so a reordered field, a changed kind
+    // byte, or a widened length header goes red here before a worker built against the document
+    // stops authenticating.
+    let nonce_bytes = [0x11_u8; 32];
+    let nonce = CheckpointNonce::from_bytes(nonce_bytes);
+    let magic_version = |kind: u8| {
+        let mut prefix = b"MGCP".to_vec();
+        prefix.push(1);
+        prefix.push(kind);
+        prefix
+    };
+
+    let mut hello = vec![0, 0, 0, 38];
+    hello.extend(magic_version(3));
+    hello.extend_from_slice(&nonce_bytes);
+    let mut ready = vec![0, 0, 0, 38];
+    ready.extend(magic_version(4));
+    ready.extend_from_slice(&nonce_bytes);
+    assert_eq!(
+        CheckpointHello::decode(&hello).unwrap().ready_frame(),
+        ready
+    );
+
+    let mut protocol = CheckpointProtocol::new(nonce);
+    let request = protocol
+        .begin_request(
+            0x0102_0304_0506_0708,
+            ms(500),
+            Duration::from_nanos(1_500_000_000),
+        )
+        .unwrap();
+    let mut expected_request = vec![0, 0, 0, 54];
+    expected_request.extend(magic_version(1));
+    expected_request.extend_from_slice(&nonce_bytes);
+    expected_request.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+    expected_request.extend_from_slice(&[0, 0, 0, 0, 0x59, 0x68, 0x2F, 0x00]);
+    assert_eq!(request, expected_request);
+    let decoded = CheckpointRequest::decode(&request).unwrap();
+    assert_eq!(decoded.request_id(), 0x0102_0304_0506_0708);
+    assert_eq!(decoded.deadline_at(), Duration::from_nanos(1_500_000_000));
+
+    let acknowledgement = CheckpointAcknowledgement::new(
+        nonce,
+        0x0102_0304_0506_0708,
+        CheckpointWorkerStatus::Completed,
+        Some(CheckpointArtifactMetadata {
+            kind: CheckpointArtifactKind::File,
+            size_bytes: Some(4096),
+        }),
+    )
+    .encode();
+    let mut expected_acknowledgement = vec![0, 0, 0, 57];
+    expected_acknowledgement.extend(magic_version(2));
+    expected_acknowledgement.extend_from_slice(&nonce_bytes);
+    expected_acknowledgement.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+    expected_acknowledgement.extend_from_slice(&[1, 1, 1]);
+    expected_acknowledgement.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0x10, 0x00]);
+    assert_eq!(acknowledgement, expected_acknowledgement);
 }

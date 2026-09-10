@@ -48,6 +48,17 @@ deadline. An acknowledgement must repeat both values and carries one worker stat
 failed, or cancelled. Randomizing the first ID prevents a worker from pre-queuing a valid request-1
 acknowledgement during negotiation.
 
+Byte offsets within a body, all integers big-endian:
+
+| Body | Length | Offsets |
+|---|---:|---|
+| hello (kind 3) and ready (kind 4) | 38 | magic `MGCP` 0–3, version `1` at 4, kind at 5, nonce 6–37 |
+| request (kind 1) | 54 | as above, then request id 38–45, deadline in nanoseconds since the run epoch 46–53 |
+| acknowledgement (kind 2) | 57 | as above through the request id, then status at 46 (1 completed, 2 failed, 3 cancelled), artifact kind at 47 (0 none, 1 file, 2 directory, 3 opaque), has-size at 48, size 49–56 |
+
+A zero request id or deadline is malformed. The layout is pinned by a golden-frame test in the
+core crate; a change to any offset or kind byte is a new protocol version.
+
 Optional artifact metadata is deliberately path-free: only `file`, `directory`, or `opaque`, plus an
 optional byte count. Names, paths, argv, environment values, model IDs, prompts, and worker output
 have no wire representation.

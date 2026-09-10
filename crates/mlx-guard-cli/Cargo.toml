@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 default-run = "mlx-guard"
 
+# Internal crate: the public surfaces are the CLI, the reports, and the Python package.
+publish = false
+
 [[bin]]
 name = "mlx-guard"
 path = "src/main.rs"

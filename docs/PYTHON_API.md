@@ -6,7 +6,8 @@ ownership, and signal escalation stay in the native process.
 ## Run and observe
 
 Use `ObserveConfig` when you need measurements without intervention. Use `RunConfig` with an
-explicit byte limit when the supervisor may intervene.
+explicit byte limit when the supervisor may intervene. Both are keyword-only: field names are part
+of the stable API, field order is not.
 
 ```python
 from pathlib import Path
