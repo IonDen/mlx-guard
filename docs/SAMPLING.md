@@ -17,7 +17,9 @@ is 10 ms through 10 s. Policy receives a numeric aggregate only when all of thes
 - processing occurs within the configured freshness limit.
 
 A partial sample retains known bytes, missing identities, and observation failures for diagnostics,
-but cannot trigger a memory threshold as though the known subtotal were complete. After a long sleep,
+but cannot trigger a memory threshold as though the known subtotal were complete. A member that exited
+between two samples is a containment event rather than an observation failure; the sample stays
+complete over the members still alive. After a long sleep,
 the loop schedules one new sample instead of replaying every missed interval. A reversed monotonic
 timestamp becomes explicit clock-discontinuity evidence.
 

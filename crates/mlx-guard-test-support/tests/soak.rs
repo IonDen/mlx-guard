@@ -139,28 +139,30 @@ const SOAK_MIN_DISTINCT_ESCAPES: u64 = 3_000;
 const SOAK_MAX_P95_WINDOW: Duration = Duration::from_millis(10);
 /// The real `mlx-guard` binary's own footprint-delta ceiling over the run. The 4.4 GB incident was
 /// the binary, not the in-process sampler, so this variant reads the binary's own footprint.
-/// Measured unmutated at 2 spawners / 10 ms after a 60 s warm-up: 32 KiB over 60 s and 96 KiB over
-/// 300 s (11,734 escapes), growing in 16 KiB page steps with plateaus, so roughly 8 bytes per
-/// escape and ~600 KiB by linear extrapolation to 1800 s. The ceiling leaves that margin while
-/// staying below what unbounded per-pid retention costs at reference length: dropping the 64-entry
-/// evidence cap retains ~30 bytes per escape, over 2 MiB at 1800 s.
+/// Measured unmutated after a 60 s warm-up: at six spawners (~100 escapes/s) 64 KiB over 60 s and
+/// 144 KiB over 300 s and 256 KiB over 1800 s (178,677 escapes), flat from 690 s to the end; at
+/// two spawners 112 KiB over 1800 s, flat from 480 s. Growth arrives in 16 KiB page steps and
+/// plateaus, so the ceiling leaves
+/// several times that margin while staying below what unbounded per-pid retention costs at
+/// reference length: dropping the 64-entry evidence cap retained ~36 bytes per escape, 2.08 MiB
+/// over 1800 s at two spawners.
 const SOAK_MAX_BINARY_RSS_DELTA_BYTES: u64 = 1024 * 1024;
-/// The real binary's own CPU share over the run: measured 3.37 % of one core over 60 s at 10 ms
-/// sampling (debug build, two spawners). The ceiling leaves margin for a loaded host while staying
-/// far below the ~25 % the per-sample escape-list rebuild cost before it was removed.
+/// The real binary's own CPU share over the run: measured 3.0 % of one core over 1800 s at six
+/// spawners and 3.4 % over 60 s at two (debug build, 10 ms sampling). The ceiling leaves margin
+/// for a loaded host while staying far below the ~25 % the per-sample escape-list rebuild cost
+/// before it was removed.
 const SOAK_MAX_BINARY_CPU_PERCENT: f64 = 8.0;
-/// Spawners driving the real binary. The supervisor re-inspects every tracked pid each sample, and
-/// a tracked child that exited since the previous sample makes that sample unusable (one exit, one
-/// missing sample); three consecutive missing samples fail observation closed and end the run with
-/// exit 70. One serial spawner retires at most one escapee per ~65 ms, so at 10 ms sampling two
-/// spawners can never produce three consecutive missing samples while three can (measured: two
-/// spawners' longest missing streak was 2 over 723 samples; three spawners died within 5 s). The
-/// rate is therefore bounded by what the current binary can observe, ~30 escapes/s, not by the
-/// harness. `MLX_GUARD_SOAK_SPAWNERS` overrides it for experiments.
-const SOAK_BINARY_DEFAULT_SPAWNERS: usize = 2;
+/// Spawners driving the real binary: the same six the in-process soak uses, ~100 escapes/s. A
+/// tracked child's exit used to cost one unusable sample, which capped this at two spawners (three
+/// could produce three consecutive exits at 10 ms and fail observation closed); an exit is now a
+/// containment event, and six spawners ran 1800 s to SIGTERM with zero unusable samples out of
+/// 130,220. The JSON's `unusable_samples` (full-run calibration count) and
+/// `longest_unusable_streak_in_final_window` fields show how close a run sat to that edge.
+/// `MLX_GUARD_SOAK_SPAWNERS` overrides it for experiments.
+const SOAK_BINARY_DEFAULT_SPAWNERS: usize = 6;
 /// Distinct-escape floor for the real binary, stated as measured rate x duration (design rule):
-/// two spawners measured ~33 escapes/s over a 90 s run; a third of that survives a loaded host and
-/// still puts an 1800 s run at 18,000 — far above the 64-entry cap.
+/// six spawners measured ~100 escapes/s and two ~33/s; a tenth of the six-spawner rate survives a
+/// loaded host and still puts an 1800 s run at 18,600 — far above the 64-entry cap.
 const SOAK_BINARY_MIN_ESCAPES_PER_SECOND: u64 = 10;
 
 /// Build the `/bin/sh -c` program that drives the escaping churn: `spawners` parallel subloops,
@@ -600,7 +602,8 @@ struct BinarySoakResult {
     escaped_count: u64,
     total_samples: u64,
     unusable_samples: u64,
-    longest_unusable_streak: u64,
+    final_window_samples: u64,
+    longest_unusable_streak_in_final_window: u64,
     outcome_kind: String,
     ran_to_terminal_signal: bool,
     raw_observations: Vec<BinarySoakObservation>,
@@ -737,8 +740,17 @@ fn real_binary_supervising_escaping_churn_stays_bounded() {
     let ran_to_terminal_signal =
         report.outcome.kind == mlx_guard_core::TerminalKind::ChildSignaled { signal: 15 };
     let escaped_count = report.escape.escaped_count.unwrap_or(0);
-    let total_samples = u64::try_from(report.samples.len()).unwrap();
-    let (unusable_samples, longest_unusable_streak) =
+    // The report's sample ring keeps only the last 4,096 windows (41 s at 10 ms); the calibration
+    // section counts every sample of the run, so the totals come from there and only the streak
+    // is read from the ring.
+    let calibration = report
+        .calibration
+        .as_ref()
+        .expect("observe reports carry calibration");
+    let total_samples = calibration.total_samples;
+    let unusable_samples = calibration.incomplete_samples;
+    let final_window_samples = u64::try_from(report.samples.len()).unwrap();
+    let (_, longest_unusable_streak) =
         unusable_sample_summary(report.samples.iter().map(|sample| {
             matches!(
                 sample.aggregate_footprint_bytes,
@@ -753,7 +765,8 @@ fn real_binary_supervising_escaping_churn_stays_bounded() {
     eprintln!(
         "binary soak complete elapsed_s={} spawners={spawners} baseline={baseline} peak={peak} \
          delta={delta} cpu_percent={cpu_percent:.3} escaped_count={escaped_count} \
-         samples={total_samples} unusable={unusable_samples} longest_streak={longest_unusable_streak} \
+         samples={total_samples} unusable={unusable_samples} \
+         final_window_streak={longest_unusable_streak} \
          outcome={:?}",
         measured.as_secs(),
         report.outcome.kind
@@ -773,7 +786,8 @@ fn real_binary_supervising_escaping_churn_stays_bounded() {
         escaped_count,
         total_samples,
         unusable_samples,
-        longest_unusable_streak,
+        final_window_samples,
+        longest_unusable_streak_in_final_window: longest_unusable_streak,
         outcome_kind: format!("{:?}", report.outcome.kind),
         ran_to_terminal_signal,
         raw_observations,
