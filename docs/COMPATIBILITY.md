@@ -85,15 +85,19 @@ core count, memory) and the macOS, kernel, and toolchain versions; the profile l
 `m3-pro-36gb`, is derived from the chip and memory fields. Before anything is published,
 `scripts/scan-evidence-bundle.sh` searches every file, journals included, for the identifier
 labels `system_profiler` prints, for any UUID-shaped value, for the serial number and UUIDs the
-host reported, for the host name, for the checkout and output paths, and for the usual local-path
-prefixes and your home directory, and refuses to publish if it finds one. The cargo transcripts
+host reported, for the host name (when it is six characters or longer), for the checkout and
+output paths, and for the usual local-path prefixes and your home directory, and refuses to
+publish if it finds one, naming the file and the literal that matched so a host name that is also
+an ordinary word can be told from a leak. The run needs the system language set to English,
+because the calibration tests keep the English-labelled lines of the hardware report. The cargo transcripts
 land in a sibling `.logs` directory that stays with you. A run with a shortened endurance chunk
 says so in its last line and is not publishable.
 
 To have the cell filled, open a
 [hardware evidence bundle](https://github.com/IonDen/mlx-guard/issues/new?template=hardware-evidence-bundle.yml)
-issue with the published directory attached as one zip. The same scan is run again on the
-submitted directory before it is committed, and the cell is then published as community-measured
-with the provenance from the bundle. The reference host's own cells use the
+issue with the published directory attached as one zip. The scan's label, UUID-shape, and
+local-path checks are run again on the submitted directory before it is committed (the
+submitter's own serial number and host name are known only to their run), and the cell is then
+published as community-measured with the provenance from the bundle. The reference host's own cells use the
 same script through `scripts/calibrate-reference-host.sh`, which only adds the check that the
 machine is the M1 Max 32 GB.

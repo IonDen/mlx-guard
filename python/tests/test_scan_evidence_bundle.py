@@ -58,8 +58,8 @@ class ScanEvidenceBundleTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_identifier_label_in_a_nested_journal_is_refused(self) -> None:
-        # Red if the scan skips dotfiles, binary files, or nested directories: the journals under
-        # scenarios/reports/ are all three.
+        # Red if the scan skips dotfiles or nested directories: the journals under
+        # scenarios/reports/ are both.
         journal = self.bundle / "scenarios" / "reports" / ".x.json.journal"
         journal.write_bytes(b"MLXJ\x00Hardware UUID: 1234\x00")
         completed = scan(self.bundle)
@@ -99,6 +99,51 @@ class ScanEvidenceBundleTests(unittest.TestCase):
         (self.bundle / "runtime.json").write_text('{"path": "/srv/homes/ion/mlx-guard/x"}\n')
         completed = scan(self.bundle, home="/srv/homes/ion")
         self.assertEqual(completed.returncode, 70, completed.stderr)
+
+    def test_empty_literal_is_skipped(self) -> None:
+        # Red if an empty literal (a hardware field the host did not report) is handed to grep,
+        # where an empty fixed string matches every file and a clean bundle is refused.
+        completed = scan(self.bundle, "")
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_excluded_directory_is_not_scanned(self) -> None:
+        # Red if --exclude-dir is ignored: the calibrator scans its staging directory with the
+        # transcripts still inside, and those name local paths by nature.
+        logs = self.bundle / "logs"
+        logs.mkdir()
+        (logs / "footprint.log").write_text("Running /Users/someone/mlx-guard/target/debug/x\n")
+        refused = scan(self.bundle)
+        self.assertEqual(refused.returncode, 70, refused.stderr)
+        completed = subprocess.run(
+            [str(SCRIPT), "--exclude-dir", "logs", str(self.bundle)],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_refusal_names_the_literal_that_matched(self) -> None:
+        # Red if the refusal lists only files: an operator whose host name is an ordinary word
+        # could not tell a false positive from a leak without knowing which literal fired.
+        (self.bundle / "runtime.json").write_text('{"note": "host studio-mbp"}\n')
+        completed = scan(self.bundle, "studio-mbp")
+        self.assertEqual(completed.returncode, 70, completed.stderr)
+        self.assertIn("matched literal: studio-mbp", completed.stderr)
+
+    def test_unset_home_still_scans(self) -> None:
+        # Red if an unset HOME aborts the script with a bash unbound-variable error (exit 1)
+        # instead of scanning without that literal.
+        env = {k: v for k, v in os.environ.items() if k != "HOME"}
+        completed = subprocess.run(
+            [str(SCRIPT), str(self.bundle)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+            timeout=30,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def test_missing_directory_is_an_error_not_a_pass(self) -> None:
         # Red if a nonexistent directory (a typo in the caller) is reported clean.

@@ -63,6 +63,25 @@ class CalibrateHostRefusalTests(unittest.TestCase):
         self.assertFalse(sibling.exists())
         self.assertFalse(sibling.with_name(sibling.name + ".staging").exists())
 
+    def test_relative_output_is_resolved_before_the_repository_is_entered(self) -> None:
+        # Red if the raw relative argument is used after the script changes into the repository:
+        # the staging directory would then be created inside the checkout.
+        with tempfile.TemporaryDirectory() as parent:
+            env = dict(os.environ)
+            env["MLX_GUARD_CALIBRATION_CHECK_ARGUMENTS_ONLY"] = "1"
+            completed = subprocess.run(
+                [str(SCRIPT), "bundle"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+                cwd=parent,
+                timeout=30,
+            )
+            expected = Path(parent).resolve() / "bundle"
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn(f"staging {expected}.staging", completed.stdout)
+
     def test_existing_output_directory_is_refused(self) -> None:
         # Red if an existing output directory is silently reused or overwritten.
         with tempfile.TemporaryDirectory() as existing:

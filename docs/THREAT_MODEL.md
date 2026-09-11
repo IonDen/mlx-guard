@@ -39,7 +39,7 @@ extension (`IOGPUMemory.cpp:550 completeMemory() prepare count underflow`, also
 [mlx #3186](https://github.com/ml-explore/mlx/issues/3186)), distributed inference
 ([exo #1972](https://github.com/exo-explore/exo/issues/1972)), and a serving stack
 ([oMLX #557](https://github.com/jundot/omlx/issues/557)); reporters state the only mitigation is
-not using the GPU. No userland supervisor reaches it. The same panic line also appears under
+not using the GPU; it is unfixed as of late August 2026. No userland supervisor reaches it. The same panic line also appears under
 sustained over-allocation, which a footprint limit does address, so the signature alone does not
 say which case fired. The [compatibility matrix](COMPATIBILITY.md) carries the same row.
 

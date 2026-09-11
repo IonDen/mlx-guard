@@ -93,9 +93,9 @@ The v0.1 control domain is the process group created for one trusted same-user c
 periodic, tree totals are not atomic, and a descendant can leave the group. `mlx-guard` reduces risk;
 it cannot promise a hard memory boundary, immediate Metal-driver reclamation, or protection during a
 kernel or system-wide failure. It never chooses a destructive limit automatically. One kernel
-failure has a name: the IOGPU driver bug that panics macOS 26.4 and later under Metal workloads,
-which can fire with the process footprint well inside any limit and which no external supervisor
-can reach; the
+failure has a name: the IOGPU driver bug that panics macOS 26.4 and later under Metal workloads
+(unfixed as of late August 2026), which can fire with the process footprint well inside any limit
+and which no external supervisor can reach; the
 [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) carries
 its signature.
 

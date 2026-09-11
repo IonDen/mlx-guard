@@ -11,8 +11,8 @@ versions follow Semantic Versioning.
   tier by unified memory size) in which every cell is verified by a committed bundle,
   community-measured, or untested, with the macOS build, commit, and date of each capture as
   provenance. It also names the failure class no cell covers: the IOGPU driver bug that panics
-  macOS 26.4 and later under Metal workloads and can fire with the footprint inside any limit, now
-  listed by signature in the threat model as well.
+  macOS 26.4 and later under Metal workloads (unfixed as of late August 2026) and can fire with the
+  footprint inside any limit, now listed by signature in the threat model as well.
 - `scripts/calibrate-host.sh` produces the calibration bundle on any Apple Silicon Mac in one
   command: six measurement chunks, each written the moment it finishes, resumable after an
   interruption, with the profile label derived from the hardware record's language-independent

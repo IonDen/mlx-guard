@@ -34,8 +34,15 @@ if ! [[ $endurance_seconds =~ ^[1-9][0-9]*$ ]] || (( endurance_seconds > 1800 ))
     echo "MLX_GUARD_CALIBRATION_ENDURANCE_SECONDS must be an integer in 1..=1800, got: $endurance_seconds" >&2
     exit 64
 fi
+# From here on only the resolved path is used: the script changes into the repository next,
+# and a relative argument would otherwise put the staging directory inside the checkout.
+output_directory=$absolute_output
+# The staging directory is deterministic so an interrupted run resumes; it is never a temp dir.
+staging_directory="${output_directory}.staging"
+log_directory="$staging_directory/logs"
+build_directory="$staging_directory/build"
 if [[ "${MLX_GUARD_CALIBRATION_CHECK_ARGUMENTS_ONLY:-0}" == "1" ]]; then
-    echo "arguments accepted: output $absolute_output, endurance ${endurance_seconds}s"
+    echo "arguments accepted: output $output_directory, staging $staging_directory, endurance ${endurance_seconds}s"
     exit 0
 fi
 
@@ -53,6 +60,13 @@ if ! hardware_json=$(system_profiler -json SPHardwareDataType 2>&1); then
     echo "system_profiler failed: $hardware_json" >&2
     exit 69
 fi
+# The calibration tests record the text report and keep only its English-labelled lines, so a
+# host whose report is in another language is refused now rather than failing forty minutes in.
+if ! system_profiler SPHardwareDataType 2>/dev/null | grep -Eq '^ *Chip:' \
+    || ! system_profiler SPHardwareDataType 2>/dev/null | grep -Eq '^ *Memory:'; then
+    echo "the hardware report is not in English; set the system language to English for the calibration run" >&2
+    exit 69
+fi
 profile=$(scripts/host-profile-label.sh <<<"$hardware_json")
 # The five allowlisted hardware facts, rendered from the language-independent JSON keys, and the
 # identifiers the host reports, which the publish scan must never find in the bundle.
@@ -61,9 +75,17 @@ hardware_facts() {
 import json, sys
 record = json.load(sys.stdin)["SPHardwareDataType"][0]
 labels = [("Model Name", "machine_name"), ("Model Identifier", "machine_model"), ("Chip", "chip_type"),
-          ("Cores", "number_processors"), ("Memory", "physical_memory")]
+          ("Total Number of Cores", "number_processors"), ("Memory", "physical_memory")]
+def render(key, value):
+    # number_processors is encoded "proc T:P:E:x"; the text report says "T (P Performance and E Efficiency)".
+    parts = str(value).split()
+    if key == "number_processors" and len(parts) == 2 and parts[0] == "proc":
+        counts = parts[1].split(":")
+        if len(counts) >= 3 and all(c.isdigit() for c in counts[:3]):
+            return f"{counts[0]} ({counts[1]} Performance and {counts[2]} Efficiency)"
+    return str(value)
 if sys.argv[1] == "sanitized":
-    print("\n".join(f"{label}: {record[key]}" for label, key in labels if key in record))
+    print("\n".join(f"{label}: {render(key, record[key])}" for label, key in labels if key in record))
 else:
     for key in ("serial_number", "platform_UUID", "provisioning_UDID"):
         print(record.get(key, ""))
@@ -72,24 +94,34 @@ else:
 sanitized_hardware=$(hardware_facts sanitized)
 host_identifiers=()
 while IFS= read -r line; do host_identifiers+=("$line"); done < <(hardware_facts identifiers)
-host_identifiers+=("$(scutil --get LocalHostName 2>/dev/null || true)" "$repo_root" "$absolute_output")
+# A very short host name (`Pro`, `M1`) would collide with the hardware facts the bundle publishes
+# on purpose, so it joins the scan only when it is long enough to be an identifier.
+local_host_name=$(scutil --get LocalHostName 2>/dev/null || true)
+if (( ${#local_host_name} >= 6 )); then
+    host_identifiers+=("$local_host_name")
+fi
+host_identifiers+=("$repo_root" "$absolute_output")
 
-# The staging directory is deterministic so an interrupted run resumes; it is never a temp dir.
-staging_directory="${output_directory}.staging"
-log_directory="$staging_directory/logs"
-build_directory="$staging_directory/build"
 mkdir -p "$log_directory" "$build_directory"
 metal_fixture="$build_directory/metal-calibration"
 fixture="$repo_root/target/debug/mlx-guard-fixture"
 guard="$repo_root/target/debug/mlx-guard"
+# pkill and grep take regular expressions; the paths are made literal first, so a checkout under
+# "Work (2)/" still matches its own binaries and never something else.
+regex_literal() {
+    printf '%s' "$1" | sed -e 's/[][\.*^$+?(){}|\/]/\\&/g'
+}
+fixture_re=$(regex_literal "$fixture")
+metal_fixture_re=$(regex_literal "$metal_fixture")
+guard_re=$(regex_literal "$guard")
 
 # An interrupted chunk can leave fixture processes behind; end them so a resume does not measure
 # under leftover load. The patterns are anchored to the binaries this run builds, so an editor
 # with a similarly named file open is never matched.
 on_interrupt() {
     echo "interrupted; ending fixture processes" >&2
-    pkill -f "^$fixture" 2>/dev/null || true
-    pkill -f "^$metal_fixture" 2>/dev/null || true
+    pkill -f "^$fixture_re" 2>/dev/null || true
+    pkill -f "^$metal_fixture_re" 2>/dev/null || true
     exit 130
 }
 trap on_interrupt INT TERM
@@ -139,10 +171,18 @@ fi
 cargo build -p mlx-guard-cli --bin mlx-guard
 cargo build -p mlx-guard-test-support --bin mlx-guard-fixture
 
+# strays — the fixture and guard processes of this run still alive; a grep failure (a pattern the
+# regex engine rejects) is reported rather than read as "none".
 strays() {
-    ps -Ao pid,ppid,etime,command \
-        | grep -E "^ *[0-9]+ +[0-9]+ +[^ ]+ +($fixture|$metal_fixture|$guard (observe|run))( |$)" \
-        || true
+    local status=0 hits
+    hits=$(ps -Ao pid,ppid,etime,command \
+        | grep -E "^ *[0-9]+ +[0-9]+ +[^ ]+ +($fixture_re|$metal_fixture_re|$guard_re (observe|run))( |$)") \
+        || status=$?
+    if [[ $status -gt 1 ]]; then
+        echo "stray-process check failed (grep exit $status)" >&2
+        exit 70
+    fi
+    printf '%s' "$hits"
 }
 
 # refuse_strays WHEN — a fixture may take a moment to be reaped after its test returns, so poll
@@ -236,12 +276,13 @@ run_chunk escalation-envelope "$staging_directory/escalation-envelope.json" \
         -- --ignored --exact --nocapture
 
 # Everything published must carry no machine identifier and no local path: the JSON files, the
-# scenario reports, and their journals alike. The cargo transcripts stay in the sibling logs
-# directory; they name local paths by nature and are never committed.
+# scenario reports, and their journals alike. The scan runs with the transcripts and sentinels
+# still in place (excluded, since transcripts name local paths by nature), so a refused bundle
+# stays resumable and can be re-scanned in seconds after the cause is fixed.
+"$repo_root/scripts/scan-evidence-bundle.sh" --exclude-dir logs --exclude-dir build \
+    "$staging_directory" "${host_identifiers[@]}"
 rm -rf "$build_directory"
 mv "$log_directory" "${output_directory}.logs"
-"$repo_root/scripts/scan-evidence-bundle.sh" "$staging_directory" "${host_identifiers[@]}"
-
 mkdir -p "$(dirname "$output_directory")"
 mv "$staging_directory" "$output_directory"
 if (( endurance_seconds < 1800 )); then

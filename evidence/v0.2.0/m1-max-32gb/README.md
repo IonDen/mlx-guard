@@ -1,9 +1,10 @@
 # M1 Max 32 GB reference evidence
 
 This bundle records the bounded calibration run for commit
-`59ea303d9bf341f0894b3ce5864672b74d382d01`, a commit of pull request #29 (after the squash merge it
-stays reachable as `refs/pull/29/head`: `git fetch origin refs/pull/29/head`). The worktree was
-clean when the run started and the six chunks ran in one uninterrupted pass. The host
+`59ea303d9bf341f0894b3ce5864672b74d382d01`, a commit of pull request #29; after the squash merge it
+stays reachable from that pull request's ref (`git fetch origin refs/pull/29/head && git checkout
+59ea303`). The worktree was clean when the run started and the run transcript shows the six
+chunks ran in one uninterrupted pass. The host
 was a 10-core (8 performance, 2 efficiency) Apple M1 Max MacBook Pro with 32 GB memory, running
 macOS 26.6.2 (25G83) on arm64. Tool versions and the
 sanitized hardware record are in [provenance.json](provenance.json) and repeated inside
