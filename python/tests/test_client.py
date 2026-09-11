@@ -84,6 +84,14 @@ class ClientTests(unittest.TestCase):
                 max_footprint_bytes=1,
             )
 
+    def test_configs_reject_positional_construction(self) -> None:
+        # Catches the configuration dataclasses silently accepting positional fields again: the
+        # field order is not part of the stable Python API, only the field names are.
+        with self.assertRaises(TypeError):
+            mlx_guard.ObserveConfig(("/bin/true",), Path("report.json"))  # type: ignore[misc]
+        with self.assertRaises(TypeError):
+            mlx_guard.RunConfig(("/bin/true",), Path("report.json"), 1024)  # type: ignore[misc]
+
     def test_run_config_boundaries_match_the_native_grammar(self) -> None:
         # Catches an off-by-one in the emergency-band or wall-time bounds that would pass an
         # unrepresentable limit to the native CLI or reject a limit the CLI accepts.

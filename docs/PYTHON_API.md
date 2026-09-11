@@ -6,7 +6,8 @@ ownership, and signal escalation stay in the native process.
 ## Run and observe
 
 Use `ObserveConfig` when you need measurements without intervention. Use `RunConfig` with an
-explicit byte limit when the supervisor may intervene.
+explicit byte limit when the supervisor may intervene. Both are keyword-only: field names are part
+of the stable API, field order is not.
 
 ```python
 from pathlib import Path
@@ -32,7 +33,7 @@ through a shell. `start()` returns a `GuardProcess` for incremental work. Its `p
 methods return the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor;
 calling it again requests the native immediate-escalation path.
 
-Both `ObserveConfig` and `RunConfig` accept a keyword-only `on_parent_exit` (`"terminate"` or
+Both `ObserveConfig` and `RunConfig` accept `on_parent_exit` (`"terminate"` or
 `"detach"`; `None`, the default, omits the flag and defers to the native default of `terminate`).
 This governs what the supervisor does if the Python process that called `run()`/`start()` exits
 first — a crash, an unhandled exception, or the process being killed outright. Under the default,

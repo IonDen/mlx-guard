@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import dataclasses
 import json
 import math
 import os
@@ -66,9 +65,9 @@ class ReportPathInUseError(ReportError):
     """The report target is occupied by retained journal evidence."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ObserveConfig:
-    """Immutable configuration for an observe-only run."""
+    """Immutable, keyword-only configuration for an observe-only run."""
 
     command: tuple[str, ...]
     report: Path
@@ -76,15 +75,15 @@ class ObserveConfig:
     cwd: Path | None = None
     clear_env: bool = False
     env: tuple[tuple[str, str], ...] = ()
-    on_parent_exit: str | None = dataclasses.field(default=None, kw_only=True)
+    on_parent_exit: str | None = None
 
     def __post_init__(self) -> None:
         _validate_common(self)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RunConfig:
-    """Immutable configuration for an enforcing run."""
+    """Immutable, keyword-only configuration for an enforcing run."""
 
     command: tuple[str, ...]
     report: Path
@@ -94,8 +93,8 @@ class RunConfig:
     cwd: Path | None = None
     clear_env: bool = False
     env: tuple[tuple[str, str], ...] = ()
-    on_parent_exit: str | None = dataclasses.field(default=None, kw_only=True)
-    checkpoint_timeout_ms: int | None = dataclasses.field(default=None, kw_only=True)
+    on_parent_exit: str | None = None
+    checkpoint_timeout_ms: int | None = None
 
     def __post_init__(self) -> None:
         _validate_common(self)

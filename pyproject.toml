@@ -61,6 +61,7 @@ include = [
     { path = "docs/RELEASE.md", format = "sdist" },
     { path = "docs/REPORTS.md", format = "sdist" },
     { path = "docs/SAMPLING.md", format = "sdist" },
+    { path = "docs/STABILITY.md", format = "sdist" },
     { path = "docs/SUPPORT.md", format = "sdist" },
     { path = "docs/THREAT_MODEL.md", format = "sdist" },
     { path = "docs/integrations/MLX_TRAIN_PERF.md", format = "sdist" },

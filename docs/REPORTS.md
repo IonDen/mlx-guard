@@ -155,7 +155,9 @@ it, renames it over a safe report target, then syncs the directory. A failed wri
 only the temporary file created by that attempt. The caller receives no success result until this
 sequence finishes.
 
-The successful journal is retained as durable recovery evidence. A report path is therefore
+The successful journal is retained as durable recovery evidence. Its byte format is versioned by
+its magic header and may change between releases; recovery is promised only for a journal written
+by the same release, while the JSON report it produces follows schema v1. A report path is therefore
 single-use while `.<report-name>.journal` exists. Choose a unique report name for each run, or
 explicitly archive/remove both files after reviewing them. The Python client raises
 `ReportPathInUseError` before launch when it sees the retained journal; the native CLI rejects the
