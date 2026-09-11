@@ -63,6 +63,8 @@ body:
           required: true
         - label: The worktree was a clean checkout of a tagged release.
           required: true
+        - label: The endurance chunk ran the full 1800 s (`requested_endurance_seconds` in `provenance.json`); the script prints a dry-run line otherwise.
+          required: true
   - type: textarea
     id: notes
     attributes:

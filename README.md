@@ -92,11 +92,12 @@ that lets a worker save state when the supervisor asks.
 The v0.1 control domain is the process group created for one trusted same-user command. Sampling is
 periodic, tree totals are not atomic, and a descendant can leave the group. `mlx-guard` reduces risk;
 it cannot promise a hard memory boundary, immediate Metal-driver reclamation, or protection during a
-kernel or system-wide failure. One such failure has a name: the IOGPU driver bug that panics macOS
-26.4 through 26.6 under Metal workloads with the process footprint well inside any limit, which no
-external supervisor can reach (the
+kernel or system-wide failure. It never chooses a destructive limit automatically. One kernel
+failure has a name: the IOGPU driver bug that panics macOS 26.4 and later under Metal workloads,
+which can fire with the process footprint well inside any limit and which no external supervisor
+can reach; the
 [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) carries
-its signature). It never chooses a destructive limit automatically.
+its signature.
 
 An interactive terminal on standard input and shell job control are outside the v0.1 scope, along
 with sandboxed execution and Mac App Store distribution. Direct CLI and Python-wheel distribution

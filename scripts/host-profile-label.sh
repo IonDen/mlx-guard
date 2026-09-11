@@ -1,25 +1,42 @@
 #!/usr/bin/env bash
-# Derive the evidence profile label for a host from `system_profiler SPHardwareDataType` text on
-# stdin: the chip words after "Apple", lowercased, with every run of characters that is not a
-# letter or digit collapsed to one "-", then "-<memory>gb". "Chip: Apple M1 Max" with
-# "Memory: 32 GB" gives "m1-max-32gb"; "Chip: Apple M1 (Virtual)" with "Memory: 7 GB" gives
-# "m1-virtual-7gb". Only the chip and memory lines are read, so the label can never carry a
-# serial number, UUID, or UDID even when the raw record is piped in. A record with no
-# "Chip: Apple" line (an Intel Mac) or no memory line is refused with exit 65.
+# Derive the evidence profile label for a host from `system_profiler -json SPHardwareDataType`
+# on stdin: the chip words after "Apple", lowercased, with every run of characters that is not a
+# letter or digit collapsed to one "-", then "-<memory>gb". A chip of "Apple M1 Max" with
+# "32 GB" gives "m1-max-32gb"; "Apple M1 (Virtual)" with "7 GB" gives "m1-virtual-7gb". The JSON
+# keys do not change with the user's language, unlike the text report. Only the chip and memory
+# fields are read, so the label can never carry a serial number or UUID even though the document
+# holds both. A document with no "Apple ..." chip (an Intel Mac), no memory size, a chip that
+# leaves no letters or digits, or that is not the expected JSON is refused with exit 65.
 set -euo pipefail
 
-record=$(cat)
-chip=$(sed -nE 's/^[[:space:]]*Chip:[[:space:]]*Apple[[:space:]]+(.+)$/\1/p' <<<"$record" | head -n 1)
-memory=$(sed -nE 's/^[[:space:]]*Memory:[[:space:]]*([0-9]+)[[:space:]]*GB[[:space:]]*$/\1/p' <<<"$record" | head -n 1)
+document=$(cat)
+python3 - "$document" <<'PY'
+import json
+import re
+import sys
 
-if [[ -z "$chip" ]]; then
-    echo "no 'Chip: Apple ...' line in the hardware record; only Apple Silicon hosts are calibrated" >&2
-    exit 65
-fi
-if [[ -z "$memory" ]]; then
-    echo "no 'Memory: <N> GB' line in the hardware record; the label needs the memory size" >&2
-    exit 65
-fi
+try:
+    document = json.loads(sys.argv[1])
+    record = document["SPHardwareDataType"][0]
+except (ValueError, KeyError, IndexError, TypeError):
+    print("stdin is not a system_profiler -json SPHardwareDataType document", file=sys.stderr)
+    sys.exit(65)
 
-label=$(tr '[:upper:]' '[:lower:]' <<<"$chip" | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//')
-echo "${label}-${memory}gb"
+chip = str(record.get("chip_type", ""))
+if not chip.startswith("Apple "):
+    print(
+        "no 'Apple ...' chip in the hardware record; only Apple Silicon hosts are calibrated",
+        file=sys.stderr,
+    )
+    sys.exit(65)
+memory = re.fullmatch(r"\s*([0-9]+)\s*GB\s*", str(record.get("physical_memory", "")))
+if memory is None:
+    print("no '<N> GB' memory size in the hardware record; the label needs it", file=sys.stderr)
+    sys.exit(65)
+
+words = re.sub(r"[^a-z0-9]+", "-", chip[len("Apple ") :].lower()).strip("-")
+if not words:
+    print("the chip name leaves no letters or digits for a label", file=sys.stderr)
+    sys.exit(65)
+print(f"{words}-{memory.group(1)}gb")
+PY

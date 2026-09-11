@@ -11,12 +11,13 @@ versions follow Semantic Versioning.
   tier by unified memory size) in which every cell is verified by a committed bundle,
   community-measured, or untested, with the macOS build, commit, and date of each capture as
   provenance. It also names the failure class no cell covers: the IOGPU driver bug that panics
-  macOS 26.4 through 26.6 under Metal workloads with the footprint inside any limit, now listed by
-  signature in the threat model as well.
+  macOS 26.4 and later under Metal workloads and can fire with the footprint inside any limit, now
+  listed by signature in the threat model as well.
 - `scripts/calibrate-host.sh` produces the calibration bundle on any Apple Silicon Mac in one
   command: six measurement chunks, each written the moment it finishes, resumable after an
-  interruption, with the profile label derived from the sanitized hardware record and every
-  published file scanned for machine identifiers and local paths. A hardware evidence bundle
+  interruption, with the profile label derived from the hardware record's language-independent
+  fields and every published file scanned by `scripts/scan-evidence-bundle.sh` for the host's own
+  identifiers, its name, its paths, and the usual identifier labels. A hardware evidence bundle
   issue template turns such a bundle into a community-measured cell. The reference-host script is
   now the M1 Max 32 GB guard around it.
 - The 0.2.0 reference bundle for the M1 Max 32 GB (`evidence/v0.2.0/m1-max-32gb/`): footprint

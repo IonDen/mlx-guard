@@ -8,7 +8,7 @@ workflow, run id 34591393999 against `main` at commit `9d42fc8`, dispatched
 hardware lines, CPU count, memory size, and per-repetition load are recorded in each capture.
 
 This is the "verified, shared VM" cell of the [compatibility matrix](../../../docs/COMPATIBILITY.md):
-the full macOS test suite passes on this runner on every CI run, and these captures corroborate
+the full macOS test suite passes on this runner on every push to `main`, and these captures corroborate
 the reference host's envelope. They never gate a release and are never a timing reference.
 
 ## Pooled results

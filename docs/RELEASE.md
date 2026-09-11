@@ -28,7 +28,8 @@ the version in one commit and refreshes, by hand:
   finishes, and resumes an interrupted run; the whole bundle takes about 45 minutes, most of it
   the 30-minute endurance chunk. Copy the published files into
   `evidence/vX.Y.Z/m1-max-32gb/` and write the README from them; the `<out>.logs` transcripts are
-  not committed.
+  not committed. Run `scripts/scan-evidence-bundle.sh <dir>` on any bundle that arrives from
+  another machine before committing it.
 - Escalation envelope: `scripts/calibrate-reference-host.sh` captures
   `escalation-envelope.json` alongside the rest of the reference bundle whenever the checkpoint
   acknowledgement, TERM, or KILL path changed since the last release; re-run it standalone with

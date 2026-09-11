@@ -1,7 +1,9 @@
 # M1 Max 32 GB reference evidence
 
 This bundle records the bounded calibration run for commit
-`59ea303d9bf341f0894b3ce5864672b74d382d01`. The worktree was clean when the run started. The host
+`59ea303d9bf341f0894b3ce5864672b74d382d01`, a commit of pull request #29 (after the squash merge it
+stays reachable as `refs/pull/29/head`: `git fetch origin refs/pull/29/head`). The worktree was
+clean when the run started and the six chunks ran in one uninterrupted pass. The host
 was a 10-core (8 performance, 2 efficiency) Apple M1 Max MacBook Pro with 32 GB memory, running
 macOS 26.6.2 (25G83) on arm64. Tool versions and the
 sanitized hardware record are in [provenance.json](provenance.json) and repeated inside
@@ -110,6 +112,7 @@ trial bundle under [`../in-house-trial/`](../in-house-trial/README.md) is where 
 were supervised.
 
 From a clean checkout of the recorded commit, run the command above. The script refuses a dirty
-worktree, an existing output directory, an output directory inside the repository, or a host
-other than an M1 Max with 32 GB memory; `scripts/calibrate-host.sh` is the same run without the
-host check, for any Apple Silicon Mac. Metal access must be available to the process.
+worktree, an existing output or transcript directory, an output directory inside the repository,
+or a host other than an M1 Max with 32 GB memory; `scripts/calibrate-host.sh` is the same run
+without the host check, for any Apple Silicon Mac. Metal access must be available to the
+process.
