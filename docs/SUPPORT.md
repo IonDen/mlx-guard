@@ -5,7 +5,7 @@
 | Component | Supported in 0.1.x |
 |---|---|
 | Hardware | Apple Silicon (`arm64`) |
-| Verified local runtime | macOS 26.6.1 |
+| Verified local runtime | macOS 26.6.2 (see the [compatibility matrix](COMPATIBILITY.md)) |
 | Required release CI | GitHub `macos-15` arm64 |
 | Python | CPython 3.10–3.14 |
 | Installation | `py3-none-macosx_11_0_arm64` wheel |
@@ -18,10 +18,10 @@ policy and serialization code; it does not make Linux a runtime target.
 
 ## Verified configurations
 
-Reference calibration used an Apple M1 Max with 32 GB unified memory on macOS 26.6.1. Publication is
-gated on the complete macOS suite passing on GitHub's `macos-15` arm64 runner. The wheel's
-`macosx_11_0_arm64` deployment tag does not establish runtime support on macOS 11–14. Other Apple
-Silicon generations are uncalibrated until their own evidence has been collected.
+The [compatibility matrix](COMPATIBILITY.md) lists every hardware setup with committed evidence
+(the M1 Max 32 GB reference host and GitHub's `macos-15` shared virtual machine), marks the rest
+untested, and explains how a bundle from another machine fills a cell. The wheel's
+`macosx_11_0_arm64` deployment tag does not establish runtime support on macOS 11–14.
 
 ## Getting help
 

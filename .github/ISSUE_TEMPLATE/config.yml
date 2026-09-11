@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Defect report
+    url: https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md#getting-help
+    about: What a reproducible defect report needs (version, macOS, command shape, limit, exit code, redacted report).

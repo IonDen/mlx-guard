@@ -28,9 +28,11 @@ pip install mlx-guard
 The CLI also works without a Python project: `uvx mlx-guard …` runs it on demand, and
 `pipx install mlx-guard` keeps it on your PATH.
 
-Wheels cover macOS 11 or newer on Apple Silicon with Python 3.10 through 3.14 and contain the
-precompiled supervisor, so installing needs no Rust toolchain. Building from source needs Rust 1.93
-and maturin.
+Wheels are built for Apple Silicon with Python 3.10 through 3.14 and contain the precompiled
+supervisor, so installing needs no Rust toolchain. Their `macosx_11_0_arm64` tag is the build's
+deployment target, not a runtime claim: the hardware and macOS builds with measured evidence are
+in the [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md).
+Building from source needs Rust 1.93 and maturin.
 
 ## Quick start
 
@@ -90,7 +92,11 @@ that lets a worker save state when the supervisor asks.
 The v0.1 control domain is the process group created for one trusted same-user command. Sampling is
 periodic, tree totals are not atomic, and a descendant can leave the group. `mlx-guard` reduces risk;
 it cannot promise a hard memory boundary, immediate Metal-driver reclamation, or protection during a
-kernel or system-wide failure. It never chooses a destructive limit automatically.
+kernel or system-wide failure. One such failure has a name: the IOGPU driver bug that panics macOS
+26.4 through 26.6 under Metal workloads with the process footprint well inside any limit, which no
+external supervisor can reach (the
+[compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) carries
+its signature). It never chooses a destructive limit automatically.
 
 An interactive terminal on standard input and shell job control are outside the v0.1 scope, along
 with sandboxed execution and Mac App Store distribution. Direct CLI and Python-wheel distribution
@@ -139,9 +145,10 @@ contract below defines one subsystem.
 | [mlx-train-perf integration](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/MLX_TRAIN_PERF.md) | Optional external supervision for its runner, keeping the direct-launch fallback |
 | [Stability](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) | What may still change before 1.0, how, and what freezes |
 | [Support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md) | Supported platforms and release boundaries |
+| [Compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) | Which hardware setups have measured evidence, which are untested, and how to fill a cell |
 | [Threat model](https://github.com/IonDen/mlx-guard/blob/main/docs/THREAT_MODEL.md) | Trust boundaries and supported failures |
 | [Security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) | Vulnerability reporting |
-| [M1 Max 32 GB evidence](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.1.0/m1-max-32gb/README.md) | Raw v0.1 accuracy, timing, endurance, lifecycle, and false-intervention measurements |
+| [M1 Max 32 GB evidence](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/m1-max-32gb/README.md) | Raw 0.2 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
 
 ## Research notes
 

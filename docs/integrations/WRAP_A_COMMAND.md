@@ -20,8 +20,10 @@ that: see the ladder below for what it looks like.
 pip install mlx-guard
 ```
 
-This installs only on Apple Silicon macOS (macOS 11 or newer, arm64); other platforms have no
-matching wheel, and `pip` fails by design rather than falling back to a source build.
+This installs only on Apple Silicon macOS (arm64); other platforms have no matching wheel, and
+`pip` fails by design rather than falling back to a source build. The wheel's `macosx_11_0`
+tag is its build target, not a runtime claim; the hardware and macOS builds with measured
+evidence are in the [compatibility matrix](../COMPATIBILITY.md).
 
 The CLI also works without a Python project: `uvx mlx-guard …` runs it on demand, and
 `pipx install mlx-guard` keeps it on your PATH. The other prerequisites for the commands on this

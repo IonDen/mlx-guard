@@ -66,14 +66,14 @@ maxima are not user-configurable, and the effective values are recorded in each 
 
 | Scenario | Measured interval | p95 (ms) | Maximum (ms) |
 |---|---|---:|---:|
-| `checkpoint_ack_idle` | request to acknowledgement | 29 | 29 |
-| `checkpoint_ack_idle` | TERM to quiet | 27 | 28 |
+| `checkpoint_ack_idle` | request to acknowledgement | 31 | 31 |
+| `checkpoint_ack_idle` | TERM to quiet | 33 | 33 |
 | `checkpoint_ack_loaded` | request to acknowledgement | 29 | 30 |
-| `checkpoint_ack_loaded` | TERM to quiet | 28 | 36 |
-| `group_term` | TERM to quiet | 37 | 38 |
-| `group_kill` | KILL to quiet | 31 | 31 |
+| `checkpoint_ack_loaded` | TERM to quiet | 24 | 25 |
+| `group_term` | TERM to quiet | 39 | 41 |
+| `group_kill` | KILL to quiet | 36 | 39 |
 
-Measured on the M1 Max 32 GB reference host (macOS 26.6.1, 25G76), 20 repetitions per scenario,
+Measured on the M1 Max 32 GB reference host (macOS 26.6.2, 25G83), 20 repetitions per scenario,
 `resolution_ms: 10` — every mark is a supervisor-loop timestamp quantized to that interval, not an
 instantaneous event time. `*_to_quiet` marks the loop observing the root reaped and the owned
 group empty, never the reap instant itself. The measured binaries are unoptimized debug builds, so

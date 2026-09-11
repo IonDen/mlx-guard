@@ -157,6 +157,7 @@ for required in \
     "${package_name}/THIRD_PARTY_LICENSES.md" \
     "${package_name}/crates/mlx-guard-cli/src/runtime.rs" \
     "${package_name}/crates/mlx-guard-core/src/lib.rs" \
+    "${package_name}/docs/COMPATIBILITY.md" \
     "${package_name}/docs/EXAMPLES.md" \
     "${package_name}/docs/RELEASE.md" \
     "${package_name}/docs/STABILITY.md" \

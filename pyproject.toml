@@ -50,6 +50,7 @@ include = [
     { path = "THIRD_PARTY_LICENSES.md", format = "sdist" },
     { path = "docs/CHECKPOINT_PROTOCOL.md", format = "sdist" },
     { path = "docs/CLI.md", format = "sdist" },
+    { path = "docs/COMPATIBILITY.md", format = "sdist" },
     { path = "docs/EXAMPLES.md", format = "sdist" },
     { path = "docs/IDENTITY_AND_CONTAINMENT.md", format = "sdist" },
     { path = "docs/INTERVENTION.md", format = "sdist" },
