@@ -64,18 +64,25 @@ class ProgressTests(unittest.TestCase):
         done = _load().load_progress(Path("/nonexistent/progress.json"), corpus_id="c1")
         self.assertEqual(done, {})
 
-    def test_progress_round_trips_and_keeps_page_order_by_index(self) -> None:
-        # Bug this catches: keys serialized as strings and never mapped back to page numbers, or
-        # returned in file order instead of page order.
+    def test_progress_round_trips_with_string_keys_on_disk(self) -> None:
+        # Bug this catches: keys serialized as strings and never mapped back to page numbers.
         module = _load()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "progress.json"
             module.save_progress(path, {3: "three", 1: "one"}, corpus_id="c1")
             loaded = module.load_progress(path, corpus_id="c1")
             self.assertEqual(loaded, {1: "one", 3: "three"})
-            self.assertEqual(list(loaded), [1, 3])
             raw = json.loads(path.read_text())
             self.assertEqual(sorted(raw["summaries"]), ["1", "3"])
+
+    def test_progress_is_returned_in_page_order_not_file_or_lexical_order(self) -> None:
+        # Bug this catches: keeping the file's key order, or sorting keys as strings ("10" < "9").
+        module = _load()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "progress.json"
+            summaries = {"10": "ten", "9": "nine", "1": "one"}
+            path.write_text(json.dumps({"corpus_id": "c1", "summaries": summaries}))
+            self.assertEqual(list(module.load_progress(path, corpus_id="c1")), [1, 9, 10])
 
     def test_progress_from_another_corpus_is_refused(self) -> None:
         # Bug this catches: resuming with page indices that belong to different text.
@@ -86,13 +93,16 @@ class ProgressTests(unittest.TestCase):
             with self.assertRaises(module.ProgressMismatch):
                 module.load_progress(path, corpus_id="c2")
 
-    def test_save_progress_returns_the_size_on_disk(self) -> None:
-        # Bug this catches: reporting the in-memory string length, which differs for non-ASCII text.
+    def test_save_progress_returns_the_bytes_it_wrote(self) -> None:
+        # Bug this catches: returning a constant, the temporary file's size, or a stale size.
         module = _load()
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "progress.json"
-            size = module.save_progress(path, {0: "résumé — ünïcode"}, corpus_id="c1")
-            self.assertEqual(size, path.stat().st_size)
+            size = module.save_progress(path, {0: "first summary"}, corpus_id="c1")
+            payload = {"corpus_id": "c1", "summaries": {"0": "first summary"}}
+            expected = json.dumps(payload, indent=2)
+            self.assertEqual(size, len(expected.encode()))
+            self.assertEqual(path.read_text(), expected)
 
     def test_remaining_pages_skips_what_is_done(self) -> None:
         # Bug this catches: iterating the done keys instead of the page range, or an inverted test.

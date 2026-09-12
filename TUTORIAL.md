@@ -3,14 +3,14 @@
 This is the story of one small job. It is told twice: first by arithmetic, for what the job would
 have done to the Mac on its own, then by recording, for what happened under `mlx-guard`. The job
 is ordinary on purpose. You have a folder of Markdown files and a local model, and you want a
-two-sentence summary of every page. Nothing about it looks dangerous.
+two-sentence summary of every page. Nothing about it looks dangerous. That is the point.
 
 Everything below ran on a MacBook Pro with an M1 Max and 32 GB of unified memory, on macOS
 26.6.2, with `mlx-guard` 0.2.0 from PyPI. The transcripts are verbatim; only the report directory
 is shown as `reports/`. The reports themselves sit in
 [`evidence/v0.2.0/tutorial/`](evidence/v0.2.0/tutorial/README.md), if you want the JSON open
-while you read. Sizes in the text are decimal gigabytes. The one binary unit is the limit itself,
-because that is how the flag is written: `6GiB` is 6.44 GB.
+while you read. Sizes in the prose are decimal gigabytes. The transcripts print what the tools
+print, and the limit is written the way the flag wants it: `6GiB` is 6.44 GB.
 
 ## The job
 
@@ -34,12 +34,12 @@ if args.keep_caches:
 ```
 
 A prompt cache for this model costs about 115 KB per token: 28 layers, 8 key-value heads, 128
-dimensions, keys and values both, in fp16. A 4-bit model still keeps a full-precision cache
-unless you ask `mlx-lm` to quantize it. A 3,200-character page is roughly 800 tokens. The cache
+dimensions, keys and values both, in fp16. A 4-bit model still keeps a 16-bit cache unless you
+ask `mlx-lm` to quantize it. A 3,200-character page is roughly 800 tokens. The cache
 grows in blocks of 256 tokens, so a page pins 88 MB or 117 MB rather than a smooth per-token
 amount. Over this corpus it averages 90 MB per page, and none of it is ever released. The script
 prints what MLX holds after each page, so the growth is visible if you look. Most people do not
-look. The job is producing summaries and the fan is quiet.
+look, because the job is producing summaries and the fan is quiet.
 
 Set up an environment the way the tutorial did, so the commands match:
 
@@ -54,7 +54,7 @@ install -d -m 700 reports
 We did not run this part. There is no need to, and on a laptop you actually use there is no good
 reason to. The arithmetic is enough. It is also the arithmetic you should do for your own jobs.
 
-The recorded runs below put the process at roughly 2.5 GB once the model has loaded. Every page
+The recorded runs below put the process at close to 3 GB once the model has loaded. Every page
 then adds 90 MB. A Mac reports 32 GB, but macOS and whatever else is open need their share, so a
 process can count on something like 25 GB before the system starts to defend itself. At 90 MB a
 page, that is 250 pages, or about four minutes at this pace. A 16 GB laptop gets there in a
@@ -80,7 +80,7 @@ script that looks fine.
 
 `mlx-guard` has two modes. `observe` watches and reports. `run` watches and enforces a limit you
 give it. The order matters: observe first, so that the limit you choose later is a number you
-measured rather than one you guessed.
+measured and not one you guessed.
 
 We watched the buggy script over its first 12 pages, sampling the process group's footprint every
 50 ms:
@@ -187,12 +187,12 @@ gone:
 
 What that bought is easy to state. The Mac did not notice. The other applications kept their
 memory, the pointer kept moving, and the run ended forty seconds in with a file that says exactly
-why. Compare the arithmetic section: a rebooted machine and a guess.
+why. Compare that with the arithmetic section: a rebooted machine and a guess.
 
-There is also a bill. Forty summaries were computed and none were saved. The script writes its
-output only at the end, and `SIGTERM` arrived before the end. The `ls` at the bottom of the
-transcript is the whole problem in one line. A limit turns a catastrophe into a loss. Turning a
-loss into progress takes one more step.
+There is also a bill. Forty summaries were computed and none were saved, because the script writes
+its output only at the end and `SIGTERM` arrived before the end. The `ls` at the bottom of the
+transcript is the whole problem in one line. A limit turns a catastrophe into a loss. Turning a loss
+into progress takes one more step.
 
 ## Make the job resumable
 
@@ -218,19 +218,19 @@ def connect_checkpoint(progress, summaries, fingerprint):
 ```
 
 `connect` returns `None` when `mlx-guard` did not start the process, so the same script runs
-unchanged on its own. The request is delivered wherever the script calls `worker.poll()`. The
-script calls it after every generated token, not once per page, so during generation the callback
-runs within a few milliseconds of the signal. The callback writes the whole progress file, a dozen
+unchanged on its own. The request is delivered wherever the script calls `worker.poll()`. The script
+calls it after every generated token, not once per page, so during generation the callback runs
+within a few milliseconds of the signal. The callback writes the whole progress file, a dozen
 kilobytes, flushes it to disk with `fsync`, and renames it into place. That takes milliseconds. The
-guard allows one second for all of it by default. The only stretch where the script cannot answer
-is a page's prompt prefill, where `mlx-lm` yields nothing until the 800 prompt tokens are
-processed. The recorded request landed exactly there, and the acknowledgement came 578 ms after
-it. On a slower Mac, or with longer pages, pass `--checkpoint-timeout 5s` and stop thinking about
-it.
+guard allows one second for all of it by default. There are two stretches where the script cannot
+answer: the model load before page one, and each page's prompt prefill, where `mlx-lm` yields
+nothing until the 800 prompt tokens are processed. The recorded request landed in a prefill, and the
+acknowledgement came 578 ms after it. On a slower Mac, or with longer pages, pass
+`--checkpoint-timeout 5s` and stop thinking about it.
 
 The progress file carries a fingerprint of the corpus and the page size. `--resume` checks it
 first, and refuses a file that belongs to different text rather than trusting its page numbers.
-Now put the two together in a loop. It restarts only on exit 75, and it is capped, so a run that
+Put the two together in a loop. It restarts only on exit 75, and it is capped, so a run that
 can never finish does not loop forever. The batch finishes itself:
 
 ```console
