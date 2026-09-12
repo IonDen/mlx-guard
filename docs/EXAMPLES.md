@@ -1,5 +1,8 @@
 # Examples
 
+These are the shortest working commands. For a walk through one real job, read the
+[tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md).
+
 Create an owner-only report directory once:
 
 ```bash

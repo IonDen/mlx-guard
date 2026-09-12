@@ -5,7 +5,12 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
-No user-visible changes yet.
+### Added
+
+- A tutorial (`TUTORIAL.md`) that follows one ordinary job, a local-LLM document summarizer
+  with a realistic memory leak, through `observe`, a footprint limit, a cooperative checkpoint
+  with a resume loop, and the fix, with every transcript and report recorded on the reference host
+  (`evidence/v0.2.0/tutorial/`) and the script under `examples/tutorial/`.
 
 ## [0.2.0] - 2026-09-12
 
