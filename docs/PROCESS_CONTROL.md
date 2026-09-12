@@ -79,9 +79,9 @@ signal is enabled before readiness.
 ## Terminal and stdio behavior
 
 The CLI inherits stdin, stdout, and stderr. If inherited stdin is a terminal, preflight rejects the
-launch because v0.1 does not implement foreground process-group transfer and restoration. Piped and
-null streams are available to integrations and tests. Child stdout and stderr remain application
-data and are never interpreted as checkpoint or supervisor control messages.
+launch because the supervisor does not implement foreground process-group transfer and restoration.
+Piped and null streams are available to integrations and tests. Child stdout and stderr remain
+application data and are never interpreted as checkpoint or supervisor control messages.
 
 ## Launch and wait results
 

@@ -21,7 +21,7 @@ performed the callback.
 
 ## Out of scope
 
-v0.1 does not defend against:
+The supervisor does not defend against:
 
 - a malicious same-user child that escapes its process group, races observation, tampers with the
   caller's files, or attacks the supervisor;

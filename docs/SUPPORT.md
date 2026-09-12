@@ -2,7 +2,7 @@
 
 ## Release target
 
-| Component | Supported in 0.1.x |
+| Component | Supported in 0.2.x |
 |---|---|
 | Hardware | Apple Silicon (`arm64`) |
 | Verified local runtime | macOS 26.6.2 (see the [compatibility matrix](COMPATIBILITY.md)) |

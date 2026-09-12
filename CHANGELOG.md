@@ -5,6 +5,8 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-12
+
 ### Added
 
 - A compatibility matrix (`docs/COMPATIBILITY.md`) indexed by hardware setup (chip family and
@@ -208,5 +210,6 @@ versions follow Semantic Versioning.
   strict Python report permissions, unpredictable checkpoint request IDs, locked dependencies,
   CycloneDX SBOM, release checksums, and a self-contained Trusted Publishing workflow.
 
-[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/IonDen/mlx-guard/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/IonDen/mlx-guard/releases/tag/v0.1.0

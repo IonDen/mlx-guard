@@ -16,7 +16,7 @@ OS-accounted footprint covers that broader process charge; the fallback remains 
 active-plus-cache or OS-footprint limit.
 
 When the watchdog fires, it atomically writes an honest `aborted_memory_ceiling` or
-`aborted_wall_budget` result and hard-exits with code 70. This remains the v0.1 fallback. External
+`aborted_wall_budget` result and hard-exits with code 70. This remains the fallback. External
 supervision supplements it with process-group ownership and OS-accounted footprint; it does not
 replace MLX-specific wired-limit protection.
 
