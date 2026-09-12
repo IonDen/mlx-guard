@@ -146,7 +146,7 @@ contract below defines one subsystem.
 | [Intervention execution](https://github.com/IonDen/mlx-guard/blob/main/docs/INTERVENTION.md) | Action targets, policy-owned deadlines, typed failures, post-action observation |
 | [Python API](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) | Typed configuration, incremental runs, cancellation, report loading, worker checkpoints |
 | [Python packaging](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_PACKAGING.md) | Wheel support, native-binary discovery, editable installs, sdist policy |
-| [Tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md) | One real summarizer job, unguarded by arithmetic and guarded by recording: observe, limit, checkpoint, resume, fix |
+| [Tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md) | One summarizer job with a memory leak, followed through observe, a limit, a checkpoint, a resume, and the fix |
 | [Wrap a command](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/WRAP_A_COMMAND.md) | Supervising a command-line workload with no adapter, from bare to a forced intervention |
 | [Python adapter pattern](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/PYTHON_ADAPTER.md) | Supervising a workload your own library launches, with a cooperative checkpoint and a resume key |
 | [mlx-train-perf integration](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/MLX_TRAIN_PERF.md) | Optional external supervision for its runner, keeping the direct-launch fallback |

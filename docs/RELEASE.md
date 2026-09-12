@@ -18,6 +18,9 @@ the version in one commit and refreshes, by hand:
 - `THIRD_PARTY_LICENSES.md`: the version line, and the crate table if dependency pins changed
   (it ships inside the wheel's licence metadata).
 - `docs/EXAMPLES.md`: regenerate the captured transcript with the release build and re-date it.
+- `TUTORIAL.md` is a recording: it pins the `mlx-guard` and `mlx-lm` versions it was made with and
+  its evidence bundle names them, so a release does not edit it. Re-record it only when a command it
+  shows no longer works as printed.
 - `README.md`: the status line ("Version X.Y is ..."), and any scope sentences that name the
   previous version. `SECURITY.md` names no version, so it needs no edit; if a version-bound
   support statement is ever added there, it joins this list.

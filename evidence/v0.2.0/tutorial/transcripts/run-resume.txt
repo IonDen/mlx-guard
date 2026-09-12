@@ -3,86 +3,87 @@ $ while :; do
     mlx-guard run --max-footprint 6GiB --wall-time 10m --report reports/resume-$n.json -- \
       python examples/tutorial/summarize_docs.py --resume --progress reports/progress.json
     rc=$?
-    [ $rc -eq 75 ] || break
+    [ $rc -eq 75 ] && [ $n -lt 10 ] || break
     n=$((n+1))
   done
 mlx-guard: enforcing a 6442450944-byte footprint limit; emergency KILL at 7086696038 bytes, about 10% above the limit
-70 pages, 70 to do, keep_caches=True
-page 1/70 in 1.2s; mlx active 1.79 GiB; caches held 1
-page 2/70 in 1.1s; mlx active 1.90 GiB; caches held 2
-page 3/70 in 0.6s; mlx active 1.96 GiB; caches held 3
-page 4/70 in 1.2s; mlx active 2.07 GiB; caches held 4
-page 5/70 in 0.5s; mlx active 2.09 GiB; caches held 5
-page 6/70 in 1.0s; mlx active 2.18 GiB; caches held 6
-page 7/70 in 1.0s; mlx active 2.26 GiB; caches held 7
-page 8/70 in 0.9s; mlx active 2.34 GiB; caches held 8
-page 9/70 in 1.1s; mlx active 2.45 GiB; caches held 9
-page 10/70 in 1.0s; mlx active 2.56 GiB; caches held 10
-page 11/70 in 1.0s; mlx active 2.64 GiB; caches held 11
-page 12/70 in 1.1s; mlx active 2.75 GiB; caches held 12
-page 13/70 in 0.9s; mlx active 2.83 GiB; caches held 13
-page 14/70 in 1.2s; mlx active 2.94 GiB; caches held 14
-page 15/70 in 1.0s; mlx active 3.05 GiB; caches held 15
-page 16/70 in 0.8s; mlx active 3.13 GiB; caches held 16
-page 17/70 in 0.9s; mlx active 3.21 GiB; caches held 17
-page 18/70 in 1.0s; mlx active 3.30 GiB; caches held 18
-page 19/70 in 0.9s; mlx active 3.38 GiB; caches held 19
-page 20/70 in 0.9s; mlx active 3.46 GiB; caches held 20
-page 21/70 in 0.7s; mlx active 3.52 GiB; caches held 21
-page 22/70 in 1.0s; mlx active 3.60 GiB; caches held 22
-page 23/70 in 1.0s; mlx active 3.71 GiB; caches held 23
-page 24/70 in 1.0s; mlx active 3.79 GiB; caches held 24
-page 25/70 in 1.0s; mlx active 3.87 GiB; caches held 25
-page 26/70 in 0.9s; mlx active 3.95 GiB; caches held 26
-page 27/70 in 1.0s; mlx active 4.03 GiB; caches held 27
-page 28/70 in 1.0s; mlx active 4.12 GiB; caches held 28
-page 29/70 in 1.0s; mlx active 4.20 GiB; caches held 29
-page 30/70 in 1.1s; mlx active 4.31 GiB; caches held 30
-page 31/70 in 0.7s; mlx active 4.36 GiB; caches held 31
-page 32/70 in 1.1s; mlx active 4.47 GiB; caches held 32
-page 33/70 in 0.9s; mlx active 4.55 GiB; caches held 33
-page 34/70 in 1.0s; mlx active 4.64 GiB; caches held 34
-page 35/70 in 0.9s; mlx active 4.72 GiB; caches held 35
-page 36/70 in 1.0s; mlx active 4.80 GiB; caches held 36
-page 37/70 in 0.9s; mlx active 4.88 GiB; caches held 37
-page 38/70 in 1.0s; mlx active 4.96 GiB; caches held 38
-page 39/70 in 0.8s; mlx active 5.05 GiB; caches held 39
-page 40/70 in 1.1s; mlx active 5.16 GiB; caches held 40
-checkpoint 12638027534934235804: saved 40 summaries
-mlx-guard: policy_intervention at 40677ms; 755 samples, 2 signals
+71 pages, 71 to do, keep_caches=True
+page 1/71 in 1.2s; mlx active 1.79 GiB; caches held 1
+page 2/71 in 1.0s; mlx active 1.90 GiB; caches held 2
+page 3/71 in 0.6s; mlx active 1.96 GiB; caches held 3
+page 4/71 in 1.2s; mlx active 2.07 GiB; caches held 4
+page 5/71 in 0.4s; mlx active 2.09 GiB; caches held 5
+page 6/71 in 0.9s; mlx active 2.18 GiB; caches held 6
+page 7/71 in 1.0s; mlx active 2.26 GiB; caches held 7
+page 8/71 in 0.9s; mlx active 2.34 GiB; caches held 8
+page 9/71 in 1.1s; mlx active 2.45 GiB; caches held 9
+page 10/71 in 1.0s; mlx active 2.56 GiB; caches held 10
+page 11/71 in 1.0s; mlx active 2.64 GiB; caches held 11
+page 12/71 in 1.1s; mlx active 2.75 GiB; caches held 12
+page 13/71 in 0.9s; mlx active 2.83 GiB; caches held 13
+page 14/71 in 1.2s; mlx active 2.94 GiB; caches held 14
+page 15/71 in 1.0s; mlx active 3.05 GiB; caches held 15
+page 16/71 in 1.0s; mlx active 3.13 GiB; caches held 16
+page 17/71 in 1.0s; mlx active 3.21 GiB; caches held 17
+page 18/71 in 1.0s; mlx active 3.30 GiB; caches held 18
+page 19/71 in 0.9s; mlx active 3.38 GiB; caches held 19
+page 20/71 in 0.9s; mlx active 3.46 GiB; caches held 20
+page 21/71 in 0.7s; mlx active 3.52 GiB; caches held 21
+page 22/71 in 1.0s; mlx active 3.60 GiB; caches held 22
+page 23/71 in 1.1s; mlx active 3.71 GiB; caches held 23
+page 24/71 in 1.0s; mlx active 3.79 GiB; caches held 24
+page 25/71 in 0.9s; mlx active 3.87 GiB; caches held 25
+page 26/71 in 0.9s; mlx active 3.95 GiB; caches held 26
+page 27/71 in 1.0s; mlx active 4.04 GiB; caches held 27
+page 28/71 in 1.0s; mlx active 4.12 GiB; caches held 28
+page 29/71 in 1.0s; mlx active 4.20 GiB; caches held 29
+page 30/71 in 1.1s; mlx active 4.31 GiB; caches held 30
+page 31/71 in 0.7s; mlx active 4.36 GiB; caches held 31
+page 32/71 in 1.2s; mlx active 4.47 GiB; caches held 32
+page 33/71 in 0.3s; mlx active 4.50 GiB; caches held 33
+page 34/71 in 0.9s; mlx active 4.58 GiB; caches held 34
+page 35/71 in 1.0s; mlx active 4.66 GiB; caches held 35
+page 36/71 in 0.9s; mlx active 4.75 GiB; caches held 36
+page 37/71 in 1.0s; mlx active 4.83 GiB; caches held 37
+page 38/71 in 0.9s; mlx active 4.91 GiB; caches held 38
+page 39/71 in 1.0s; mlx active 4.99 GiB; caches held 39
+page 40/71 in 0.8s; mlx active 5.07 GiB; caches held 40
+checkpoint 5404420652406863310: saved 40 summaries
+mlx-guard: policy_intervention at 40935ms; 718 samples, 2 signals
 mlx-guard: enforcing a 6442450944-byte footprint limit; emergency KILL at 7086696038 bytes, about 10% above the limit
-70 pages, 30 to do, keep_caches=True
-page 41/70 in 1.2s; mlx active 1.79 GiB; caches held 1
-page 42/70 in 1.1s; mlx active 1.90 GiB; caches held 2
-page 43/70 in 0.9s; mlx active 1.98 GiB; caches held 3
-page 44/70 in 1.0s; mlx active 2.09 GiB; caches held 4
-page 45/70 in 1.0s; mlx active 2.20 GiB; caches held 5
-page 46/70 in 1.0s; mlx active 2.31 GiB; caches held 6
-page 47/70 in 1.0s; mlx active 2.39 GiB; caches held 7
-page 48/70 in 1.1s; mlx active 2.50 GiB; caches held 8
-page 49/70 in 1.1s; mlx active 2.61 GiB; caches held 9
-page 50/70 in 1.2s; mlx active 2.72 GiB; caches held 10
-page 51/70 in 1.1s; mlx active 2.83 GiB; caches held 11
-page 52/70 in 1.1s; mlx active 2.94 GiB; caches held 12
-page 53/70 in 1.0s; mlx active 3.05 GiB; caches held 13
-page 54/70 in 1.1s; mlx active 3.16 GiB; caches held 14
-page 55/70 in 1.0s; mlx active 3.24 GiB; caches held 15
-page 56/70 in 1.0s; mlx active 3.32 GiB; caches held 16
-page 57/70 in 1.2s; mlx active 3.43 GiB; caches held 17
-page 58/70 in 0.9s; mlx active 3.52 GiB; caches held 18
-page 59/70 in 1.1s; mlx active 3.62 GiB; caches held 19
-page 60/70 in 1.0s; mlx active 3.71 GiB; caches held 20
-page 61/70 in 1.1s; mlx active 3.79 GiB; caches held 21
-page 62/70 in 1.1s; mlx active 3.87 GiB; caches held 22
-page 63/70 in 1.0s; mlx active 3.95 GiB; caches held 23
-page 64/70 in 1.0s; mlx active 4.06 GiB; caches held 24
-page 65/70 in 1.0s; mlx active 4.14 GiB; caches held 25
-page 66/70 in 1.0s; mlx active 4.23 GiB; caches held 26
-page 67/70 in 0.8s; mlx active 4.31 GiB; caches held 27
-page 68/70 in 0.9s; mlx active 4.39 GiB; caches held 28
-page 69/70 in 0.9s; mlx active 4.47 GiB; caches held 29
-page 70/70 in 1.1s; mlx active 4.58 GiB; caches held 30
-done: 70 summaries in 31s -> reports/progress.json
-mlx-guard: child_exited at 32952ms; 612 samples, 0 signals
+71 pages, 31 to do, keep_caches=True
+page 41/71 in 1.1s; mlx active 1.79 GiB; caches held 1
+page 42/71 in 1.1s; mlx active 1.90 GiB; caches held 2
+page 43/71 in 1.0s; mlx active 2.01 GiB; caches held 3
+page 44/71 in 0.9s; mlx active 2.09 GiB; caches held 4
+page 45/71 in 1.0s; mlx active 2.20 GiB; caches held 5
+page 46/71 in 1.0s; mlx active 2.31 GiB; caches held 6
+page 47/71 in 1.0s; mlx active 2.42 GiB; caches held 7
+page 48/71 in 1.0s; mlx active 2.50 GiB; caches held 8
+page 49/71 in 1.1s; mlx active 2.61 GiB; caches held 9
+page 50/71 in 1.2s; mlx active 2.72 GiB; caches held 10
+page 51/71 in 1.2s; mlx active 2.83 GiB; caches held 11
+page 52/71 in 1.1s; mlx active 2.94 GiB; caches held 12
+page 53/71 in 1.1s; mlx active 3.05 GiB; caches held 13
+page 54/71 in 1.1s; mlx active 3.16 GiB; caches held 14
+page 55/71 in 1.1s; mlx active 3.27 GiB; caches held 15
+page 56/71 in 1.0s; mlx active 3.35 GiB; caches held 16
+page 57/71 in 1.0s; mlx active 3.43 GiB; caches held 17
+page 58/71 in 1.2s; mlx active 3.54 GiB; caches held 18
+page 59/71 in 0.9s; mlx active 3.62 GiB; caches held 19
+page 60/71 in 1.1s; mlx active 3.73 GiB; caches held 20
+page 61/71 in 1.1s; mlx active 3.82 GiB; caches held 21
+page 62/71 in 1.1s; mlx active 3.90 GiB; caches held 22
+page 63/71 in 1.0s; mlx active 3.98 GiB; caches held 23
+page 64/71 in 1.0s; mlx active 4.06 GiB; caches held 24
+page 65/71 in 1.0s; mlx active 4.17 GiB; caches held 25
+page 66/71 in 1.0s; mlx active 4.25 GiB; caches held 26
+page 67/71 in 1.1s; mlx active 4.34 GiB; caches held 27
+page 68/71 in 0.8s; mlx active 4.42 GiB; caches held 28
+page 69/71 in 0.9s; mlx active 4.50 GiB; caches held 29
+page 70/71 in 0.9s; mlx active 4.58 GiB; caches held 30
+page 71/71 in 1.1s; mlx active 4.69 GiB; caches held 31
+done: 71 summaries in 32s -> reports/progress.json
+mlx-guard: child_exited at 34809ms; 610 samples, 0 signals
 $ echo "finished after $n runs, last exit $rc"
 finished after 2 runs, last exit 0
