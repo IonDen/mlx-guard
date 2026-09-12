@@ -1,0 +1,47 @@
+$ mlx-guard run --max-footprint 6GiB --wall-time 10m --report reports/run-limit.json -- python examples/tutorial/summarize_docs.py --no-checkpoint --progress reports/run-limit-progress.json
+mlx-guard: enforcing a 6442450944-byte footprint limit; emergency KILL at 7086696038 bytes, about 10% above the limit
+70 pages, 70 to do, keep_caches=True
+page 1/70 in 1.2s; mlx active 1.79 GiB; caches held 1
+page 2/70 in 1.1s; mlx active 1.90 GiB; caches held 2
+page 3/70 in 0.6s; mlx active 1.96 GiB; caches held 3
+page 4/70 in 1.2s; mlx active 2.07 GiB; caches held 4
+page 5/70 in 0.5s; mlx active 2.09 GiB; caches held 5
+page 6/70 in 0.9s; mlx active 2.18 GiB; caches held 6
+page 7/70 in 1.0s; mlx active 2.26 GiB; caches held 7
+page 8/70 in 0.9s; mlx active 2.34 GiB; caches held 8
+page 9/70 in 1.1s; mlx active 2.45 GiB; caches held 9
+page 10/70 in 1.0s; mlx active 2.56 GiB; caches held 10
+page 11/70 in 1.0s; mlx active 2.64 GiB; caches held 11
+page 12/70 in 1.1s; mlx active 2.75 GiB; caches held 12
+page 13/70 in 0.9s; mlx active 2.83 GiB; caches held 13
+page 14/70 in 1.2s; mlx active 2.94 GiB; caches held 14
+page 15/70 in 1.0s; mlx active 3.05 GiB; caches held 15
+page 16/70 in 0.8s; mlx active 3.13 GiB; caches held 16
+page 17/70 in 0.9s; mlx active 3.21 GiB; caches held 17
+page 18/70 in 1.0s; mlx active 3.30 GiB; caches held 18
+page 19/70 in 0.9s; mlx active 3.38 GiB; caches held 19
+page 20/70 in 0.9s; mlx active 3.46 GiB; caches held 20
+page 21/70 in 0.7s; mlx active 3.52 GiB; caches held 21
+page 22/70 in 1.0s; mlx active 3.60 GiB; caches held 22
+page 23/70 in 1.0s; mlx active 3.71 GiB; caches held 23
+page 24/70 in 1.0s; mlx active 3.79 GiB; caches held 24
+page 25/70 in 0.9s; mlx active 3.87 GiB; caches held 25
+page 26/70 in 0.9s; mlx active 3.95 GiB; caches held 26
+page 27/70 in 1.0s; mlx active 4.03 GiB; caches held 27
+page 28/70 in 1.0s; mlx active 4.12 GiB; caches held 28
+page 29/70 in 1.0s; mlx active 4.20 GiB; caches held 29
+page 30/70 in 1.1s; mlx active 4.31 GiB; caches held 30
+page 31/70 in 0.7s; mlx active 4.36 GiB; caches held 31
+page 32/70 in 1.1s; mlx active 4.47 GiB; caches held 32
+page 33/70 in 0.9s; mlx active 4.55 GiB; caches held 33
+page 34/70 in 1.0s; mlx active 4.64 GiB; caches held 34
+page 35/70 in 0.9s; mlx active 4.72 GiB; caches held 35
+page 36/70 in 1.0s; mlx active 4.80 GiB; caches held 36
+page 37/70 in 0.9s; mlx active 4.88 GiB; caches held 37
+page 38/70 in 1.0s; mlx active 4.96 GiB; caches held 38
+page 39/70 in 0.8s; mlx active 5.05 GiB; caches held 39
+mlx-guard: policy_intervention at 39927ms; 699 samples, 1 signal
+$ echo $?
+75
+$ ls reports/run-limit-progress.json
+ls: reports/run-limit-progress.json: No such file or directory
