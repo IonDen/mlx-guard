@@ -16,7 +16,7 @@ while IFS= read -r path || [[ -n $path ]]; do
     [[ -z $path ]] && continue
     seen=1
     case "$path" in
-        README.md | CHANGELOG.md | RELEASE_NOTES.md | SECURITY.md | LICENSE | THIRD_PARTY_LICENSES.md) ;;
+        README.md | CHANGELOG.md | RELEASE_NOTES.md | SECURITY.md | LICENSE | THIRD_PARTY_LICENSES.md | TUTORIAL.md) ;;
         docs/* | evidence/*) ;;
         *)
             echo code

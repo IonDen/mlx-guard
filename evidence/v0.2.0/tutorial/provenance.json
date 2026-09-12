@@ -1,0 +1,36 @@
+{
+  "commit": "e1ef244238ed9f1276f83a22365cd70534c919a7",
+  "branch": "docs/tutorial (working tree carried this pull request's final edits)",
+  "example_script_sha256": "3d63499552a083c5da847acaa06cedc11e791d2b2da82d387610261ea1c963d4",
+  "guard": {
+    "package": "mlx-guard 0.2.0 from PyPI",
+    "wheel_sha256": "d938e6ca490364cb792c0f6ca84dd6f52b38b870750da48e61f63dbd0e2b8860",
+    "binary_version": "mlx-guard 0.2.0"
+  },
+  "workload": {
+    "model": "mlx-community/Llama-3.2-3B-Instruct-4bit",
+    "model_revision": "7f0dc925e0d0afb0322d96f9255cfddf2ba5636e",
+    "mlx_lm": "0.31.3",
+    "mlx": "0.32.2",
+    "python": "3.12.12",
+    "corpus": "README.md and docs/ of this repository as they stood when the runs were made, 192,304 characters, 71 pages of 3,200 characters. One README table row was reworded after the recording, so a checkout's fingerprint differs from corpus_id below and --resume against reports/summaries.json starts fresh, by design.",
+    "corpus_id": "4c10d2e62a6acf3eda3edb4b632edf5175148f13f3683a11704fecde22f1886c"
+  },
+  "macos": {
+    "ProductVersion": "26.6.2",
+    "BuildVersion": "25G83"
+  },
+  "chip": "Apple M1 Max",
+  "memory_bytes": 34359738368,
+  "power_source": "ac",
+  "memory_pressure_free_percent_before": 73,
+  "captured_at": "2026-09-12T09:49:37.444311+00:00",
+  "runs": {
+    "observe": "reports/observe.json",
+    "run-limit": "reports/run-limit.json",
+    "resume-1": "reports/resume-1.json",
+    "resume-2": "reports/resume-2.json",
+    "run-fixed": "reports/run-fixed.json"
+  },
+  "journals": "not committed (recovery artifacts; each report's journal was present and unused)"
+}

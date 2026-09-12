@@ -1,0 +1,78 @@
+$ mlx-guard run --max-footprint 6GiB --wall-time 10m --report reports/run-fixed.json -- python examples/tutorial/summarize_docs.py --no-keep-caches --progress reports/fixed-progress.json
+mlx-guard: enforcing a 6442450944-byte footprint limit; emergency KILL at 7086696038 bytes, about 10% above the limit
+71 pages, 71 to do, keep_caches=False
+page 1/71 in 1.2s; mlx active 1.79 GiB; caches held 0
+page 2/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 3/71 in 0.6s; mlx active 1.74 GiB; caches held 0
+page 4/71 in 1.2s; mlx active 1.79 GiB; caches held 0
+page 5/71 in 0.4s; mlx active 1.71 GiB; caches held 0
+page 6/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 7/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 8/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 9/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 10/71 in 1.0s; mlx active 1.79 GiB; caches held 0
+page 11/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 12/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 13/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 14/71 in 1.2s; mlx active 1.79 GiB; caches held 0
+page 15/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 16/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 17/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 18/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 19/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 20/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 21/71 in 0.7s; mlx active 1.74 GiB; caches held 0
+page 22/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 23/71 in 1.0s; mlx active 1.79 GiB; caches held 0
+page 24/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 25/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 26/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 27/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 28/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 29/71 in 1.1s; mlx active 1.77 GiB; caches held 0
+page 30/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 31/71 in 0.7s; mlx active 1.74 GiB; caches held 0
+page 32/71 in 1.2s; mlx active 1.79 GiB; caches held 0
+page 33/71 in 0.3s; mlx active 1.71 GiB; caches held 0
+page 34/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 35/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 36/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 37/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 38/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 39/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 40/71 in 0.8s; mlx active 1.77 GiB; caches held 0
+page 41/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 42/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 43/71 in 1.0s; mlx active 1.79 GiB; caches held 0
+page 44/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 45/71 in 1.0s; mlx active 1.79 GiB; caches held 0
+page 46/71 in 1.0s; mlx active 1.79 GiB; caches held 0
+page 47/71 in 1.0s; mlx active 1.79 GiB; caches held 0
+page 48/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 49/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 50/71 in 1.2s; mlx active 1.79 GiB; caches held 0
+page 51/71 in 1.2s; mlx active 1.79 GiB; caches held 0
+page 52/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 53/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 54/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 55/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 56/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 57/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 58/71 in 1.2s; mlx active 1.79 GiB; caches held 0
+page 59/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 60/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+page 61/71 in 1.1s; mlx active 1.77 GiB; caches held 0
+page 62/71 in 1.1s; mlx active 1.77 GiB; caches held 0
+page 63/71 in 1.1s; mlx active 1.77 GiB; caches held 0
+page 64/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 65/71 in 1.0s; mlx active 1.79 GiB; caches held 0
+page 66/71 in 1.0s; mlx active 1.77 GiB; caches held 0
+page 67/71 in 1.1s; mlx active 1.77 GiB; caches held 0
+page 68/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 69/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 70/71 in 0.9s; mlx active 1.77 GiB; caches held 0
+page 71/71 in 1.1s; mlx active 1.79 GiB; caches held 0
+done: 71 summaries in 70s -> reports/fixed-progress.json
+mlx-guard: child_exited at 72606ms; 1334 samples, 0 signals
+$ echo $?
+0
