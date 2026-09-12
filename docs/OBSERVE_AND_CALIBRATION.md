@@ -34,8 +34,8 @@ typed value state. They provide context, not worker-attributable enforcement inp
 | Footprint growth rate | Owned process group | Consecutive complete footprint samples | `unknown` until two samples; stale after a gap |
 
 Pressure notifications are best effort and system-wide. An absent first event is not “normal.” A
-warning or critical event produces a pre-launch warning, but v0.1 does not invent a rejection
-threshold. The same applies when footprint or advisory capabilities are unavailable.
+warning or critical event produces a pre-launch warning, but the supervisor does not invent a
+rejection threshold. The same applies when footprint or advisory capabilities are unavailable.
 
 ## Calibration section
 

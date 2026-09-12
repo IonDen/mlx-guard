@@ -19,7 +19,8 @@ the version in one commit and refreshes, by hand:
   (it ships inside the wheel's licence metadata).
 - `docs/EXAMPLES.md`: regenerate the captured transcript with the release build and re-date it.
 - `README.md`: the status line ("Version X.Y is ..."), and any scope sentences that name the
-  previous version.
+  previous version. `SECURITY.md` names no version, so it needs no edit; if a version-bound
+  support statement is ever added there, it joins this list.
 - Evidence: re-run and commit reference measurements only when runtime, timing, policy, or
   measurement code changed since the last release; when a new bundle lands, move the links in
   `README.md`, `docs/COMPATIBILITY.md`, and `docs/integrations/MLX_TRAIN_PERF.md` to it.

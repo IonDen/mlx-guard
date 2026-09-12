@@ -51,17 +51,18 @@ into the report. See `PYTHON_API.md` before enabling captured output or cooperat
 
 ## Captured smoke run
 
-This output was captured on the M1 Max reference host with the 0.1.0 release build. Timing and
-footprint values vary by host, so the stable facts are the typed outcome, sample count, and absence
-of signals.
+This output was captured on 2026-09-12 on the M1 Max reference host (macOS 26.6.2) with the 0.2.0
+release build. Timing and footprint values vary by host, so the stable facts are the typed outcome,
+sample count, and absence of signals.
 
 ```console
 $ mlx-guard observe --sample-interval 10ms --report reports/echo.json -- /bin/echo hello
 hello
-mlx-guard: child_exited at 15ms; 1 sample, 0 signals
+mlx-guard: child_exited at 12ms; 1 sample, 0 signals
 $ echo $?
 0
 ```
 
 The resulting schema-v1 report recorded `child_exited`, child code `0`, one sample, zero signals,
-`redacted_before_persistence: true`, file mode `0600`, and upload disabled.
+`redacted_before_persistence: true`, file mode `0600`, and upload disabled, plus the observe-only
+`calibration` section with its `safety_certified: false` marker.

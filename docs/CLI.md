@@ -1,6 +1,6 @@
 # Command-line contract
 
-This document defines the v0.1 command syntax, runtime behavior, and process status rules.
+This document defines the command syntax, runtime behavior, and process status rules.
 
 ## Commands
 
@@ -67,7 +67,7 @@ invalid. A value too close to the `u64` maximum to add the emergency band is als
 Durations are positive base-10 integers followed by `ms`, `s`, `m`, or `h`. Fractions, implicit
 units, zero, negative values, other casing, and overflow are invalid.
 
-Policy configuration comes only from CLI options in v0.1. There is no config file and no
+Policy configuration comes only from CLI options. There is no config file and no
 `MLX_GUARD_*` policy environment fallback. This keeps the destructive threshold visible in the
 invocation. `--env` and `--clear-env` affect only the child.
 
@@ -120,7 +120,7 @@ stdin, stdout, and stderr are inherited by default. Redirected bytes stay separa
 parsed as control messages. Child output remains application output and may contain arbitrary bytes;
 it is never copied into the guard report or diagnostics. Guard diagnostics use stderr. If stdin is
 an interactive terminal, the command is rejected with exit 64 before worker launch. Foreground
-transfer, Ctrl-Z, SIGTSTP, SIGCONT, and shell-style job control are not supported in v0.1.
+transfer, Ctrl-Z, SIGTSTP, SIGCONT, and shell-style job control are not supported.
 
 ## Examples
 

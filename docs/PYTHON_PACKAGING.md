@@ -5,7 +5,7 @@ pure-Python `mlx_guard` package. There is no PyO3 module and no enforcement loop
 
 ## Supported wheel
 
-v0.1 publishes `py3-none-macosx_11_0_arm64`. The Python code supports CPython 3.10 through 3.14,
+Releases publish `py3-none-macosx_11_0_arm64`. The Python code supports CPython 3.10 through 3.14,
 and the native executable requires Apple Silicon. The platform tag is the binary deployment target,
 not evidence that every macOS release from 11 onward has been tested. The verified local runtime is
 macOS 26.6.2 on the reference host in the [compatibility matrix](COMPATIBILITY.md), with
@@ -46,7 +46,7 @@ python`, `uv run --locked mypy --strict python`, and `uv run --locked pytest pyt
 Python quality gates. Pytest treats warnings as errors.
 
 The sdist includes the locked Rust workspace, Python sources, README, and license. Building it
-requires Rust 1.93 and maturin 1.13.3. v0.1 release automation should publish the macOS arm64 wheel,
+requires Rust 1.93 and maturin 1.13.3. Release automation publishes the macOS arm64 wheel,
 not the sdist, so installers on unsupported platforms do not attempt a local native build.
 
 Run `./scripts/test-wheel.sh` to rebuild the wheel, install it in fresh CPython 3.10 through 3.14

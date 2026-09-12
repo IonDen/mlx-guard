@@ -17,7 +17,9 @@ optionally requests a cooperative checkpoint, escalates TERM and KILL against an
 chose, and writes a crash-resilient JSON report of what happened. The enforcement loop never runs
 inside Python or the MLX process.
 
-Version 0.1 is an alpha release.
+Version 0.2 is an alpha release. The
+[stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) says which
+surfaces may still change before 1.0.
 
 ## Installation
 
@@ -89,7 +91,7 @@ that lets a worker save state when the supervisor asks.
 
 ## Safety boundary
 
-The v0.1 control domain is the process group created for one trusted same-user command. Sampling is
+The control domain is the process group created for one trusted same-user command. Sampling is
 periodic, tree totals are not atomic, and a descendant can leave the group. `mlx-guard` reduces risk;
 it cannot promise a hard memory boundary, immediate Metal-driver reclamation, or protection during a
 kernel or system-wide failure. It never chooses a destructive limit automatically. One kernel
@@ -99,9 +101,9 @@ and which no external supervisor can reach; the
 [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) carries
 its signature.
 
-An interactive terminal on standard input and shell job control are outside the v0.1 scope, along
-with sandboxed execution and Mac App Store distribution. Direct CLI and Python-wheel distribution
-are the target.
+An interactive terminal on standard input and shell job control are outside the supported scope,
+along with sandboxed execution and Mac App Store distribution. Direct CLI and Python-wheel
+distribution are the target.
 
 ## MetalGuard and mlx-guard
 

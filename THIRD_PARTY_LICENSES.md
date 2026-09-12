@@ -1,6 +1,6 @@
 # Third-party licences
 
-`mlx-guard` 0.1.0 statically links the Rust crates below. Exact package versions and dependency
+`mlx-guard` 0.2.0 statically links the Rust crates below. Exact package versions and dependency
 relationships are also recorded in the bundled CycloneDX SBOM.
 
 The following crates are used under Apache-2.0; the full text is distributed in `LICENSE`:

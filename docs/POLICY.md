@@ -4,8 +4,7 @@ Policy contract version 1 is a pure state machine driven by ordered monotonic ev
 OS-accounted aggregate footprint can trigger a memory intervention. An optional wall-time limit, a
 forwarded terminal signal, the root command exiting with owned-group survivors, and the launching
 parent exiting are the machine's other destructive inputs. Pressure, swap, compressor, wired-memory,
-and growth-rate metrics are advisory and cannot change state. MLX's own counters are not read at all
-in v0.1.
+and growth-rate metrics are advisory and cannot change state. MLX's own counters are not read at all.
 
 ## States and transitions
 
@@ -43,7 +42,7 @@ resets the count. A sample at or above the emergency threshold skips checkpoint 
 Overshoot is recorded as aggregate footprint minus the configured limit. Each checkpoint action
 includes its state-machine deadline, so the runtime does not reconstruct or extend it.
 
-## v0.1 runtime defaults
+## Runtime defaults
 
 The CLI derives a band step as the larger of one byte and one tenth of `--max-footprint`, rounded
 down. Warning is `limit - step`, recovery is `limit - 2 * step`, and emergency is `limit + step`.

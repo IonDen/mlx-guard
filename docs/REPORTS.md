@@ -1,6 +1,6 @@
 # Report and privacy contract
 
-Every v0.1 result uses JSON schema major `1`. The package version records which writer produced the
+Every result uses JSON schema major `1`. The package version records which writer produced the
 file; it does not change the schema meaning. A schema-v1 reader accepts unknown fields so newer v1
 writers can add data. It rejects every other schema major instead of guessing. The committed golden
 file at `crates/mlx-guard-core/tests/fixtures/report-v1.json` freezes names, enum values, structure,
@@ -126,7 +126,7 @@ corpus, and real-process tests plant a marker in every launch channel — argume
 working directory, executable path, and process output — then scan the persisted report and
 journal for survival.
 
-Raw sensitive capture is not available, even as an opt-in, in v0.1. The only explicit capture
+Raw sensitive capture is not available, even as an opt-in. The only explicit capture
 option is a correlation hash with the form `sha256:` followed by 64 lowercase hexadecimal digits.
 Hash a random, non-secret correlation identifier. Do not hash a path, token, prompt, model ID, or
 other low-entropy secret because a digest does not make such input safely anonymous.
