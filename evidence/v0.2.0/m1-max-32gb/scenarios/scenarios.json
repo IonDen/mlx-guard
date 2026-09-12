@@ -1,0 +1,182 @@
+{
+  "schema_version": 1,
+  "command": "MLX_GUARD_FIXTURE=<path> MLX_GUARD_SCENARIO_OUTPUT_DIRECTORY=<new-directory> cargo test -p mlx-guard-cli --test reference_runtime_calibration reference_host_scenarios_write_reports_and_false_intervention_count -- --ignored --exact --nocapture",
+  "scenarios": [
+    {
+      "name": "normal-exit",
+      "exit_code": 0,
+      "report_file": "reports/normal-exit.json",
+      "outcome": "ChildExited { code: 0 }",
+      "checkpoint": "NotNegotiated",
+      "signals": [],
+      "escape_detected": false,
+      "sample_count": 8,
+      "diagnostic": null
+    },
+    {
+      "name": "observe-only",
+      "exit_code": 0,
+      "report_file": "reports/observe-only.json",
+      "outcome": "ChildExited { code: 0 }",
+      "checkpoint": "NotNegotiated",
+      "signals": [],
+      "escape_detected": false,
+      "sample_count": 8,
+      "diagnostic": null
+    },
+    {
+      "name": "checkpoint-acknowledged",
+      "exit_code": 75,
+      "report_file": "reports/checkpoint-acknowledged.json",
+      "outcome": "PolicyIntervention",
+      "checkpoint": "AcknowledgedUnverifiedDurability",
+      "signals": [
+        30,
+        15
+      ],
+      "escape_detected": false,
+      "sample_count": 87,
+      "diagnostic": null
+    },
+    {
+      "name": "checkpoint-timeout",
+      "exit_code": 75,
+      "report_file": "reports/checkpoint-timeout.json",
+      "outcome": "PolicyIntervention",
+      "checkpoint": "TimedOut",
+      "signals": [
+        30,
+        15
+      ],
+      "escape_detected": false,
+      "sample_count": 94,
+      "diagnostic": null
+    },
+    {
+      "name": "term",
+      "exit_code": 75,
+      "report_file": "reports/term.json",
+      "outcome": "PolicyIntervention",
+      "checkpoint": "NotNegotiated",
+      "signals": [
+        15
+      ],
+      "escape_detected": false,
+      "sample_count": 4,
+      "diagnostic": null
+    },
+    {
+      "name": "kill",
+      "exit_code": 75,
+      "report_file": "reports/kill.json",
+      "outcome": "PolicyIntervention",
+      "checkpoint": "NotNegotiated",
+      "signals": [
+        15,
+        9
+      ],
+      "escape_detected": false,
+      "sample_count": 85,
+      "diagnostic": null
+    },
+    {
+      "name": "root-fast-exit",
+      "exit_code": 23,
+      "report_file": "reports/root-fast-exit.json",
+      "outcome": "ChildExited { code: 23 }",
+      "checkpoint": "NotNegotiated",
+      "signals": [
+        15
+      ],
+      "escape_detected": false,
+      "sample_count": 2,
+      "diagnostic": null
+    },
+    {
+      "name": "owned-group-cleanup",
+      "exit_code": 75,
+      "report_file": "reports/owned-group-cleanup.json",
+      "outcome": "PolicyIntervention",
+      "checkpoint": "NotNegotiated",
+      "signals": [
+        15
+      ],
+      "escape_detected": false,
+      "sample_count": 4,
+      "diagnostic": null
+    },
+    {
+      "name": "session-escape",
+      "exit_code": 75,
+      "report_file": "reports/session-escape.json",
+      "outcome": "PolicyIntervention",
+      "checkpoint": "NotNegotiated",
+      "signals": [
+        15
+      ],
+      "escape_detected": true,
+      "sample_count": 22,
+      "diagnostic": null
+    },
+    {
+      "name": "storage_error",
+      "exit_code": 74,
+      "report_file": null,
+      "outcome": "PartialArtifactFailure",
+      "checkpoint": null,
+      "signals": [
+        15
+      ],
+      "escape_detected": null,
+      "sample_count": 0,
+      "diagnostic": "mlx-guard: artifact read failed"
+    }
+  ],
+  "safe_workloads": [
+    {
+      "name": "safe-observe-sleep",
+      "exit_code": 0,
+      "report_file": "reports/safe-observe-sleep.json",
+      "outcome": "ChildExited { code: 0 }",
+      "checkpoint": "NotNegotiated",
+      "signals": [],
+      "escape_detected": false,
+      "sample_count": 8,
+      "diagnostic": null
+    },
+    {
+      "name": "safe-run-sleep",
+      "exit_code": 0,
+      "report_file": "reports/safe-run-sleep.json",
+      "outcome": "ChildExited { code: 0 }",
+      "checkpoint": "NotNegotiated",
+      "signals": [],
+      "escape_detected": false,
+      "sample_count": 8,
+      "diagnostic": null
+    },
+    {
+      "name": "safe-observe-cpu",
+      "exit_code": 0,
+      "report_file": "reports/safe-observe-cpu.json",
+      "outcome": "ChildExited { code: 0 }",
+      "checkpoint": "NotNegotiated",
+      "signals": [],
+      "escape_detected": false,
+      "sample_count": 9,
+      "diagnostic": null
+    },
+    {
+      "name": "safe-run-cpu",
+      "exit_code": 0,
+      "report_file": "reports/safe-run-cpu.json",
+      "outcome": "ChildExited { code: 0 }",
+      "checkpoint": "NotNegotiated",
+      "signals": [],
+      "escape_detected": false,
+      "sample_count": 9,
+      "diagnostic": null
+    }
+  ],
+  "false_interventions": 0
+}

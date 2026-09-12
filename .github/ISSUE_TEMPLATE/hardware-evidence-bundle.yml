@@ -1,0 +1,72 @@
+name: Hardware evidence bundle
+description: Submit a calibration bundle from an Apple Silicon host so its cell in the compatibility matrix can be filled.
+title: "Evidence bundle: <chip> <memory> GB"
+labels: ["evidence"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. A bundle fills one cell of the compatibility matrix (`docs/COMPATIBILITY.md`)
+        as **community-measured**, with the provenance you give here. Produce it with
+
+        ```bash
+        ./scripts/calibrate-host.sh <output-directory-outside-the-checkout>
+        ```
+
+        from a clean checkout of a tagged release. The run takes about 45 minutes, most of it a
+        30-minute endurance chunk; it can be interrupted and resumed. Attach only the files the
+        script publishes into the output directory (as one zip); the sibling `.logs` directory
+        names local paths and must stay with you.
+  - type: input
+    id: chip
+    attributes:
+      label: Chip
+      description: The `Chip:` line of the published `provenance.json`, for example `Apple M3 Pro`.
+    validations:
+      required: true
+  - type: input
+    id: memory
+    attributes:
+      label: Unified memory
+      description: The `Memory:` line, for example `36 GB`.
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and build
+      description: The `ProductVersion` and `BuildVersion` lines, for example `26.6.2 (25G83)`.
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Git commit
+      description: The `git_commit` value from `provenance.json` (the release tag's commit).
+    validations:
+      required: true
+  - type: input
+    id: profile
+    attributes:
+      label: Profile label
+      description: The `profile` value from `provenance.json`, for example `m3-pro-36gb`.
+    validations:
+      required: true
+  - type: checkboxes
+    id: publication
+    attributes:
+      label: Publication checks
+      options:
+        - label: The script finished with "calibration bundle for … written to …" (its identifier and local-path scan passed).
+          required: true
+        - label: The attached zip holds only the published output directory, not the `.logs` sibling.
+          required: true
+        - label: The worktree was a clean checkout of a tagged release.
+          required: true
+        - label: The endurance chunk ran the full 1800 s (`requested_endurance_seconds` in `provenance.json`); the script prints a dry-run line otherwise.
+          required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything unusual
+      description: A failed bound, a chunk that needed a resume, thermal or power conditions, other load on the machine. Leave empty if nothing.

@@ -7,6 +7,23 @@ versions follow Semantic Versioning.
 
 ### Added
 
+- A compatibility matrix (`docs/COMPATIBILITY.md`) indexed by hardware setup (chip family and
+  tier by unified memory size) in which every cell is verified by a committed bundle,
+  community-measured, or untested, with the macOS build, commit, and date of each capture as
+  provenance. It also names the failure class no cell covers: the IOGPU driver bug that panics
+  macOS 26.4 and later under Metal workloads (unfixed as of late August 2026) and can fire with the
+  footprint inside any limit, now listed by signature in the threat model as well.
+- `scripts/calibrate-host.sh` produces the calibration bundle on any Apple Silicon Mac in one
+  command: six measurement chunks, each written the moment it finishes, resumable after an
+  interruption, with the profile label derived from the hardware record's language-independent
+  fields and every published file scanned by `scripts/scan-evidence-bundle.sh` for the host's own
+  identifiers, its name, its paths, and the usual identifier labels. A hardware evidence bundle
+  issue template turns such a bundle into a community-measured cell. The reference-host script is
+  now the M1 Max 32 GB guard around it.
+- The 0.2.0 reference bundle for the M1 Max 32 GB (`evidence/v0.2.0/m1-max-32gb/`): footprint
+  accuracy, sampling cost, intervention latency, lifecycle scenarios, the 30-minute endurance run,
+  and a re-captured escalation envelope, with the shared-VM envelope captures pooled again from a
+  fresh workflow run.
 - A stability table (`docs/STABILITY.md`) states, for each public surface (CLI grammar and flags,
   exit codes, report schema v1, the journal, the checkpoint frame protocol, the Python API, the
   Rust crates, the contract documents, defaults, and published measurement bounds), what may still
@@ -81,6 +98,8 @@ versions follow Semantic Versioning.
 
 ### Changed
 
+- The README no longer says wheels "cover macOS 11 or newer": the `macosx_11_0_arm64` tag is
+  the build's deployment target, and runtime evidence is what the compatibility matrix lists.
 - `ObserveConfig` and `RunConfig` are keyword-only. Positional construction, which the 0.1 classes
   accepted, now raises `TypeError`; pass every field by name. Field names are part of the stable
   Python API and field order is not, which is what the stability table promises.

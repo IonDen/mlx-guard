@@ -568,6 +568,10 @@ fn reference_host_scenarios_write_reports_and_false_intervention_count() {
             "1s",
             "--sample-interval",
             "10ms",
+            // The worker withholds its acknowledgement for 500 ms; the scenario records a deadline
+            // it misses, so the timeout is pinned below that rather than left at the 1 s default.
+            "--checkpoint-timeout",
+            "100ms",
         ],
         &fixture_worker("checkpoint-blocked", 500, 3_000),
     );

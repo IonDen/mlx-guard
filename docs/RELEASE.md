@@ -22,7 +22,14 @@ the version in one commit and refreshes, by hand:
   previous version.
 - Evidence: re-run and commit reference measurements only when runtime, timing, policy, or
   measurement code changed since the last release; when a new bundle lands, move the links in
-  `README.md` and `docs/integrations/MLX_TRAIN_PERF.md` to it.
+  `README.md`, `docs/COMPATIBILITY.md`, and `docs/integrations/MLX_TRAIN_PERF.md` to it.
+  `scripts/calibrate-reference-host.sh <out>` (with `<out>` outside the repository) runs the six
+  measurements as chunks through `scripts/calibrate-host.sh`, writes each chunk's JSON as it
+  finishes, and resumes an interrupted run; the whole bundle takes about 45 minutes, most of it
+  the 30-minute endurance chunk. Copy the published files into
+  `evidence/vX.Y.Z/m1-max-32gb/` and write the README from them; the `<out>.logs` transcripts are
+  not committed. Run `scripts/scan-evidence-bundle.sh <dir>` on any bundle that arrives from
+  another machine before committing it.
 - Escalation envelope: `scripts/calibrate-reference-host.sh` captures
   `escalation-envelope.json` alongside the rest of the reference bundle whenever the checkpoint
   acknowledgement, TERM, or KILL path changed since the last release; re-run it standalone with
