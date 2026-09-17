@@ -32,6 +32,7 @@ SCOPE_OUTPUT = "needs.scope.outputs.scope"
 _JOB = re.compile(r"^  ([A-Za-z_][\w-]*):\s*$")
 _JOB_KEY = re.compile(r"^    (name|if):\s*(.*)$")
 _MATRIX_OS = re.compile(r"^        os:\s*\[(.*)\]\s*$")
+_MATRIX_EXTRA = re.compile(r"^        (include|exclude):")
 _STEP_START = re.compile(r"^      - ")
 _STEP_IF = re.compile(r"^(?:      - |        )if:\s*(.*)$")
 
@@ -107,6 +108,17 @@ def reported_check_names(workflow: str) -> set[str]:
         else:
             names.add(name)
     return names
+
+
+def unread_matrix_keys(workflow: str) -> list[str]:
+    """Return `job:key` for matrix keys that add or drop check names this reader cannot follow."""
+    return sorted(
+        f"{job}:{found.group(1)}"
+        for job, body in job_bodies(workflow).items()
+        for line in body
+        for found in [_MATRIX_EXTRA.match(line)]
+        if found
+    )
 
 
 def ungated_steps(workflow: str) -> list[str]:
@@ -210,6 +222,23 @@ class RequiredCheckNameTests(unittest.TestCase):
         # Red if a job is renamed or the matrix `os` list changes without the protection rule.
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertEqual(reported_check_names(workflow), set(REQUIRED_CHECK_NAMES))
+
+    def test_ci_workflow_matrix_uses_only_keys_the_name_reader_follows(self) -> None:
+        # Red if the matrix gains `include:` or `exclude:`. Those add or drop check names that
+        # `reported_check_names` does not read, so the required-names test above would stay green
+        # while GitHub reports a different set. Teach the reader first, then use the key.
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        self.assertEqual(unread_matrix_keys(workflow), [])
+
+    def test_a_matrix_include_entry_is_reported(self) -> None:
+        # Red if the matrix-key reader misses `include:`, which would make the test above vacuous.
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        extended = workflow.replace(
+            "        os: [ubuntu-24.04, macos-15]\n",
+            "        os: [ubuntu-24.04, macos-15]\n        include:\n          - os: macos-14\n",
+        )
+        self.assertNotEqual(extended, workflow)
+        self.assertEqual(unread_matrix_keys(extended), ["rust:include"])
 
     def test_a_changed_runner_image_changes_the_reported_names(self) -> None:
         # Red if the name reader ignores the matrix, which would make the test above vacuous.
