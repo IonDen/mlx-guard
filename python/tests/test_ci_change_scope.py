@@ -41,6 +41,15 @@ class ChangeScopeTests(unittest.TestCase):
         ]
         self.assertEqual(classify(changed), "docs")
 
+    def test_the_generated_figure_and_the_bundle_it_reads_are_code(self) -> None:
+        # Red if a change to the README figure, or to the evidence it is drawn from, skips the
+        # Python job: that job runs the test that keeps the two from drifting apart.
+        self.assertEqual(classify(["docs/images/limit-intervention.svg"]), "code")
+        self.assertEqual(classify(["evidence/v0.2.0/tutorial/reports/run-limit.json"]), "code")
+        self.assertEqual(classify(["evidence/v0.2.0/tutorial/transcripts/run-limit.txt"]), "code")
+        self.assertEqual(classify(["evidence/v0.2.0/tutorial/provenance.json"]), "code")
+        self.assertEqual(classify(["README.md", "docs/images/limit-intervention.svg"]), "code")
+
     def test_one_code_path_makes_the_whole_set_code(self) -> None:
         # Red if the script decides by majority instead of any-code-wins.
         self.assertEqual(classify(["README.md", "crates/mlx-guard-core/src/policy.rs"]), "code")

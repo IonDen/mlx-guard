@@ -9,6 +9,10 @@
 # Keep this list narrow and anchored. A README under crates/ is not on it on purpose, and
 # neither is anything under .github/, scripts/, or the packaging files: those change what CI
 # does or what ships, and must run the full pipeline.
+#
+# One documentation surface IS read by a test: docs/images/limit-intervention.svg is generated
+# from the tutorial evidence bundle, and python/tests/test_limit_figure.py fails when the two
+# differ. A change to either side is therefore "code", so the Python job runs that test.
 set -euo pipefail
 
 seen=0
@@ -16,6 +20,10 @@ while IFS= read -r path || [[ -n $path ]]; do
     [[ -z $path ]] && continue
     seen=1
     case "$path" in
+        docs/images/limit-intervention.svg | evidence/v0.2.0/tutorial/*)
+            echo code
+            exit 0
+            ;;
         README.md | CHANGELOG.md | RELEASE_NOTES.md | SECURITY.md | LICENSE | THIRD_PARTY_LICENSES.md | TUTORIAL.md) ;;
         docs/* | evidence/*) ;;
         *)

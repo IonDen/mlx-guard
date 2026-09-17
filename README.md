@@ -47,11 +47,20 @@ page.
 
 ## Example: a leaking job stopped at its limit
 
-A document summarizer with a memory leak runs under a 6 GiB limit on an M1 Max. The transcript is
-abridged from the [tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md), which
-records the whole session. The report it produced is committed with the
-[tutorial bundle](https://github.com/IonDen/mlx-guard/tree/main/evidence/v0.2.0/tutorial).
-Everything after `--` is the job's own command line; this run switched the job's checkpoints off.
+A document summarizer with a memory leak runs under a 6 GiB limit on an M1 Max. The figure is
+drawn from the report that run produced: every footprint sample, the warning band, the limit, and
+the moment the supervisor sent TERM.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/IonDen/mlx-guard/main/docs/images/limit-intervention.svg" alt="Memory footprint of a leaking job over 40 seconds. It rises and falls page by page, trending up into the warning band, and after two samples in a row at or above the limit the supervisor sends SIGTERM." width="720">
+</p>
+
+The transcript is abridged from the
+[tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md), which records the whole
+session. The report is committed with the
+[tutorial bundle](https://github.com/IonDen/mlx-guard/tree/main/evidence/v0.2.0/tutorial), and
+`scripts/render_limit_figure.py` redraws the figure from it. Everything after `--` is the job's
+own command line; this run switched the job's checkpoints off.
 
 ```console
 $ mlx-guard run --max-footprint 6GiB --wall-time 10m --report reports/run-limit.json -- python examples/tutorial/summarize_docs.py --no-checkpoint --progress reports/run-limit-progress.json
@@ -85,11 +94,11 @@ excerpt of the report says the same thing in a form a script can read:
 
 The job's last line says 5.07 GiB under a 6 GiB limit, so why was it stopped? The job prints that
 figure once per page, about once a second. The supervisor took 702 samples in the same forty
-seconds. They show the footprint rising and falling by several hundred megabytes about once per
-page. In the last half second of the run it went from 5.26 GiB to 6.05 GiB. A counter the job reads
+seconds. The footprint rises and falls by several hundred megabytes about once per page. In the
+last half second of the run it went from 5.26 GiB to 6.05 GiB. A counter the job reads
 at its own safe points misses the peaks between them. MLX's active-memory figure also leaves out its
 buffer cache, the Metal runtime and Python. The supervisor samples the operating system's number
-from outside, about every 50 ms, whatever the job is doing.
+from outside on a 50 ms timer, whatever the job is doing.
 
 ## Install
 
