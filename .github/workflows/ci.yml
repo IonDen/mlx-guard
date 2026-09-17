@@ -11,7 +11,7 @@ permissions:
 jobs:
   # Decide whether a pull request touches anything the code jobs need to prove. A change set
   # made only of documentation surfaces (scripts/ci-change-scope.sh holds the exact list)
-  # skips the Rust and Python jobs and the dependency audit; the release-literals guard still
+  # skips the Rust steps, the Python job and the dependency audit; the release-literals guard still
   # runs because it reads CHANGELOG.md, RELEASE_NOTES.md, and docs/EXAMPLES.md for content.
   #
   # This is an `if:` rather than a `paths-ignore:` filter on purpose: a job skipped by a
