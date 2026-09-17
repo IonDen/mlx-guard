@@ -130,11 +130,15 @@ wrong limit shows up cheaply.
    still writes its report, so rerun with a new report name.
 
 3. Choose a limit. Start from the peak in the report's `calibration` section and add headroom for
-   your workload; do not start from the machine's total memory. Two consecutive samples at or above
-   the limit start the checkpoint and TERM path. A sample about 10 % above it skips straight to
-   KILL. So the job can sit a little above your number for up to two samples. The
+   your workload; do not start from the machine's total memory. The
    [calibration guide](https://github.com/IonDen/mlx-guard/blob/main/docs/OBSERVE_AND_CALIBRATION.md)
    explains the procedure.
+
+   The limit is not a ceiling. Two consecutive samples at or above it start the checkpoint and TERM
+   path, and a sample about 10 % above it skips straight to KILL. After the first signal the job
+   still holds its memory while it checkpoints and exits, a second or two by default. A job that
+   only spikes above the limit for one sample at a time, by less than 10 %, is never stopped. Leave
+   that room below what the machine can take.
 
 4. Enforce the limit, with a wall-clock cap.
 
@@ -167,9 +171,10 @@ print(result.returncode, result.report.outcome.kind)
 Commands are literal argument tuples and never pass through a shell. The supervisor inherits the
 script's standard input, so the terminal rule applies here too: start the script with
 `python script.py < /dev/null`. Since 0.2, if the process that launched the supervisor dies, the
-supervised command is stopped with it; `on_parent_exit="detach"` (or `--on-parent-exit detach`)
-lets it keep running. The [Python API guide](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md)
-covers incremental runs, cancellation, output capture, and the dependency-free `CheckpointWorker`
+supervised command is stopped with it. Pass `on_parent_exit="detach"` (or
+`--on-parent-exit detach`) to let it keep running. The
+[Python API guide](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) covers
+incremental runs, cancellation, output capture, and the dependency-free `CheckpointWorker`
 helper that lets a worker save state when the supervisor asks.
 
 ## When a run stops
@@ -181,7 +186,7 @@ went wrong.
 |---|---|---|
 | The command's own code | The command ended by itself and nothing intervened | Nothing. The report holds the footprint samples (the latest 4,096 on a long run) and, for `observe`, the peak |
 | `75` | A policy intervention: usually the footprint limit, the wall-time cap, or the launching parent exiting. Rarer reasons, such as an ignored Ctrl-C, appear in `signals[].reason` | Read `outcome` and `signals[].reason` in the report. For `footprint`, observe again, then fix the growth or raise the limit. If the job saves checkpoints, use `checkpoint.request_id` to find the saved state |
-| `64` | Invalid command or configuration, and nothing was launched. The usual first-time cause is a terminal on standard input | Fix the option the message names, or add `< /dev/null` |
+| `64` | Invalid command or configuration, and nothing was launched. The usual first-time cause is a terminal on standard input | Fix the option the message names, or add `< /dev/null`. After a terminal refusal, use a new report name |
 | `70` | The supervisor failed, usually because it lost its measurements three samples in a row or could not deliver KILL. `run` sends TERM, then KILL; `observe` sends nothing | First check whether the command is still alive: `observe` leaves it running, and a failed KILL may too. Then read `signals` and rerun. If it repeats, open an issue with the redacted report |
 | `74` | The report or journal could not be written. Before launch: the directory is missing or not owner-only, or the report path was already used. After launch: the run finished but the report is incomplete | Read the message. Use a new report name, or fix the directory (`mkdir -m 700 reports`) |
 | `126`, `127` | The executable after `--` was not runnable, or was not found | Fix the command line |
@@ -211,7 +216,8 @@ field.
 - It cannot act during a kernel or system-wide failure. One such failure has a name: the IOGPU
   driver bug that panics macOS 26.4 and later under Metal workloads (unfixed as of late August
   2026). It can fire with the footprint well inside any limit, and no external supervisor can reach
-  it. The [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md)
+  it. The
+  [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md)
   carries its signature, and [MetalGuard](https://github.com/Harperbot/metal-guard) works around
   that failure from inside the MLX process.
 

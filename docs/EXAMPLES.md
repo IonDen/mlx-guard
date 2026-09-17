@@ -10,7 +10,7 @@ install -d -m 700 reports
 ```
 
 The commands below end in `< /dev/null` because `mlx-guard` refuses an interactive terminal on
-standard input: typed into a terminal without the redirect, it exits `64` with
+standard input. Typed into a terminal without the redirect, it exits `64` with
 `mlx-guard: interactive terminal input is unsupported` before launching anything. Keep the redirect
 inside shell scripts too, because a script started from a terminal passes the terminal on. Only
 input that is already a file or a pipe (CI, cron) makes it unnecessary. A refused run still writes

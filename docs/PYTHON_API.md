@@ -30,9 +30,9 @@ print(result.returncode, result.report.outcome.kind)
 
 Configurations are frozen dataclasses. Commands remain literal argument tuples and never pass
 through a shell. The supervisor inherits the caller's standard input, and it refuses an interactive
-terminal there: a script started from a terminal gets a `RunResult` with return code `64` and
-`invalid_configuration` unless it is started with `< /dev/null` (or any non-terminal input). The
-refused run still writes its report, so the next attempt needs a new report path.
+terminal there. A script started from a terminal gets a `RunResult` with return code `64` and
+`invalid_configuration`. Start it with `< /dev/null`, or any non-terminal input. The refused run
+still writes its report, so the next attempt needs a new report path.
 
 `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()` methods return
 the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor; calling it again
