@@ -98,7 +98,7 @@ seconds. The footprint rises and falls by several hundred megabytes about once p
 last half second of the run it went from 5.26 GiB to 6.05 GiB. A counter the job reads
 at its own safe points misses the peaks between them. MLX's active-memory figure also leaves out its
 buffer cache, the Metal runtime and Python. The supervisor samples the operating system's number
-from outside, about every 50 ms, whatever the job is doing.
+from outside on a 50 ms timer, whatever the job is doing.
 
 ## Install
 

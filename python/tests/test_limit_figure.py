@@ -83,6 +83,16 @@ class LimitFigureTests(unittest.TestCase):
         )
         self.assertEqual(figure.last_printed_gib(text), "4.20")
 
+    def test_a_report_without_the_needed_facts_is_refused_by_name(self) -> None:
+        # Red if a missing SIGTERM or a missing sample surfaces as a bare StopIteration, which
+        # tells whoever re-records the run nothing about what the report lacks.
+        with self.assertRaisesRegex(ValueError, "SIGTERM"):
+            figure.term_signal_ms([{"signal": 9, "at_ms": 10}])
+        with self.assertRaisesRegex(ValueError, "39964"):
+            figure.sample_at(((0, 1), (50, 2)), 39964)
+        self.assertEqual(figure.term_signal_ms([{"signal": 15, "at_ms": 7}]), 7)
+        self.assertEqual(figure.sample_at(((0, 1), (50, 2)), 50), 2)
+
     def test_byte_labels_drop_trailing_zeros(self) -> None:
         # Red if a label prints 6.00 GiB, or rounds 6.6 GiB to 7.
         self.assertEqual(figure.gib_label(6 * GIB), "6 GiB")

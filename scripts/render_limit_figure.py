@@ -104,6 +104,22 @@ def last_printed_gib(transcript: str) -> str:
     return str(found[-1])
 
 
+def term_signal_ms(signals: list[dict[str, object]]) -> int:
+    """Return when SIGTERM was sent, or say plainly that the report records none."""
+    for signal in signals:
+        if signal["signal"] == SIGTERM:
+            return int(str(signal["at_ms"]))
+    raise ValueError("the report records no SIGTERM, so there is no intervention to mark")
+
+
+def sample_at(samples: tuple[tuple[int, int], ...], at_ms: int) -> int:
+    """Return the footprint of the sample taken at this time, or name the missing sample."""
+    for at, size in samples:
+        if at == at_ms:
+            return size
+    raise ValueError(f"the report has no usable sample at {at_ms} ms")
+
+
 def evidence_fingerprint(run: Run) -> str:
     """Return a short digest of every fact the figure uses.
 
@@ -129,7 +145,6 @@ def load_run(*, report: Path, transcript: Path, provenance: Path) -> Run:
         for sample in data["samples"]
         if sample["aggregate_footprint_bytes"]["status"] == "available"
     )
-    term = next(signal for signal in data["signals"] if signal["signal"] == SIGTERM)
     memory_gb = int(origin["memory_bytes"]) // GIB
     return Run(
         samples=samples,
@@ -137,7 +152,7 @@ def load_run(*, report: Path, transcript: Path, provenance: Path) -> Run:
         limit_bytes=int(configuration["max_footprint_bytes"]),
         emergency_bytes=int(configuration["emergency_footprint_bytes"]),
         breach_samples=int(configuration["required_breach_samples"]),
-        term_ms=int(term["at_ms"]),
+        term_ms=term_signal_ms(data["signals"]),
         end_ms=int(data["outcome"]["at_ms"]),
         last_printed_gib=last_printed_gib(transcript.read_text(encoding="utf-8")),
         source=f"{report.parent.parent.relative_to(ROOT).as_posix()} ({report.name})",
@@ -175,13 +190,13 @@ def render(run: Run) -> str:
     warning = gib_label(run.warning_bytes)
     emergency = gib_label(run.emergency_bytes)
     term_s = f"{run.term_ms / 1000:.2f}"
-    gone_s = f"{(run.end_ms - run.term_ms) / 1000:.2f}"
+    gone_ms = run.end_ms - run.term_ms
     count = len(run.samples)
     times = [at for at, _ in run.samples]
     gaps = [later - earlier for earlier, later in itertools.pairwise(times)]
     gap_ms = round(statistics.median(gaps))
     breaches = _COUNT_WORDS.get(run.breach_samples, str(run.breach_samples))
-    term_bytes = next(size for at, size in run.samples if at == run.term_ms)
+    term_bytes = sample_at(run.samples, run.term_ms)
     y_limit, y_warning = scale.y(run.limit_bytes), scale.y(run.warning_bytes)
     y_emergency = scale.y(run.emergency_bytes)
     y_printed = scale.y(round(float(run.last_printed_gib) * GIB))
@@ -191,9 +206,10 @@ def render(run: Run) -> str:
         f"Memory footprint of a leaking job over {run.end_ms / 1000:.0f} seconds, {count} samples. "
         f"The footprint rises and falls page by page, trending up into the warning band at "
         f"{warning}. After {breaches} samples in a row at or above the {limit} limit the "
-        f"supervisor sends SIGTERM at {term_s} seconds and the process group is gone within "
-        f"{gone_s} seconds. A sample at or above {emergency} would have meant KILL at once. "
-        f"The last MLX active-memory figure the job itself printed was {run.last_printed_gib} GiB."
+        f"supervisor sends SIGTERM at {term_s} seconds and the process group is gone "
+        f"{gone_ms} milliseconds later. A sample at or above {emergency} would have meant KILL "
+        f"at once. The last MLX active-memory figure the job itself printed was "
+        f"{run.last_printed_gib} GiB."
     )
     points = " ".join(f"{scale.x(at):.1f},{scale.y(size):.1f}" for at, size in run.samples)
 
@@ -278,7 +294,7 @@ def render(run: Run) -> str:
         _text(
             PLOT_RIGHT - 4,
             216,
-            f"SIGTERM at {term_s} s, group gone within {gone_s} s",
+            f"SIGTERM at {term_s} s, group gone {gone_ms} ms later",
             size=12,
             weight=600,
             anchor="end",
