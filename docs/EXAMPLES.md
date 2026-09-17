@@ -11,8 +11,10 @@ install -d -m 700 reports
 
 The commands below end in `< /dev/null` because `mlx-guard` refuses an interactive terminal on
 standard input: typed into a terminal without the redirect, it exits `64` with
-`mlx-guard: interactive terminal input is unsupported` before launching anything. A script or CI job
-whose input is not a terminal does not need it.
+`mlx-guard: interactive terminal input is unsupported` before launching anything. Keep the redirect
+inside shell scripts too, because a script started from a terminal passes the terminal on. Only
+input that is already a file or a pipe (CI, cron) makes it unnecessary. A refused run still writes
+its report, so rerun with a new report name.
 
 ## Measure before enforcing
 
@@ -58,8 +60,8 @@ print(result.returncode, result.report.outcome.kind)
 
 Arguments are passed directly without a shell. Output is inherited by default and is never copied
 into the report. The supervisor inherits the script's standard input, so start the script with
-`python script.py < /dev/null` when you run it from a terminal. See the [Python API guide](PYTHON_API.md) before enabling captured output or
-cooperative checkpoints.
+`python script.py < /dev/null` when you run it from a terminal. See the
+[Python API guide](PYTHON_API.md) before enabling captured output or cooperative checkpoints.
 
 ## Captured smoke run
 

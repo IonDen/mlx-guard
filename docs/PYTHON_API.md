@@ -31,9 +31,12 @@ print(result.returncode, result.report.outcome.kind)
 Configurations are frozen dataclasses. Commands remain literal argument tuples and never pass
 through a shell. The supervisor inherits the caller's standard input, and it refuses an interactive
 terminal there: a script started from a terminal gets a `RunResult` with return code `64` and
-`invalid_configuration` unless it is started with `< /dev/null` (or any non-terminal input). `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()`
-methods return the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor;
-calling it again requests the native immediate-escalation path.
+`invalid_configuration` unless it is started with `< /dev/null` (or any non-terminal input). The
+refused run still writes its report, so the next attempt needs a new report path.
+
+`start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()` methods return
+the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor; calling it again
+requests the native immediate-escalation path.
 
 Both `ObserveConfig` and `RunConfig` accept `on_parent_exit` (`"terminate"` or
 `"detach"`; `None`, the default, omits the flag and defers to the native default of `terminate`).

@@ -10,8 +10,8 @@
 External runtime safety supervision for MLX workloads on Apple Silicon.
 
 `mlx-guard` runs any command under a memory limit and a time limit that you choose, from outside the
-process. It stops a runaway job before the job takes the Mac down, and it leaves a report that says
-what happened and why.
+process. It stops a job that passes your limit, which lowers the chance that one runaway run takes
+the Mac down. It leaves a report that says what happened and why.
 
 Contents: [example](https://github.com/IonDen/mlx-guard#example-a-leaking-job-stopped-at-its-limit)
 · [install](https://github.com/IonDen/mlx-guard#install) ·
@@ -124,13 +124,15 @@ wrong limit shows up cheaply.
    ```
 
    If you type the command into a terminal, keep the `< /dev/null`. `mlx-guard` refuses an
-   interactive terminal on standard input and exits `64` before it launches anything. A script or CI
-   job whose input is not a terminal does not need the redirect.
+   interactive terminal on standard input and exits `64` before it launches anything. Keep the
+   redirect inside shell scripts too, because a script started from a terminal passes the terminal
+   on. Only input that is already a file or a pipe (CI, cron) makes it unnecessary. A refused run
+   still writes its report, so rerun with a new report name.
 
 3. Choose a limit. Start from the peak in the report's `calibration` section and add headroom for
    your workload; do not start from the machine's total memory. Two consecutive samples at or above
    the limit start the checkpoint and TERM path. A sample about 10 % above it skips straight to
-   KILL, so the real ceiling is a little higher than the number you set. The
+   KILL. So the job can sit a little above your number for up to two samples. The
    [calibration guide](https://github.com/IonDen/mlx-guard/blob/main/docs/OBSERVE_AND_CALIBRATION.md)
    explains the procedure.
 
@@ -164,9 +166,9 @@ print(result.returncode, result.report.outcome.kind)
 
 Commands are literal argument tuples and never pass through a shell. The supervisor inherits the
 script's standard input, so the terminal rule applies here too: start the script with
-`python script.py < /dev/null`. Since 0.2, if the process that launched the supervisor dies, the supervised
-command is stopped with it; `on_parent_exit="detach"` (or `--on-parent-exit detach`) lets it keep
-running. The [Python API guide](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md)
+`python script.py < /dev/null`. Since 0.2, if the process that launched the supervisor dies, the
+supervised command is stopped with it; `on_parent_exit="detach"` (or `--on-parent-exit detach`)
+lets it keep running. The [Python API guide](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md)
 covers incremental runs, cancellation, output capture, and the dependency-free `CheckpointWorker`
 helper that lets a worker save state when the supervisor asks.
 
@@ -177,11 +179,11 @@ went wrong.
 
 | Exit code | What happened | What to do |
 |---|---|---|
-| The command's own code | The command ended by itself and nothing intervened | Nothing. The report still holds every footprint sample |
-| `75` | A policy intervention: the footprint limit, the wall-time cap, or the launching parent exiting | Read `outcome` and `signals[].reason` in the report. For `footprint`, observe again, then fix the growth or raise the limit. If the job saves checkpoints, resume from `checkpoint.request_id` |
+| The command's own code | The command ended by itself and nothing intervened | Nothing. The report holds the footprint samples (the latest 4,096 on a long run) and, for `observe`, the peak |
+| `75` | A policy intervention: usually the footprint limit, the wall-time cap, or the launching parent exiting. Rarer reasons, such as an ignored Ctrl-C, appear in `signals[].reason` | Read `outcome` and `signals[].reason` in the report. For `footprint`, observe again, then fix the growth or raise the limit. If the job saves checkpoints, use `checkpoint.request_id` to find the saved state |
 | `64` | Invalid command or configuration, and nothing was launched. The usual first-time cause is a terminal on standard input | Fix the option the message names, or add `< /dev/null` |
-| `70` | The supervisor failed: it lost its measurements for three samples in a row, or could not deliver KILL. In `run` mode it fails closed and stops the command | Check `signals` in the report, then rerun. If it repeats, open an issue with the redacted report |
-| `74` | The run finished but the report or journal could not be written completely | Check that the report directory exists, is owner-only, and has space |
+| `70` | The supervisor failed, usually because it lost its measurements three samples in a row or could not deliver KILL. `run` sends TERM, then KILL; `observe` sends nothing | First check whether the command is still alive: `observe` leaves it running, and a failed KILL may too. Then read `signals` and rerun. If it repeats, open an issue with the redacted report |
+| `74` | The report or journal could not be written. Before launch: the directory is missing or not owner-only, or the report path was already used. After launch: the run finished but the report is incomplete | Read the message. Use a new report name, or fix the directory (`mkdir -m 700 reports`) |
 | `126`, `127` | The executable after `--` was not runnable, or was not found | Fix the command line |
 | `128 + n` | The command was ended by signal `n`, for example a forwarded Ctrl-C | Nothing, if you sent the signal |
 
@@ -196,22 +198,27 @@ field.
 `mlx-guard` reduces risk. It is not a hard memory boundary.
 
 - It controls one process group, created for one trusted command run by the same user. A descendant
-  that leaves the group leaves the total, and the report records the escapes it sees. - Sampling is
-  periodic and a tree total is not atomic, so a fast allocation can pass the limit before the next
-  sample. - KILL does not make the Metal driver give memory back at once. - It never chooses a
-  destructive limit for you. - It cannot act during a kernel or system-wide failure. One such
-  failure has a name: the IOGPU driver bug that panics macOS 26.4 and later under Metal workloads
-  (unfixed as of late August 2026). It can fire with the footprint well inside any limit, and no
-  external supervisor can reach it. The
-  [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md)
+  that leaves the group leaves both the total and the reach of TERM and KILL. The report counts the
+  escapes it notices, not every one.
+
+- Sampling is periodic and a tree total is not atomic, so a fast allocation can pass the limit
+  before the next sample.
+
+- KILL does not make the Metal driver give memory back at once.
+
+- It never chooses a destructive limit for you.
+
+- It cannot act during a kernel or system-wide failure. One such failure has a name: the IOGPU
+  driver bug that panics macOS 26.4 and later under Metal workloads (unfixed as of late August
+  2026). It can fire with the footprint well inside any limit, and no external supervisor can reach
+  it. The [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md)
   carries its signature, and [MetalGuard](https://github.com/Harperbot/metal-guard) works around
-  that failure from inside the MLX process. - Not supported: an interactive terminal on standard
-  input, shell job control, sandboxed execution, and Mac App Store distribution. Direct CLI and
-  Python-wheel distribution are the target.
+  that failure from inside the MLX process.
+
+- Not supported: an interactive terminal on standard input, shell job control, sandboxed execution,
+  and Mac App Store distribution. Direct CLI and Python-wheel distribution are the target.
 
 ## Documentation
-
-The documents are grouped by what you came to do.
 
 Learn the tool:
 
