@@ -25,8 +25,12 @@ def load_script() -> ModuleType:
     spec = importlib.util.spec_from_file_location("render_limit_figure", SCRIPT)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
+    # Dataclasses look their module up while the classes are being created, and only then.
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        del sys.modules[spec.name]
     return module
 
 
@@ -132,6 +136,15 @@ class LimitFigureTests(unittest.TestCase):
         self.assertIn("5 GiB", "".join(element(after_svg, "limit-label").itertext()))
         self.assertNotIn("6 GiB", "".join(element(after_svg, "limit-label").itertext()))
 
+    def test_a_one_byte_change_in_the_evidence_changes_the_figure(self) -> None:
+        # Red if the figure only depends on rounded positions: a small edit to one sample moves
+        # no coordinate by a tenth of a pixel, and the drift test would then miss it.
+        run = recorded_run()
+        at, size = run.samples[300]
+        nudged = (*run.samples[:300], (at, size + 1), *run.samples[301:])
+        changed = dataclasses.replace(run, samples=nudged)
+        self.assertNotEqual(figure.render(changed), figure.render(run))
+
     def test_curve_has_one_point_per_sample(self) -> None:
         # Red if the curve is thinned, which would hide the per-page swings.
         points = element(figure.render(recorded_run()), "footprint").get("points", "").split()
@@ -152,19 +165,21 @@ class LimitFigureTests(unittest.TestCase):
         self.assertNotIn("href", svg)
         self.assertEqual(svg.count("http"), 1)  # the xmlns declaration only
 
-    def test_every_label_starts_inside_the_card(self) -> None:
-        # Red if a label is positioned off the card. Text width cannot be measured without the
-        # font, so a rough 0.6 em per character bounds the right edge of start-anchored labels.
+    def test_every_label_stays_inside_the_card(self) -> None:
+        # Red if a label runs off either side of the card, whatever its anchor. Text width cannot
+        # be measured without the font, so a rough 0.6 em per character stands in for it.
         root = ET.fromstring(figure.render(recorded_run()))  # noqa: S314
         texts = [node for node in root.iter(f"{SVG}text")]
         self.assertGreater(len(texts), 8)
         for node in texts:
             x, y = float(node.get("x", "0")), float(node.get("y", "0"))
             self.assertTrue(0 <= x <= figure.WIDTH and 0 < y <= figure.HEIGHT, node.attrib)
-            if node.get("text-anchor", "start") == "start":
-                size = float(node.get("font-size", "12"))
-                width = 0.6 * size * len("".join(node.itertext()))
-                self.assertLessEqual(x + width, figure.WIDTH + 1, "".join(node.itertext()))
+            body = "".join(node.itertext())
+            width = 0.6 * float(node.get("font-size", "12")) * len(body)
+            anchor = node.get("text-anchor", "start")
+            left = {"start": x, "middle": x - width / 2, "end": x - width}[anchor]
+            self.assertGreaterEqual(left, -1, body)
+            self.assertLessEqual(left + width, figure.WIDTH + 1, body)
 
 
 if __name__ == "__main__":

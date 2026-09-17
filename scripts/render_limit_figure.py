@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Draw docs/images/limit-intervention.svg from the recorded tutorial limit run.
 
-Every position and number in the figure comes from committed evidence: the report's samples,
-thresholds, signal and outcome, the transcript's last printed MLX figure, and the bundle's
-provenance. Run it with no arguments to rewrite the figure, or with --check to fail when the
+Every plotted value, threshold, time and caption comes from committed evidence: the report's
+samples, thresholds, signal and outcome, the transcript's last printed MLX figure, and the
+bundle's provenance. The wording of the annotations and where they sit are fixed for this
+recording. Run it with no arguments to rewrite the figure, or with --check to fail when the
 committed figure no longer matches (python/tests/test_limit_figure.py does the same).
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import itertools
 import json
 import math
 import re
+import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,7 +47,9 @@ LIMIT = "#dc2626"
 LIMIT_TEXT = "#b91c1c"
 BAND = "#fef3c7"
 BAND_TEXT = "#92400e"
-PRINTED = "#0d9488"
+PRINTED = "#0f766e"
+
+_COUNT_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five"}
 
 _PRINTED = re.compile(r"mlx active (\d+\.\d+) GiB")
 
@@ -56,6 +62,7 @@ class Run:
     warning_bytes: int
     limit_bytes: int
     emergency_bytes: int
+    breach_samples: int
     term_ms: int
     end_ms: int
     last_printed_gib: str
@@ -97,6 +104,15 @@ def last_printed_gib(transcript: str) -> str:
     return str(found[-1])
 
 
+def evidence_fingerprint(run: Run) -> str:
+    """Return a short digest of every fact the figure uses.
+
+    Coordinates are rounded to a tenth of a pixel, so a small change in the evidence can leave
+    them untouched. The digest goes into the SVG so that any change to the run shows up there.
+    """
+    return hashlib.sha256(repr(run).encode("utf-8")).hexdigest()[:16]
+
+
 def gib_label(size: int) -> str:
     """Format bytes as GiB with at most two decimals and no trailing zeros."""
     text = f"{size / GIB:.2f}".rstrip("0").rstrip(".")
@@ -120,6 +136,7 @@ def load_run(*, report: Path, transcript: Path, provenance: Path) -> Run:
         warning_bytes=int(configuration["warning_footprint_bytes"]),
         limit_bytes=int(configuration["max_footprint_bytes"]),
         emergency_bytes=int(configuration["emergency_footprint_bytes"]),
+        breach_samples=int(configuration["required_breach_samples"]),
         term_ms=int(term["at_ms"]),
         end_ms=int(data["outcome"]["at_ms"]),
         last_printed_gib=last_printed_gib(transcript.read_text(encoding="utf-8")),
@@ -160,6 +177,10 @@ def render(run: Run) -> str:
     term_s = f"{run.term_ms / 1000:.2f}"
     gone_s = f"{(run.end_ms - run.term_ms) / 1000:.2f}"
     count = len(run.samples)
+    times = [at for at, _ in run.samples]
+    gaps = [later - earlier for earlier, later in itertools.pairwise(times)]
+    gap_ms = round(statistics.median(gaps))
+    breaches = _COUNT_WORDS.get(run.breach_samples, str(run.breach_samples))
     term_bytes = next(size for at, size in run.samples if at == run.term_ms)
     y_limit, y_warning = scale.y(run.limit_bytes), scale.y(run.warning_bytes)
     y_emergency = scale.y(run.emergency_bytes)
@@ -168,17 +189,18 @@ def render(run: Run) -> str:
 
     label = (
         f"Memory footprint of a leaking job over {run.end_ms / 1000:.0f} seconds, {count} samples. "
-        f"The footprint climbs in steps into the warning band at {warning}. After two samples at "
-        f"or above the {limit} limit the supervisor sends SIGTERM at {term_s} seconds and the "
-        f"process group is gone {gone_s} seconds later. A sample above {emergency} would have "
-        f"meant KILL at once. The last figure the job itself printed was "
-        f"{run.last_printed_gib} GiB."
+        f"The footprint rises and falls page by page, trending up into the warning band at "
+        f"{warning}. After {breaches} samples in a row at or above the {limit} limit the "
+        f"supervisor sends SIGTERM at {term_s} seconds and the process group is gone within "
+        f"{gone_s} seconds. A sample at or above {emergency} would have meant KILL at once. "
+        f"The last MLX active-memory figure the job itself printed was {run.last_printed_gib} GiB."
     )
     points = " ".join(f"{scale.x(at):.1f},{scale.y(size):.1f}" for at, size in run.samples)
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" '
         f'width="{WIDTH}" height="{HEIGHT}" role="img" aria-label={quoteattr(label)} '
+        f'data-evidence="{evidence_fingerprint(run)}" '
         f"font-family={quoteattr(FONT)}>",
         f'  <rect x="0" y="0" width="{WIDTH}" height="{HEIGHT}" fill="#ffffff" rx="6"/>',
         _text(24, 30, f"A leaking job, stopped at its {limit} limit", size=16, weight=600),
@@ -186,11 +208,11 @@ def render(run: Run) -> str:
             24,
             50,
             f"Memory footprint macOS charged to the job's process group: {count} samples, "
-            "about 50 ms apart",
+            f"about {gap_ms} ms apart",
             size=12.5,
             fill="#475569",
         ),
-        _text(PLOT_LEFT - 8, PLOT_TOP - 10, "GiB", size=11, fill=MUTED, anchor="end"),
+        _text(PLOT_LEFT - 8, PLOT_TOP - 10, "GiB", size=12, fill=MUTED, anchor="end"),
     ]
 
     for step in range(0, scale.max_bytes // GIB + 1, 2):
@@ -200,7 +222,7 @@ def render(run: Run) -> str:
                 f'  <line x1="{PLOT_LEFT:.1f}" y1="{y:.1f}" x2="{PLOT_RIGHT:.1f}" y2="{y:.1f}" '
                 f'stroke="{GRID}" stroke-width="1"/>'
             )
-        parts.append(_text(PLOT_LEFT - 8, y + 4, str(step), size=11, fill=MUTED, anchor="end"))
+        parts.append(_text(PLOT_LEFT - 8, y + 4, str(step), size=12, fill=MUTED, anchor="end"))
 
     parts += [
         f'  <rect id="warning-band" x="{PLOT_LEFT:.1f}" y="{y_limit:.1f}" '
@@ -208,14 +230,15 @@ def render(run: Run) -> str:
         _text(
             PLOT_LEFT + 8,
             (y_limit + y_warning) / 2 + 4,
-            f"warning band, from {warning}",
-            size=11,
+            f"warning band, from {warning} (recorded, no action)",
+            size=12,
             fill=BAND_TEXT,
         ),
         f'  <line id="emergency-line" x1="{PLOT_LEFT:.1f}" y1="{y_emergency:.1f}" '
         f'x2="{PLOT_RIGHT:.1f}" y2="{y_emergency:.1f}" stroke="{LIMIT_TEXT}" stroke-width="1.5" '
         'stroke-dasharray="5 4"/>',
-        _text(MARGIN_X, y_emergency + 4, f"above {emergency}: KILL", size=12, fill=LIMIT_TEXT),
+        _text(MARGIN_X, y_emergency - 10, f"at {emergency} or above:", size=12, fill=LIMIT_TEXT),
+        _text(MARGIN_X, y_emergency + 4, "KILL at once", size=12, fill=LIMIT_TEXT),
         f'  <line id="limit-line" x1="{PLOT_LEFT:.1f}" y1="{y_limit:.1f}" '
         f'x2="{PLOT_RIGHT:.1f}" y2="{y_limit:.1f}" stroke="{LIMIT}" stroke-width="1.5"/>',
         _text(
@@ -234,12 +257,12 @@ def render(run: Run) -> str:
     for second in range(0, scale.max_ms // 1000 + 1, 10):
         body = "0" if second == 0 else f"{second} s"
         x = scale.x(second * 1000)
-        parts.append(_text(x, PLOT_BOTTOM + 16, body, size=11, fill=MUTED, anchor="middle"))
+        parts.append(_text(x, PLOT_BOTTOM + 16, body, size=12, fill=MUTED, anchor="middle"))
 
     parts += [
         f'  <polyline id="footprint" points="{points}" fill="none" stroke="{CURVE}" '
         'stroke-width="1.5" stroke-linejoin="round"/>',
-        _text(PLOT_LEFT + 22, scale.y(GIB) + 4, "the model loads", size=11, fill=MUTED),
+        _text(PLOT_LEFT + 22, scale.y(GIB) + 4, "the model loads", size=12, fill=MUTED),
         f'  <line x1="{x_term:.1f}" y1="{y_term + 6:.1f}" x2="{x_term:.1f}" y2="186.0" '
         f'stroke="{LIMIT}" stroke-width="1"/>',
         f'  <circle id="term-marker" cx="{x_term:.1f}" cy="{y_term:.1f}" r="4" fill="{LIMIT}" '
@@ -247,7 +270,7 @@ def render(run: Run) -> str:
         _text(
             PLOT_RIGHT - 4,
             200,
-            "two samples at or above the limit:",
+            f"{breaches} samples in a row at or above the limit:",
             size=12,
             anchor="end",
             halo=True,
@@ -255,7 +278,7 @@ def render(run: Run) -> str:
         _text(
             PLOT_RIGHT - 4,
             216,
-            f"SIGTERM at {term_s} s, group gone {gone_s} s later",
+            f"SIGTERM at {term_s} s, group gone within {gone_s} s",
             size=12,
             weight=600,
             anchor="end",
@@ -266,16 +289,16 @@ def render(run: Run) -> str:
         _text(
             MARGIN_X,
             y_printed + 4,
-            f"{run.last_printed_gib} GiB: last figure",
-            size=11.5,
+            f"MLX active {run.last_printed_gib} GiB:",
+            size=12,
             fill=PRINTED,
         ),
-        _text(MARGIN_X, y_printed + 18, "the job printed", size=11.5, fill=PRINTED),
+        _text(MARGIN_X, y_printed + 19, "the job's last line", size=12, fill=PRINTED),
         _text(
             24,
             HEIGHT - 18,
             f"{run.source}, {run.host}, macOS {run.macos}, mlx-guard {run.guard_version}",
-            size=11.5,
+            size=12,
             fill=MUTED,
         ),
         "</svg>",

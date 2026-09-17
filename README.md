@@ -52,7 +52,7 @@ drawn from the report that run produced: every footprint sample, the warning ban
 the moment the supervisor sent TERM.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/IonDen/mlx-guard/main/docs/images/limit-intervention.svg" alt="Memory footprint of a leaking job over 40 seconds. It climbs in steps into the warning band, and after two samples at or above the 6 GiB limit the supervisor sends SIGTERM at 39.96 s." width="720">
+  <img src="https://raw.githubusercontent.com/IonDen/mlx-guard/main/docs/images/limit-intervention.svg" alt="Memory footprint of a leaking job over 40 seconds. It rises and falls page by page, trending up into the warning band, and after two samples in a row at or above the limit the supervisor sends SIGTERM." width="720">
 </p>
 
 The transcript is abridged from the
@@ -94,8 +94,8 @@ excerpt of the report says the same thing in a form a script can read:
 
 The job's last line says 5.07 GiB under a 6 GiB limit, so why was it stopped? The job prints that
 figure once per page, about once a second. The supervisor took 702 samples in the same forty
-seconds. As the figure shows, the footprint rises and falls by several hundred megabytes about
-once per page. In the last half second of the run it went from 5.26 GiB to 6.05 GiB. A counter the job reads
+seconds. The footprint rises and falls by several hundred megabytes about once per page. In the
+last half second of the run it went from 5.26 GiB to 6.05 GiB. A counter the job reads
 at its own safe points misses the peaks between them. MLX's active-memory figure also leaves out its
 buffer cache, the Metal runtime and Python. The supervisor samples the operating system's number
 from outside, about every 50 ms, whatever the job is doing.

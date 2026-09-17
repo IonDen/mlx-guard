@@ -11,8 +11,8 @@ versions follow Semantic Versioning.
   with a realistic memory leak, through `observe`, a footprint limit, a cooperative checkpoint
   with a resume loop, and the fix, with every transcript and report recorded on the reference host
   (`evidence/v0.2.0/tutorial/`) and the script under `examples/tutorial/`.
-- A README figure (`docs/images/limit-intervention.svg`) of the recorded limit run: the sampled
-  footprint against the warning band, the limit and the emergency line, with the TERM marked.
+- A README figure (`docs/images/limit-intervention.svg`) of the recorded limit run: sampled
+  footprint, warning band, limit, emergency line, and the SIGTERM marker.
   `scripts/render_limit_figure.py` draws it from the committed report, and a test fails when the
   figure and the evidence drift apart.
 
