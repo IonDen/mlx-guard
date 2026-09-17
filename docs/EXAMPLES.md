@@ -19,7 +19,7 @@ mlx-guard observe --sample-interval 50ms --report reports/observe-1.json -- \
 ```
 
 Choose a limit from observed peaks plus workload-specific headroom; do not use total machine memory
-as the limit. The calibration guide explains the procedure.
+as the limit. The [calibration guide](OBSERVE_AND_CALIBRATION.md) explains the procedure.
 
 ## Enforce memory and time
 
@@ -29,7 +29,9 @@ mlx-guard run --max-footprint 24GiB --wall-time 2h \
 ```
 
 The command exits with the child's status when no intervention occurs and `75` after a policy
-intervention. Inspect the typed final report to distinguish outcomes.
+intervention. Inspect the typed final report to distinguish outcomes; [REPORTS.md](REPORTS.md)
+defines its fields, and the [tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md)
+shows a recorded intervention next to the report it produced.
 
 ## Launch from Python
 
@@ -50,7 +52,8 @@ print(result.returncode, result.report.outcome.kind)
 ```
 
 Arguments are passed directly without a shell. Output is inherited by default and is never copied
-into the report. See `PYTHON_API.md` before enabling captured output or cooperative checkpoints.
+into the report. See the [Python API guide](PYTHON_API.md) before enabling captured output or
+cooperative checkpoints.
 
 ## Captured smoke run
 

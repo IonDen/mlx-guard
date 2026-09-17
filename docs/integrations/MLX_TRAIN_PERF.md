@@ -46,8 +46,11 @@ not claim that Metal released memory or that the partial result is a complete be
 
 Direct launch is allowed only when external supervision was requested but could not start a worker:
 the Python package is absent, the native binary is missing, or package and binary versions differ.
-The runner records the reason. These checks happen before worker launch, so fallback cannot duplicate
-a condition.
+The runner records the reason. Only the checks `mlx_guard.start()` makes happen before worker
+launch, so the runner decides by call site: a discovery error raised by `start()` permits the direct
+launch, and the same error type raised later by `wait()` or `poll()` does not, because the final
+report read checks the binary version again after the condition has already run. The
+[Python API guide](../PYTHON_API.md#falling-back-to-a-direct-launch) shows the pattern.
 
 Once a supervisor process starts, the runner never launches the condition again as a fallback. This
 rule applies to cancellation and report failures. A surviving condition artifact is preserved, while
@@ -58,7 +61,8 @@ the supervisor failure remains a separate typed result.
 | No acknowledgement | The native checkpoint deadline expires and escalation continues. |
 | Callback exception | The helper sends a failed response; no completed artifact is claimed. |
 | Client cancellation | SIGINT is sent to the supervisor, which owns forwarding and finalization. |
-| Missing binary or version mismatch | Direct launch is permitted because no worker was started. |
+| Missing binary or version mismatch, raised by `start()` | Direct launch is permitted because no worker was started. |
+| Discovery or report error raised after `start()` returned | The condition is not rerun; the error is recorded as a supervisor failure. |
 | Report write failure | The condition is not rerun; any worker artifact remains available. |
 
 This integration adds no `mlx-train-perf` condition kind, status, or policy rule to `mlx-guard` core.

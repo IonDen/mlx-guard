@@ -60,6 +60,27 @@ occupied report targets, missing reports, malformed reports, and exit/report con
 distinct `GuardError` subclasses. Successful journals are retained, so use a unique report path per
 run or archive/remove both the report and its `.<name>.journal` deliberately.
 
+### Falling back to a direct launch
+
+A library that launches its workload directly when `mlx-guard` is unavailable must decide by where
+the error was raised, not by its type. `start()` validates the packaged binary before it launches
+anything, so a `SupervisorDiscoveryError` from `start()` means no worker ran and a direct launch is
+safe. The same exception type can also come out of `wait()` or `poll()`, because `load_report()`
+checks the binary version again when it reads the final report. By then the command has already
+run, and launching it again would run the workload twice, the second time unsupervised.
+`SupervisorStartError` is not proof of a clean slate either: the readiness handshake can fail after
+the worker was launched. `run()` is `start()` followed by `wait()`, so it cannot tell you which
+half failed. Use the two calls when you need a fallback:
+
+```python
+try:
+    process = mlx_guard.start(config)
+except mlx_guard.SupervisorDiscoveryError:
+    launch_directly()  # nothing was started
+else:
+    result = process.wait()  # any error from here on is after launch: never relaunch
+```
+
 ## Cooperative checkpoints
 
 Call `CheckpointWorker.connect()` from the worker's main thread before entering its work loop. It
@@ -96,7 +117,11 @@ application-level threading choice, not an mlx-guard guarantee.
 
 The helper sends `completed` only when the callback explicitly returns
 `CheckpointResponse.completed()`. The callback, not the helper, decides whether its bytes are
-durable. Exceptions and invalid returns send a failed acknowledgement. Artifact metadata contains
+durable. Exceptions and invalid returns send a failed acknowledgement, and `poll()` then raises
+`CheckpointCallbackError` on the worker's thread. The supervisor goes on to TERM whatever the
+acknowledgement said, so a worker that wants the supervisor to end the run, not its own
+traceback, catches `mlx_guard.CheckpointError` around `poll()`, logs it, and keeps its loop alive
+until the signal arrives. Artifact metadata contains
 only a kind and optional byte count; paths and names never enter the checkpoint frame. The helper
 has no MLX dependency.
 
