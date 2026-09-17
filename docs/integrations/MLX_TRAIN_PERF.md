@@ -47,9 +47,10 @@ not claim that Metal released memory or that the partial result is a complete be
 Direct launch is allowed only when external supervision was requested but could not start a worker:
 the Python package is absent, the native binary is missing, or package and binary versions differ.
 The runner records the reason. Only the checks `mlx_guard.start()` makes happen before worker
-launch, so the runner decides by call site: a discovery error raised by `start()` permits the direct
-launch, and the same error type raised later by `GuardProcess.wait()` or `poll()` does not, because the final
-report read checks the binary version again after the condition has already run. The
+launch, so the runner decides by call site: a discovery error raised by `start()` permits the
+direct launch, and the same error type raised later by `GuardProcess.wait()` or
+`GuardProcess.poll()` does not, because the final report read checks the binary version again
+after the condition has already run. The
 [Python API guide](../PYTHON_API.md#falling-back-to-a-direct-launch) shows the pattern.
 
 Once a supervisor process starts, the runner never launches the condition again as a fallback. This

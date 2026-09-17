@@ -14,11 +14,12 @@ push the whole machine into a paging storm, and a limit set inside the process s
 the process it is supposed to stop.
 
 `mlx-guard` supervises from outside. A small native parent launches your command in a process
-group of its own and, twenty times a second by default, adds up the memory footprint macOS charges
-to every process in that group. When the total crosses a limit you chose, the parent can first ask
-the workload to save a checkpoint, then sends TERM, then KILL, and leaves a crash-resilient JSON
-report of what happened. The enforcement loop never runs inside Python or the MLX process. The workload
-needs no changes to be supervised; only the optional checkpoint takes a few lines in the worker.
+group of its own and, about twenty times a second by default, adds up the memory footprint macOS
+charges to every process in that group. When the total crosses a limit you chose, the parent can
+first ask the workload to save a checkpoint, then sends TERM, then KILL, and leaves a
+crash-resilient JSON report of what happened. The enforcement loop never runs inside Python or the MLX process. The
+workload needs no changes to be supervised; only the optional checkpoint takes a few lines in the
+worker.
 
 Version 0.2 is an alpha release. The
 [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) says which
@@ -66,11 +67,12 @@ intervention. An excerpt of the report says the same thing in a form a script ca
 ```
 
 The job's last line says 5.07 GiB under a 6 GiB limit, so why was it stopped? The job prints that
-figure between pages, and at that moment macOS was charging the process 5.26 GiB. Half a second
-later, in the middle of page 41, the footprint reached 6.05 GiB. A counter the job reads at its own
-safe points misses the peaks between them, and MLX's active-memory figure also leaves out its
-buffer cache, the Metal runtime and Python. The supervisor samples the operating system's number
-from outside, every 50 ms, whatever the job is doing.
+figure once per page, about once a second. The supervisor took 702 samples in the same forty
+seconds, and they show the footprint rising and falling by several hundred megabytes about once
+per page. In the last half second of the run it went from 5.26 GiB to 6.05 GiB. A counter the job
+reads at its own safe points misses the peaks between them, and MLX's active-memory figure also
+leaves out its buffer cache, the Metal runtime and Python. The supervisor samples the operating
+system's number from outside, about every 50 ms, whatever the job is doing.
 
 ## Installation
 
@@ -153,8 +155,8 @@ failure has a name: the IOGPU driver bug that panics macOS 26.4 and later under 
 (unfixed as of late August 2026), which can fire with the process footprint well inside any limit
 and which no external supervisor can reach. The
 [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) carries
-its signature, and [MetalGuard](https://github.com/Harperbot/metal-guard) is a project that
-works on that failure, from inside the MLX process.
+its signature, and [MetalGuard](https://github.com/Harperbot/metal-guard) works around that
+failure from inside the MLX process.
 
 An interactive terminal on standard input and shell job control are outside the supported scope,
 along with sandboxed execution and Mac App Store distribution. Direct CLI and Python-wheel
@@ -263,8 +265,8 @@ Running both is reasonable. MetalGuard keeps the workload healthy from the insid
 one of the two that does anything about the driver panic. mlx-guard is the outer ring for the case
 where the process itself can no longer be trusted, since a limit set inside a process shares that
 process's fate. An outside, OS-accounted number also cross-checks the in-process counters: the run
-at the top of this page crossed its limit between two of the job's own readings, the last of which
-said 5.07 GiB, and MetalGuard's maintainer notes that in-process counters may not see every
+at the top of this page was stopped at 6.05 GiB when the last figure the job had printed was
+5.07 GiB, and MetalGuard's maintainer notes that in-process counters may not see every
 allocation. He reviewed this boundary and called the projects complementary, with no overlapping
 code ([metal-guard #7](https://github.com/Harperbot/metal-guard/issues/7#issuecomment-5307251324));
 the measurement and cooldown details in the table follow his description there.

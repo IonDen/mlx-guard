@@ -68,10 +68,9 @@ the supervisor, so a `SupervisorDiscoveryError` from `start()` means no worker r
 launch is safe. The same exception type can also come out of `GuardProcess.wait()` or
 `GuardProcess.poll()`, because `load_report()` checks the binary version again when it reads the
 final report. By then the command has already run, and launching it again would run the workload
-twice, the second time unsupervised.
-`SupervisorStartError` is not proof of a clean slate either: the readiness handshake can fail after
-the worker was launched. `run()` is `start()` followed by `wait()`, so it cannot tell you which
-half failed. Use the two calls when you need a fallback:
+twice, the second time unsupervised. `SupervisorStartError` is not proof of a clean slate either:
+the readiness handshake can fail after the worker was launched. `run()` is `start()` followed by
+`wait()`, so it cannot tell you which half failed. Use the two calls when you need a fallback:
 
 ```python
 try:
