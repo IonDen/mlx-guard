@@ -14,18 +14,18 @@ push the whole machine into a paging storm, and a limit set inside the process s
 the process it is supposed to stop.
 
 `mlx-guard` supervises from outside. A small native parent launches your command in a process
-group of its own and, many times a second, adds up the memory footprint macOS charges to every
-process in that group. When the total crosses a limit you chose, the parent can first ask the
-workload to save a checkpoint, then sends TERM, then KILL, and leaves a crash-resilient JSON report
-of what happened. The enforcement loop never runs inside Python or the MLX process, and the
-workload needs no changes to be supervised.
+group of its own and, twenty times a second by default, adds up the memory footprint macOS charges
+to every process in that group. When the total crosses a limit you chose, the parent can first ask
+the workload to save a checkpoint, then sends TERM, then KILL, and leaves a crash-resilient JSON
+report of what happened. The enforcement loop never runs inside Python or the MLX process. The workload
+needs no changes to be supervised; only the optional checkpoint takes a few lines in the worker.
 
 Version 0.2 is an alpha release. The
 [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) says which
 surfaces may still change before 1.0. If you already use MetalGuard, the two tools guard against
 different failures and work together; the
-[comparison](https://github.com/IonDen/mlx-guard#metalguard-and-mlx-guard) is at the end of this
-page.
+[comparison](https://github.com/IonDen/mlx-guard#metalguard-and-mlx-guard) is near the end of
+this page.
 
 ## What an intervention looks like
 
@@ -33,6 +33,7 @@ A document summarizer with a memory leak, run under a 6 GiB limit on an M1 Max. 
 abridged from the [tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md), which
 records the whole session, and the report it produced is committed with the
 [tutorial bundle](https://github.com/IonDen/mlx-guard/tree/main/evidence/v0.2.0/tutorial).
+Everything after `--` is the job's own command line; this run switched the job's checkpoints off.
 
 ```console
 $ mlx-guard run --max-footprint 6GiB --wall-time 10m --report reports/run-limit.json -- python examples/tutorial/summarize_docs.py --no-checkpoint --progress reports/run-limit-progress.json
@@ -49,7 +50,7 @@ $ echo $?
 
 Forty seconds in, two consecutive samples were at or above the limit. The supervisor sent `SIGTERM`
 to the whole process group and the command exited `75`, the code reserved for a policy
-intervention. The report says the same thing in a form a script can read:
+intervention. An excerpt of the report says the same thing in a form a script can read:
 
 ```json
 "outcome": {
@@ -60,12 +61,16 @@ intervention. The report says the same thing in a form a script can read:
 },
 "signals": [
   { "at_ms": 39964, "signal": 15, "target": "owned_process_group", "result": "delivered", "reason": "footprint" }
-]
+],
+"checkpoint": { "status": "not_negotiated", "reason": "footprint" }
 ```
 
-The job's own MLX counter read 5.07 GiB on its last line while macOS was charging the process
-6.05 GiB. The difference is MLX's buffer cache, the Metal runtime and Python, none of which the
-in-process figure includes. The supervisor acts on the number the machine has to find.
+The job's last line says 5.07 GiB under a 6 GiB limit, so why was it stopped? The job prints that
+figure between pages, and at that moment macOS was charging the process 5.26 GiB. Half a second
+later, in the middle of page 41, the footprint reached 6.05 GiB. A counter the job reads at its own
+safe points misses the peaks between them, and MLX's active-memory figure also leaves out its
+buffer cache, the Metal runtime and Python. The supervisor samples the operating system's number
+from outside, every 50 ms, whatever the job is doing.
 
 ## Installation
 
@@ -148,7 +153,7 @@ failure has a name: the IOGPU driver bug that panics macOS 26.4 and later under 
 (unfixed as of late August 2026), which can fire with the process footprint well inside any limit
 and which no external supervisor can reach. The
 [compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) carries
-its signature, and [MetalGuard](https://github.com/Harperbot/metal-guard) is the project that
+its signature, and [MetalGuard](https://github.com/Harperbot/metal-guard) is a project that
 works on that failure, from inside the MLX process.
 
 An interactive terminal on standard input and shell job control are outside the supported scope,
@@ -157,9 +162,9 @@ distribution are the target.
 
 ## Documentation
 
-New here? Read the [tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md): one real job, a document summarizer with a memory
-leak, followed from the first `observe` to a resumed run, with every transcript recorded on the
-reference host. For the shortest working commands, see the [examples](https://github.com/IonDen/mlx-guard/blob/main/docs/EXAMPLES.md).
+New here? Start with the
+[tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md), then keep the
+[examples](https://github.com/IonDen/mlx-guard/blob/main/docs/EXAMPLES.md) at hand.
 
 Using it:
 
@@ -170,6 +175,7 @@ Using it:
 | [Observe and calibration](https://github.com/IonDen/mlx-guard/blob/main/docs/OBSERVE_AND_CALIBRATION.md) | Advisory system metrics, pre-launch warnings, choosing a limit |
 | [Wrap a command](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/WRAP_A_COMMAND.md) | Supervising a command-line workload with no adapter, from bare to a forced intervention |
 | [Python API](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) | Typed configuration, incremental runs, cancellation, report loading, worker checkpoints |
+| [Python packaging](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_PACKAGING.md) | Wheel support, native-binary discovery, editable installs, sdist policy |
 | [Python adapter pattern](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/PYTHON_ADAPTER.md) | Supervising a workload your own library launches, with a cooperative checkpoint and a resume key |
 | [mlx-train-perf integration](https://github.com/IonDen/mlx-guard/blob/main/docs/integrations/MLX_TRAIN_PERF.md) | Optional external supervision for its runner, keeping the direct-launch fallback |
 
@@ -193,7 +199,6 @@ Support, security and evidence:
 | [Stability](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) | What may still change before 1.0, how, and what freezes |
 | [Support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md) | Supported platforms and release boundaries |
 | [Compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) | Which hardware setups have measured evidence, which are untested, and how to fill a cell |
-| [Python packaging](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_PACKAGING.md) | Wheel support, native-binary discovery, editable installs, sdist policy |
 | [Threat model](https://github.com/IonDen/mlx-guard/blob/main/docs/THREAT_MODEL.md) | Trust boundaries and supported failures |
 | [Security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) | Vulnerability reporting |
 | [M1 Max 32 GB evidence](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/m1-max-32gb/README.md) | Raw 0.2 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
@@ -248,9 +253,9 @@ from different places.
 |---|---|---|
 | The failure it goes after | The Apple GPU driver bug that kernel-panics the whole Mac during MLX work. It avoids the known triggers, and after a panic it explains the report and holds new runs back for a cooldown | One command whose memory footprint or run time gets out of hand: a leak, a paging storm, a stuck job |
 | Where it runs | Mostly inside your Python process, as a library around the MLX code you write. It also ships a CLI, an optional shell guard that pauses MLX launches during a cooldown, and a runner that puts MLX in a child process | Outside, as a separate native parent of any command |
-| What it measures | `mx.metal.get_active_memory()`, with `vm_stat` system totals as fallback | The `phys_footprint` macOS accounts to each process in the owned group, summed |
+| What it measures | For its memory-headroom checks, `mx.metal.get_active_memory()`, with `vm_stat` system totals as fallback | The `phys_footprint` macOS accounts to each process in the owned group, summed |
 | What it needs from you | Import it and route model loads, unloads and inference through its gates, or install the shell guard | Nothing inside the workload: a command line and a byte limit |
-| When things go wrong | Load and unload checks, allocator-aware recovery, crash-burst and kernel-panic cooldowns, panic postmortems, a registry of known-panic models | An optional cooperative checkpoint request, then TERM and KILL against the explicit limit, plus a redacted JSON report that carries a resume key |
+| When things go wrong | Load and unload checks, OOM catch and retry, crash-burst and kernel-panic cooldowns, panic postmortems, a registry of known-panic models | An optional cooperative checkpoint request, then TERM and KILL against the explicit limit, plus a redacted JSON report and, after a checkpoint, a resume key |
 | Across runs | Remembers load cadence and panic history, with a circuit breaker and a lockout that survive a reboot | Remembers nothing: each run stands alone and hands over one report |
 | Fits | MLX apps, servers and pipelines that load and unload models and want panic avoidance and recovery built in | Trainers, servers, benches, shell scripts, anything you can launch, in any language |
 
@@ -258,10 +263,11 @@ Running both is reasonable. MetalGuard keeps the workload healthy from the insid
 one of the two that does anything about the driver panic. mlx-guard is the outer ring for the case
 where the process itself can no longer be trusted, since a limit set inside a process shares that
 process's fate. An outside, OS-accounted number also cross-checks the in-process counters: the run
-at the top of this page shows a gigabyte that MLX's active-memory figure leaves out by design, and
-MetalGuard's maintainer notes that in-process counters may not see every allocation either. He
-reviewed this boundary and called the projects complementary, with no overlapping code
-([metal-guard #7](https://github.com/Harperbot/metal-guard/issues/7#issuecomment-5307251324)).
+at the top of this page crossed its limit between two of the job's own readings, the last of which
+said 5.07 GiB, and MetalGuard's maintainer notes that in-process counters may not see every
+allocation. He reviewed this boundary and called the projects complementary, with no overlapping
+code ([metal-guard #7](https://github.com/Harperbot/metal-guard/issues/7#issuecomment-5307251324));
+the measurement and cooldown details in the table follow his description there.
 
 ## Related projects
 

@@ -16,10 +16,10 @@ versions follow Semantic Versioning.
 
 - Documentation only. `docs/PYTHON_API.md` now says which error permits a library to fall back to
   a direct launch (a discovery error raised by `start()`, never the same error type raised later
-  by `wait()` or `poll()`), and what a worker should do when its checkpoint callback fails.
-  `docs/integrations/MLX_TRAIN_PERF.md` states the same fallback rule. The README opens with a
-  recorded intervention, groups the documentation index by reader need, and moves the refreshed
-  MetalGuard comparison to the end of the page.
+  by `GuardProcess.wait()` or `GuardProcess.poll()`), and what a worker should do when its
+  checkpoint callback fails. `docs/integrations/MLX_TRAIN_PERF.md` states the same fallback rule.
+  The README opens with a recorded intervention, groups the documentation index by reader need,
+  and moves the refreshed MetalGuard comparison below the development notes.
 
 ## [0.2.0] - 2026-09-12
 
