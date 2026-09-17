@@ -12,6 +12,19 @@ versions follow Semantic Versioning.
   with a resume loop, and the fix, with every transcript and report recorded on the reference host
   (`evidence/v0.2.0/tutorial/`) and the script under `examples/tutorial/`.
 
+### Changed
+
+- Documentation only. `docs/PYTHON_API.md` now says which error permits a library to fall back to
+  a direct launch (a discovery error raised by `start()`, never the same error type raised later
+  by `GuardProcess.wait()` or `GuardProcess.poll()`), and what a worker should do when its
+  checkpoint callback fails. `docs/integrations/MLX_TRAIN_PERF.md` states the same fallback rule.
+  The README opens with a recorded intervention, turns the quick start into numbered steps, adds
+  a "When a run stops" table (exit code, what happened, what to do), lists its limits as bullets,
+  groups the documentation index by reader need, and moves the refreshed MetalGuard comparison
+  below the development notes. The README, `docs/EXAMPLES.md` and `docs/PYTHON_API.md` now say that
+  a command typed into a terminal needs `< /dev/null`, because an interactive terminal on standard
+  input is refused with exit `64`.
+
 ## [0.2.0] - 2026-09-12
 
 ### Added

@@ -9,27 +9,36 @@ Create an owner-only report directory once:
 install -d -m 700 reports
 ```
 
+The commands below end in `< /dev/null` because `mlx-guard` refuses an interactive terminal on
+standard input. Typed into a terminal without the redirect, it exits `64` with
+`mlx-guard: interactive terminal input is unsupported` before launching anything. Keep the redirect
+inside shell scripts too, because a script started from a terminal passes the terminal on. Only
+input that is already a file or a pipe (CI, cron) makes it unnecessary. A refused run still writes
+its report, so rerun with a new report name.
+
 ## Measure before enforcing
 
 Run representative work several times with no intervention policy:
 
 ```bash
 mlx-guard observe --sample-interval 50ms --report reports/observe-1.json -- \
-  python train.py --epochs 1
+  python train.py --epochs 1 < /dev/null
 ```
 
 Choose a limit from observed peaks plus workload-specific headroom; do not use total machine memory
-as the limit. The calibration guide explains the procedure.
+as the limit. The [calibration guide](OBSERVE_AND_CALIBRATION.md) explains the procedure.
 
 ## Enforce memory and time
 
 ```bash
 mlx-guard run --max-footprint 24GiB --wall-time 2h \
-  --report reports/train.json -- python train.py --epochs 10
+  --report reports/train.json -- python train.py --epochs 10 < /dev/null
 ```
 
 The command exits with the child's status when no intervention occurs and `75` after a policy
-intervention. Inspect the typed final report to distinguish outcomes.
+intervention. Inspect the typed final report to distinguish outcomes; [REPORTS.md](REPORTS.md)
+defines its fields, and the [tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md)
+shows a recorded intervention next to the report it produced.
 
 ## Launch from Python
 
@@ -50,7 +59,9 @@ print(result.returncode, result.report.outcome.kind)
 ```
 
 Arguments are passed directly without a shell. Output is inherited by default and is never copied
-into the report. See `PYTHON_API.md` before enabling captured output or cooperative checkpoints.
+into the report. The supervisor inherits the script's standard input, so start the script with
+`python script.py < /dev/null` when you run it from a terminal. See the
+[Python API guide](PYTHON_API.md) before enabling captured output or cooperative checkpoints.
 
 ## Captured smoke run
 

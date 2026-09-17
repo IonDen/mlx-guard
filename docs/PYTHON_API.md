@@ -29,9 +29,14 @@ print(result.returncode, result.report.outcome.kind)
 ```
 
 Configurations are frozen dataclasses. Commands remain literal argument tuples and never pass
-through a shell. `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()`
-methods return the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor;
-calling it again requests the native immediate-escalation path.
+through a shell. The supervisor inherits the caller's standard input, and it refuses an interactive
+terminal there. A script started from a terminal gets a `RunResult` with return code `64` and
+`invalid_configuration`. Start it with `< /dev/null`, or any non-terminal input. The refused run
+still writes its report, so the next attempt needs a new report path.
+
+`start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()` methods return
+the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor; calling it again
+requests the native immediate-escalation path.
 
 Both `ObserveConfig` and `RunConfig` accept `on_parent_exit` (`"terminate"` or
 `"detach"`; `None`, the default, omits the flag and defers to the native default of `terminate`).
@@ -59,6 +64,27 @@ Child failures and policy interventions are normal `RunResult` values. Discovery
 occupied report targets, missing reports, malformed reports, and exit/report contradictions use
 distinct `GuardError` subclasses. Successful journals are retained, so use a unique report path per
 run or archive/remove both the report and its `.<name>.journal` deliberately.
+
+### Falling back to a direct launch
+
+A library that launches its workload directly when `mlx-guard` is unavailable must decide by where
+the error was raised, not by its type. `start()` validates the packaged binary before it launches
+the supervisor, so a `SupervisorDiscoveryError` from `start()` means no worker ran and a direct
+launch is safe. The same exception type can also come out of `GuardProcess.wait()` or
+`GuardProcess.poll()`, because `load_report()` checks the binary version again when it reads the
+final report. By then the command has already run, and launching it again would run the workload
+twice, the second time unsupervised. `SupervisorStartError` is not proof of a clean slate either:
+the readiness handshake can fail after the worker was launched. `run()` is `start()` followed by
+`wait()`, so it cannot tell you which half failed. Use the two calls when you need a fallback:
+
+```python
+try:
+    process = mlx_guard.start(config)
+except mlx_guard.SupervisorDiscoveryError:
+    launch_directly()  # nothing was started
+else:
+    result = process.wait()  # any error from here on is after launch: never relaunch
+```
 
 ## Cooperative checkpoints
 
@@ -96,7 +122,11 @@ application-level threading choice, not an mlx-guard guarantee.
 
 The helper sends `completed` only when the callback explicitly returns
 `CheckpointResponse.completed()`. The callback, not the helper, decides whether its bytes are
-durable. Exceptions and invalid returns send a failed acknowledgement. Artifact metadata contains
+durable. Exceptions and invalid returns send a failed acknowledgement, and `poll()` then raises
+`CheckpointCallbackError` on the thread that called it. The supervisor goes on to TERM whatever the
+acknowledgement said. A worker that would rather be ended by that signal than by its own
+unhandled exception should catch `mlx_guard.CheckpointError` around `poll()`, log it, and keep
+its loop alive until the signal arrives. Artifact metadata contains
 only a kind and optional byte count; paths and names never enter the checkpoint frame. The helper
 has no MLX dependency.
 
