@@ -9,13 +9,18 @@ Create an owner-only report directory once:
 install -d -m 700 reports
 ```
 
+The commands below end in `< /dev/null` because `mlx-guard` refuses an interactive terminal on
+standard input: typed into a terminal without the redirect, it exits `64` with
+`mlx-guard: interactive terminal input is unsupported` before launching anything. A script or CI job
+whose input is not a terminal does not need it.
+
 ## Measure before enforcing
 
 Run representative work several times with no intervention policy:
 
 ```bash
 mlx-guard observe --sample-interval 50ms --report reports/observe-1.json -- \
-  python train.py --epochs 1
+  python train.py --epochs 1 < /dev/null
 ```
 
 Choose a limit from observed peaks plus workload-specific headroom; do not use total machine memory
@@ -25,7 +30,7 @@ as the limit. The [calibration guide](OBSERVE_AND_CALIBRATION.md) explains the p
 
 ```bash
 mlx-guard run --max-footprint 24GiB --wall-time 2h \
-  --report reports/train.json -- python train.py --epochs 10
+  --report reports/train.json -- python train.py --epochs 10 < /dev/null
 ```
 
 The command exits with the child's status when no intervention occurs and `75` after a policy
@@ -52,7 +57,8 @@ print(result.returncode, result.report.outcome.kind)
 ```
 
 Arguments are passed directly without a shell. Output is inherited by default and is never copied
-into the report. See the [Python API guide](PYTHON_API.md) before enabling captured output or
+into the report. The supervisor inherits the script's standard input, so start the script with
+`python script.py < /dev/null` when you run it from a terminal. See the [Python API guide](PYTHON_API.md) before enabling captured output or
 cooperative checkpoints.
 
 ## Captured smoke run

@@ -29,7 +29,9 @@ print(result.returncode, result.report.outcome.kind)
 ```
 
 Configurations are frozen dataclasses. Commands remain literal argument tuples and never pass
-through a shell. `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()`
+through a shell. The supervisor inherits the caller's standard input, and it refuses an interactive
+terminal there: a script started from a terminal gets a `RunResult` with return code `64` and
+`invalid_configuration` unless it is started with `< /dev/null` (or any non-terminal input). `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()`
 methods return the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor;
 calling it again requests the native immediate-escalation path.
 
