@@ -29,3 +29,5 @@ For reproducible defects, open a GitHub issue with the package version, `uname -
 the path-free command shape, limit values, exit code, and a redacted report. Use the private process
 in `SECURITY.md` for vulnerabilities. Performance expectations and safe limits are workload- and
 host-specific; support cannot infer a destructive threshold from hardware capacity alone.
+
+<!-- docs-only CI probe; never merged -->
