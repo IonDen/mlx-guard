@@ -1,0 +1,108 @@
+{
+  "source": {
+    "report_sha256": "03bcb9e6d3634f10c51019e97225bb29d952454c8fc541b4740a2ee240853272",
+    "partial_result_sha256": "4f19bcd113497bbca576d4f81bd45999fe3b1ca049a307dc5634c837c1cfe4b3",
+    "supervision_record_sha256": "2be3a444212c194c5d51a023a8cd19e5d15151fc1987b2d3a97b1c120a8f6a4e",
+    "sample_count": 43,
+    "max_aggregate_footprint_bytes": 48464616
+  },
+  "schema_version": 1,
+  "package_version": "0.2.0",
+  "configuration": {
+    "mode": "enforce",
+    "max_footprint_bytes": 536870912,
+    "warning_footprint_bytes": 483183821,
+    "recovery_footprint_bytes": 429496730,
+    "emergency_footprint_bytes": 590558003,
+    "required_breach_samples": 2,
+    "max_missing_samples": 3,
+    "wall_time_ms": 500,
+    "sample_interval_ms": 10,
+    "max_sample_age_ms": 500,
+    "max_sample_window_ms": 250,
+    "checkpoint_timeout_ms": 1000,
+    "term_grace_ms": 1000,
+    "on_parent_exit": "terminate",
+    "parent_watch": "active"
+  },
+  "checkpoint": {
+    "status": "acknowledged_unverified_durability",
+    "at_ms": 531,
+    "request_id": 4860816705003653979,
+    "reason": "wall_time",
+    "artifact": {
+      "kind": "file",
+      "size_bytes": 636
+    }
+  },
+  "outcome": {
+    "at_ms": 554,
+    "kind": "policy_intervention",
+    "final_footprint_bytes": {
+      "status": "available",
+      "value": 0
+    },
+    "child_status": {
+      "status": "signaled",
+      "signal": 15
+    }
+  },
+  "signals": [
+    {
+      "at_ms": 501,
+      "signal": 30,
+      "target": "cooperative_endpoint",
+      "result": "delivered",
+      "reason": "wall_time"
+    },
+    {
+      "at_ms": 531,
+      "signal": 15,
+      "target": "owned_process_group",
+      "result": "delivered",
+      "reason": "wall_time"
+    }
+  ],
+  "transitions": [
+    {
+      "at_ms": 501,
+      "from": "normal",
+      "to": "checkpoint_requested",
+      "aggregate_footprint_bytes": 48464616
+    },
+    {
+      "at_ms": 531,
+      "from": "checkpoint_requested",
+      "to": "terminating",
+      "aggregate_footprint_bytes": 48464616
+    },
+    {
+      "at_ms": 554,
+      "from": "terminating",
+      "to": "exited",
+      "aggregate_footprint_bytes": 0
+    }
+  ],
+  "artifact_errors": [],
+  "capabilities": {
+    "darwin_footprint": {
+      "status": "available",
+      "value": true
+    },
+    "owned_process_group": {
+      "status": "available",
+      "value": true
+    },
+    "checkpoint_channel": {
+      "status": "available",
+      "value": true
+    }
+  },
+  "privacy": {
+    "redacted_before_persistence": true,
+    "file_mode": "0600",
+    "upload": "disabled",
+    "retention": "user_managed",
+    "capture": "redacted_metadata_only"
+  }
+}
