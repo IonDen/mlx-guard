@@ -222,10 +222,10 @@ fn observe_with_a_terminal_on_stdin_gives_the_command_dev_null_and_says_so() {
 
 #[test]
 fn a_command_that_exits_at_once_still_gets_the_terminal_line() {
-    // Red if the line is printed only after identity inspection and checkpoint negotiation: a
-    // root that exits before that (the early-exit window) would run with /dev/null and say
-    // nothing. /usr/bin/true exits in microseconds, so this case lands in that window often
-    // enough on a loaded runner to matter; the line must appear either way.
+    // Pins the line for a command that exits at once. It turns red on the old placement (after
+    // identity inspection) only when the root is already gone at the first inspect, which is
+    // timing-dependent; the placement itself is pinned by the two call sites in
+    // prepare_observe_worker / prepare_run_worker. Red deterministically if the line is dropped.
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
     let mut pty = Pty::open();

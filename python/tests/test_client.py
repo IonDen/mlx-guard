@@ -762,6 +762,7 @@ def _drain_pty(master: int, child: int, deadline_s: float) -> str:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             os.kill(child, signal.SIGKILL)
+            os.waitpid(child, 0)
             raise AssertionError(
                 f"the pty child did not finish within {deadline_s}s; output so far: "
                 f"{b''.join(chunks).decode(errors='replace')!r}"
