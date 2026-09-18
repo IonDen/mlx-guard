@@ -1,0 +1,28 @@
+{
+  "identity": {
+    "schema_version": 1,
+    "mlx_version": "0.32.0",
+    "mlx_lm_version": "0.31.3",
+    "machine": "arm64",
+    "macos": "27.0",
+    "code_sha": "03ccb1e2a477a813",
+    "package_version": "0.8.0",
+    "kind": "loss_layer",
+    "session_id": "806f1ca290b341bf95b4f8deed74604d",
+    "n": 1024,
+    "d": 256,
+    "v": 2048,
+    "dtype": "float32",
+    "impl": "naive",
+    "reps": 1000,
+    "seed": 11
+  },
+  "status": "checkpointed_partial",
+  "checkpoint_request_id": 4860816705003653979,
+  "supervisor_deadline_ns": 1501892833,
+  "progress": {
+    "stage": "loss_layer",
+    "completed": 278,
+    "total": 1000
+  }
+}

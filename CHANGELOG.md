@@ -15,6 +15,12 @@ versions follow Semantic Versioning.
   footprint, warning band, limit, emergency line, and the SIGTERM marker.
   `scripts/render_limit_figure.py` draws it from the committed report, and a test fails when the
   figure and the evidence drift apart.
+- The `mlx-train-perf` integration proof, re-recorded on the published 0.2.0 wheel against
+  `mlx-train-perf` 0.8.0, the first consumer release that ships the integration
+  (`evidence/v0.2.0/mlx-train-perf/`): a checkpointed wall-limit intervention with the partial
+  artifact and matching request ids, the failure paths each consumer test pins, and the four
+  points of client friction the first consumer met. `docs/integrations/MLX_TRAIN_PERF.md` now
+  cites this bundle; the 0.1.0-era one stays as the record of the first adapter.
 
 ### Changed
 
