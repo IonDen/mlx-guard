@@ -1,0 +1,37 @@
+{
+  "identity": {
+    "schema_version": 1,
+    "mlx_version": "0.32.0",
+    "mlx_lm_version": "0.31.3",
+    "machine": "arm64",
+    "macos": "27.0",
+    "code_sha": "03ccb1e2a477a813",
+    "package_version": "0.8.0",
+    "kind": "loss_layer",
+    "session_id": "806f1ca290b341bf95b4f8deed74604d",
+    "n": 1024,
+    "d": 256,
+    "v": 2048,
+    "dtype": "float32",
+    "impl": "naive",
+    "reps": 1000,
+    "seed": 11
+  },
+  "status": "guard_supervised",
+  "outcome": {
+    "kind": "policy_intervention",
+    "returncode": 75,
+    "child_status": {
+      "status": "signaled",
+      "signal": 15
+    },
+    "checkpoint_status": "acknowledged_unverified_durability",
+    "checkpoint_request_id": 4860816705003653979,
+    "checkpoint_reason": "wall_time",
+    "checkpoint_artifact": {
+      "kind": "file",
+      "size_bytes": 636
+    }
+  },
+  "report": "guarded-loss-layer.20260917T195200Z-0e852643.json"
+}
