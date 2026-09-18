@@ -12,7 +12,7 @@ The runner launched a 1,000-repetition real MLX loss-layer condition with a 512 
 footprint limit, a 500 ms wall limit, 10 ms sampling, and a 1 s checkpoint acknowledgement
 timeout. At 501 ms the supervisor requested a checkpoint. The worker finished repetition 278,
 atomically wrote and synced the artifact normalized as [`partial-result.json`](partial-result.json),
-and returned path-free FILE metadata (636 bytes). The supervisor accepted the authenticated
+and returned path-free `file` metadata (636 bytes). The supervisor accepted the authenticated
 response at 531 ms, sent TERM to the owned process group, and finalized at 554 ms with zero final
 footprint. The complete [`report.json`](report.json) contains 43 samples, a 48,464,616-byte maximum
 aggregate footprint, and no artifact errors. [`report-summary.json`](report-summary.json) preserves
@@ -47,8 +47,9 @@ workers; the rest use a stand-in for the package.
   fallback, announced on stderr before the worker starts.
 - Discovery error after the run, report or persistence failure, client failure: never a second
   launch; the failure is recorded beside whatever artifact the worker left.
-- Runner interrupted while waiting (measured, four runs): the consumer cancels the supervisor and
-  waits a bounded moment; all four ended `child_signaled`, signal 2, with nothing left running.
+- Runner interrupted while waiting (four hand-driven runs, not included in this bundle): the
+  consumer cancels the supervisor and waits a bounded moment; all four ended `child_signaled`,
+  signal 2, with nothing left running.
 
 ## Integration friction
 

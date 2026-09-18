@@ -32,9 +32,9 @@ The runner is the supervisor's launching parent for the lifetime of a supervised
 `kill`, a scheduler eviction — now takes the supervised worker down with it instead of leaving it
 running as an orphaned background process. The [evidence bundle](../../evidence/v0.2.0/mlx-train-perf/README.md)
 was recorded under this default, on the published 0.2.0 wheel, against the first `mlx-train-perf`
-release that ships the integration. None of its recorded scenarios (checkpoint acceptance, a missing
-acknowledgement, a callback error, client cancellation, or a report/persistence failure) involve the
-runner process itself dying. The interrupted-runner runs it reports are client cancellations: the
+release that ships the integration. None of its recorded scenarios (checkpoint acceptance, a
+callback error, client cancellation, or a report/persistence failure) involve the runner process
+itself dying. The interrupted-runner runs it reports are client cancellations: the
 runner stays alive, cancels the supervisor, and waits for it. A runner that deliberately wants a
 condition to outlive it needs `on_parent_exit="detach"`.
 
