@@ -12,8 +12,9 @@
 | Rust source build | Rust 1.93 and maturin 1.13.3 |
 | Report schema | Major version 1 |
 
-Intel Macs, Linux, Windows, PyPy, an interactive terminal on standard input, shell job control,
-sandboxed workers, and Mac App Store distribution are unsupported. Linux CI exercises portable Rust
+Intel Macs, Linux, Windows, PyPy, a command that reads from the terminal, shell job control,
+sandboxed workers, and Mac App Store distribution are unsupported. A terminal on standard input is
+fine: the command reads `/dev/null` instead, and the supervisor says so on one line. Linux CI exercises portable Rust
 policy and serialization code; it does not make Linux a runtime target.
 
 ## Verified configurations

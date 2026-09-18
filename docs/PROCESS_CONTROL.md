@@ -78,14 +78,17 @@ signal is enabled before readiness.
 
 ## Terminal and stdio behavior
 
-The CLI inherits stdin, stdout, and stderr. If inherited stdin is a terminal, preflight rejects the
-launch because the supervisor does not implement foreground process-group transfer and restoration.
-Piped and null streams are available to integrations and tests. Child stdout and stderr remain
+The CLI inherits stdin, stdout, and stderr. If inherited stdin is a terminal, the root receives
+`/dev/null` in its place and the supervisor prints one stderr line saying so, because the supervisor
+does not implement foreground process-group transfer and restoration: a root in its own process
+group that read the terminal would be stopped by SIGTTIN. A piped or null stdin, and an inherited
+stdin that is not a terminal, are passed on unchanged. `OwnedProcess::stdin_disposition` reports
+which case applied. Piped and null streams are available to integrations and tests. Child stdout and stderr remain
 application data and are never interpreted as checkpoint or supervisor control messages.
 
 ## Launch and wait results
 
-Preflight and exec failures distinguish empty argv, invalid cwd, interactive terminal, missing
+Preflight and exec failures distinguish empty argv, invalid cwd, missing
 executable, non-executable file, generic spawn failure, and process-group validation failure. Error
 messages omit argv and paths. Root completion distinguishes `Exited(code)` from `Signaled(signal)`.
 Signal attempts distinguish delivered, missing target, permission denial, and unexpected system-call

@@ -119,8 +119,12 @@ that exits during the grace keeps its observed child outcome.
 stdin, stdout, and stderr are inherited by default. Redirected bytes stay separate and are not
 parsed as control messages. Child output remains application output and may contain arbitrary bytes;
 it is never copied into the guard report or diagnostics. Guard diagnostics use stderr. If stdin is
-an interactive terminal, the command is rejected with exit 64 before worker launch. Foreground
-transfer, Ctrl-Z, SIGTSTP, SIGCONT, and shell-style job control are not supported.
+an interactive terminal, the command receives `/dev/null` instead and the parent prints one line on
+stderr: `mlx-guard: standard input is a terminal, so the command reads from /dev/null instead`. A
+command that must read the terminal cannot run under `mlx-guard`, because the command runs in its
+own process group and a read from the terminal would stop it. Any other stdin (a file, a pipe, or
+an explicit `< /dev/null`) is passed on unchanged and silently. Foreground transfer, Ctrl-Z, SIGTSTP,
+SIGCONT, and shell-style job control are not supported.
 
 ## Examples
 
