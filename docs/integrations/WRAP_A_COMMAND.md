@@ -30,9 +30,9 @@ The CLI also works without a Python project: `uvx mlx-guard …` runs it on dema
 page are `python3`, used below to build the demo workload, and `jq` for the report-reading commands
 (or use the Python `load_report` route shown at the end).
 
-`mlx-guard` refuses to start if its standard input is an interactive terminal: it exits 64 with
-`mlx-guard: interactive terminal input is unsupported` before launching anything. Run the commands
-on this page from a script, or add `< /dev/null` to the command line, as the transcripts below do.
+The transcripts below end in `< /dev/null`, which is how they were recorded. Typed into a
+terminal without it, every command still works: the supervised command reads `/dev/null` instead of
+the terminal, and `mlx-guard` prints one stderr line saying so alongside the output shown here.
 
 ## The ladder
 

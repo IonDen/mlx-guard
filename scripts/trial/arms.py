@@ -117,7 +117,7 @@ def build_arms(
             limit_bytes=None,
             wall_time_ms=None,
             validator=v.assert_tty_probe,
-            notes="ladder's first command under a pty: bare stdin refused 64, `< /dev/null` runs 0",
+            notes="ladder's first command under a pty: bare stdin runs 0 with one line, `< /dev/null` runs 0",
         ),
         ArmSpec(
             arm_id="L0",

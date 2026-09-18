@@ -55,7 +55,7 @@ request a checkpoint against a wall-time budget and lets a second run resume fro
 | C2 | cooperative worker | enforce, resume | 8.19 GiB | 6.23 GiB | resumes from C1's checkpoint, step 183 to 450, exits clean |
 | F0 | image gen | enforce | 25 GiB | 25.14 GiB | stays silent; one sample grazes the limit, the two-breach rule holds |
 | F3 | image gen | enforce | 15 GiB | 15.10 GiB | breaches while loading, guard sends a graceful TERM |
-| T0 | terminal check | — | — | — | a real terminal on stdin is refused (exit 64); `< /dev/null` runs |
+| T0 | terminal check | — | — | — | a real terminal on stdin is refused (exit 64); `< /dev/null` runs. Recorded with 0.2.0; from the next release the bare launch runs and prints one stderr line instead |
 | L0 | LoRA, as first printed | observe | — | 0.55 GiB | records that the bare `mlx-lm` command needs its `[train]` extra |
 
 Peaks are the guard's OS-accounted `phys_footprint`, the highest sample in each report. The two

@@ -13,8 +13,8 @@ import tty_probe
 import validators as v
 
 
-def test_bare_pty_is_refused_and_the_redirect_remedy_runs(tmp_path: Path) -> None:
-    """T0: a terminal on stdin is refused with 64 and the documented message; `< /dev/null` runs."""
+def test_bare_pty_runs_with_the_terminal_line_and_the_redirect_runs_silently(tmp_path: Path) -> None:
+    """T0: a terminal on stdin runs (0) with the documented line; `< /dev/null` runs (0) without it."""
     binary = os.environ.get("MLX_GUARD_TRIAL_BINARY")
     if not binary:
         pytest.fail(

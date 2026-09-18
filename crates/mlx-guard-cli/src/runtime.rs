@@ -15,9 +15,9 @@ use mlx_guard_core::{
     PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults, ProcessIdentity,
     ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode,
     ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal, SignalReason,
-    SignalRecord, SignalResult, SignalTarget, StdioMode, SupervisorOutcome, TerminalKind,
-    TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason, VERSION,
-    checkpoint_signal_usr1, hangup_is_ignored, platform_support,
+    SignalRecord, SignalResult, SignalTarget, StdinDisposition, StdioMode, SupervisorOutcome,
+    TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason,
+    VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
 };
 
 use crate::completion::{
@@ -464,6 +464,7 @@ fn prepare_observe_worker(
             outcome: launch_outcome(error.kind()),
             diagnostic: error.to_string(),
         })?;
+    announce_stdin_disposition(&process);
     let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
@@ -506,6 +507,7 @@ fn prepare_run_worker(
         outcome: launch_outcome(error.kind()),
         diagnostic: error.to_string(),
     })?;
+    announce_stdin_disposition(&process);
     let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
@@ -1499,13 +1501,24 @@ fn early_exit_or_failure(
     }
 }
 
+/// Tell the operator, once and on stderr, when the command did not receive the terminal the
+/// supervisor itself was started with. Printed as soon as the launch succeeded, before identity
+/// inspection, so a command that exits at once still gets the line. Silent for every other
+/// standard input, and never printed for a failed launch.
+fn announce_stdin_disposition(process: &OwnedProcess) {
+    if process.stdin_disposition() == StdinDisposition::TerminalReplacedWithNull {
+        eprintln!(
+            "mlx-guard: standard input is a terminal, so the command reads from /dev/null instead"
+        );
+    }
+}
+
 fn launch_outcome(kind: mlx_guard_core::LaunchErrorKind) -> SupervisorOutcome {
     match kind {
         mlx_guard_core::LaunchErrorKind::NotFound => SupervisorOutcome::LaunchNotFound,
         mlx_guard_core::LaunchErrorKind::NotExecutable => SupervisorOutcome::LaunchNotExecutable,
         mlx_guard_core::LaunchErrorKind::EmptyCommand
         | mlx_guard_core::LaunchErrorKind::InvalidWorkingDirectory
-        | mlx_guard_core::LaunchErrorKind::InteractiveTerminalUnsupported
         | mlx_guard_core::LaunchErrorKind::InvalidCheckpointChannel => {
             SupervisorOutcome::InvalidConfiguration
         }

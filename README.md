@@ -129,14 +129,12 @@ wrong limit shows up cheaply.
 2. Observe a short, representative run. Observe mode samples the footprint and never intervenes.
 
    ```bash
-   mlx-guard observe --report reports/observe-1.json -- python train.py --epochs 1 < /dev/null
+   mlx-guard observe --report reports/observe-1.json -- python train.py --epochs 1
    ```
 
-   If you type the command into a terminal, keep the `< /dev/null`. `mlx-guard` refuses an
-   interactive terminal on standard input and exits `64` before it launches anything. Keep the
-   redirect inside shell scripts too, because a script started from a terminal passes the terminal
-   on. Only input that is already a file or a pipe (CI, cron) makes it unnecessary. A refused run
-   still writes its report, so rerun with a new report name.
+   Typed into a terminal, this prints one extra line: the command reads `/dev/null` instead of the
+   terminal, because a supervised command cannot take keyboard input. A file or a pipe on standard
+   input (CI, cron, `< data.txt`) reaches the command unchanged.
 
 3. Choose a limit. Start from the peak in the report's `calibration` section and add headroom for
    your workload; do not start from the machine's total memory. The
@@ -153,7 +151,7 @@ wrong limit shows up cheaply.
 
    ```bash
    mlx-guard run --max-footprint 24GiB --wall-time 2h \
-     --report reports/train.json -- python train.py --epochs 10 < /dev/null
+     --report reports/train.json -- python train.py --epochs 10
    ```
 
    Use a new report name for every run. The owner-only journal beside the report is kept as recovery
@@ -178,8 +176,8 @@ print(result.returncode, result.report.outcome.kind)
 ```
 
 Commands are literal argument tuples and never pass through a shell. The supervisor inherits the
-script's standard input, so the terminal rule applies here too: start the script with
-`python script.py < /dev/null`. Since 0.2, if the process that launched the supervisor dies, the
+script's standard input; if that is a terminal, the command reads `/dev/null` instead and the
+supervisor prints one line on stderr to say so. Since 0.2, if the process that launched the supervisor dies, the
 supervised command is stopped with it. Pass `on_parent_exit="detach"` (or
 `--on-parent-exit detach`) to let it keep running. The
 [Python API guide](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) covers
@@ -195,7 +193,7 @@ went wrong.
 |---|---|---|
 | The command's own code | The command ended by itself and nothing intervened | Nothing. The report holds the footprint samples (the latest 4,096 on a long run) and, for `observe`, the peak |
 | `75` | A policy intervention: usually the footprint limit, the wall-time cap, or the launching parent exiting. Rarer reasons, such as an ignored Ctrl-C, appear in `signals[].reason` | Read `outcome` and `signals[].reason` in the report. For `footprint`, observe again, then fix the growth or raise the limit. If the job saves checkpoints, use `checkpoint.request_id` to find the saved state |
-| `64` | Invalid command or configuration, and nothing was launched. The usual first-time cause is a terminal on standard input | Fix the option the message names, or add `< /dev/null`. After a terminal refusal, use a new report name |
+| `64` | Invalid command or configuration, and nothing was launched | Fix the option the message names |
 | `70` | The supervisor failed, usually because it lost its measurements three samples in a row or could not deliver KILL. `run` sends TERM, then KILL; `observe` sends nothing | First check whether the command is still alive: `observe` leaves it running, and a failed KILL may too. Then read `signals` and rerun. If it repeats, open an issue with the redacted report |
 | `74` | The report or journal could not be written. Before launch: the directory is missing or not owner-only, or the report path was already used. After launch: the run finished but the report is incomplete | Read the message. Use a new report name, or fix the directory (`mkdir -m 700 reports`) |
 | `126`, `127` | The executable after `--` was not runnable, or was not found | Fix the command line |
@@ -230,8 +228,8 @@ field.
   carries its signature, and [MetalGuard](https://github.com/Harperbot/metal-guard) works around
   that failure from inside the MLX process.
 
-- Not supported: an interactive terminal on standard input, shell job control, sandboxed execution,
-  and Mac App Store distribution. Direct CLI and Python-wheel distribution are the target.
+- Not supported: a command that reads the keyboard (it gets `/dev/null` instead), shell job
+  control, sandboxed execution, and Mac App Store distribution. Direct CLI and Python-wheel distribution are the target.
 
 ## Documentation
 
@@ -258,7 +256,7 @@ in the same release:
 
 | Contract | Defines |
 |---|---|
-| [CLI](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md) | Unit grammar, exit codes, signal rules, the noninteractive terminal boundary |
+| [CLI](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md) | Unit grammar, exit codes, signal rules, what the command gets on standard input |
 | [Policy](https://github.com/IonDen/mlx-guard/blob/main/docs/POLICY.md) | Thresholds, measurement quality, checkpoint evidence, escalation timelines |
 | [Reports and privacy](https://github.com/IonDen/mlx-guard/blob/main/docs/REPORTS.md) | Schema v1 and default redaction |
 | [Footprint sampling](https://github.com/IonDen/mlx-guard/blob/main/docs/SAMPLING.md) | Measurement windows, freshness, partial results, sleep/wake behavior |

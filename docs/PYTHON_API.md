@@ -29,10 +29,10 @@ print(result.returncode, result.report.outcome.kind)
 ```
 
 Configurations are frozen dataclasses. Commands remain literal argument tuples and never pass
-through a shell. The supervisor inherits the caller's standard input, and it refuses an interactive
-terminal there. A script started from a terminal gets a `RunResult` with return code `64` and
-`invalid_configuration`. Start it with `< /dev/null`, or any non-terminal input. The refused run
-still writes its report, so the next attempt needs a new report path.
+through a shell. The supervisor inherits the caller's standard input. If that is a terminal, the
+supervised command reads `/dev/null` instead and the supervisor prints one line on stderr (captured
+in `RunResult.stderr` under `capture_output=True`); a file or a pipe on the script's standard input
+reaches the command unchanged. Give the script `< /dev/null` yourself if you want that line gone.
 
 `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()` methods return
 the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor; calling it again

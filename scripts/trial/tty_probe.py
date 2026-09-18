@@ -1,4 +1,4 @@
-"""T0: exercise the interactive-terminal refusal through a real pseudo-terminal."""
+"""T0: exercise the terminal-on-stdin behaviour through a real pseudo-terminal."""
 
 import os
 import pty
@@ -52,13 +52,13 @@ def _spawn_under_pty(
 
 
 def run_probe(binary: Path, workdir: Path, command: tuple[str, ...]) -> dict[str, object]:
-    """Run a bare pty launch (expect 64) and a `< /dev/null` remedy (expect 0), under ``workdir``.
+    """Run a bare pty launch and a `< /dev/null` launch (both expect 0), under ``workdir``.
 
     Returns the two exit codes plus each launch's captured pty output.
     """
     reports = workdir / "reports"
     reports.mkdir(mode=0o700, exist_ok=True)
-    bare = [str(binary), "observe", "--report", str(reports / "t0-refused.json"), "--", *command]
+    bare = [str(binary), "observe", "--report", str(reports / "t0-bare.json"), "--", *command]
     remedy = [
         str(binary),
         "observe",

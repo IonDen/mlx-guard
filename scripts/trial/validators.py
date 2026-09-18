@@ -152,18 +152,20 @@ def assert_cooperative(report: Report, *, reason: str) -> Mapping[str, Any]:
     return cp
 
 
+TERMINAL_LINE = "mlx-guard: standard input is a terminal, so the command reads from /dev/null instead"
+
+
 def assert_tty_probe(probe: Mapping[str, Any]) -> None:
     """Assert T0's shape.
 
-    A terminal on stdin is refused (64, the documented message); the redirect remedy runs.
+    A terminal on stdin runs (exit 0) with the one documented stderr line; the same launch with
+    stdin redirected from `/dev/null` runs silently. (Until 0.2.0 the bare launch was refused
+    with 64.)
     """
-    if (
-        probe["bare_exit"] != 64
-        or "interactive terminal input is unsupported" not in probe["bare_stderr"]
-    ):
-        raise ShapeError(f"bare pty launch should be refused with 64, got {probe}")
-    if probe["remedy_exit"] != 0:
-        raise ShapeError(f"redirected stdin under the same pty should run, got {probe}")
+    if probe["bare_exit"] != 0 or TERMINAL_LINE not in probe["bare_stderr"]:
+        raise ShapeError(f"bare pty launch should run with the terminal line, got {probe}")
+    if probe["remedy_exit"] != 0 or TERMINAL_LINE in probe["remedy_stderr"]:
+        raise ShapeError(f"redirected stdin under the same pty should run silently, got {probe}")
 
 
 def assert_resume(marker: Mapping[str, Any], c1_meta: Mapping[str, Any], c1_report: Report) -> None:

@@ -411,7 +411,6 @@ pub struct LaunchOptions {
 pub enum LaunchErrorKind {
     EmptyCommand,
     InvalidWorkingDirectory,
-    InteractiveTerminalUnsupported,
     NotFound,
     NotExecutable,
     SpawnFailed,
@@ -450,9 +449,6 @@ impl fmt::Display for LaunchError {
         let message = match self.kind {
             LaunchErrorKind::EmptyCommand => "command argv is empty",
             LaunchErrorKind::InvalidWorkingDirectory => "child working directory is invalid",
-            LaunchErrorKind::InteractiveTerminalUnsupported => {
-                "interactive terminal input is unsupported"
-            }
             LaunchErrorKind::NotFound => "command was not found",
             LaunchErrorKind::NotExecutable => "command is not executable",
             LaunchErrorKind::SpawnFailed => "command launch failed",
@@ -475,18 +471,32 @@ impl Error for LaunchError {
     }
 }
 
-/// Reject the frozen v0.1 interactive-terminal boundary.
-///
-/// # Errors
-///
-/// Returns [`LaunchErrorKind::InteractiveTerminalUnsupported`] when `is_interactive` is true.
-pub fn validate_noninteractive_terminal(is_interactive: bool) -> Result<(), LaunchError> {
-    if is_interactive {
-        return Err(LaunchError::new(
-            LaunchErrorKind::InteractiveTerminalUnsupported,
-        ));
+/// How the root's standard input was resolved at launch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StdinDisposition {
+    /// The requested [`StdioMode`] was applied unchanged.
+    AsRequested,
+    /// `Inherit` was requested while the supervisor's own standard input is a terminal, so the
+    /// root received `/dev/null` instead. The supervisor never implements foreground
+    /// process-group transfer, and a terminal handed to a background group would stop the root
+    /// on its first read.
+    TerminalReplacedWithNull,
+}
+
+/// Resolve the root's standard input from the requested mode and whether the supervisor's own
+/// standard input is a terminal. Only an inherited terminal is rewritten; a piped or null request
+/// and every non-terminal inherited input pass through unchanged.
+#[must_use]
+pub const fn resolve_stdin(
+    requested: StdioMode,
+    supervisor_stdin_is_terminal: bool,
+) -> (StdioMode, StdinDisposition) {
+    match requested {
+        StdioMode::Inherit if supervisor_stdin_is_terminal => {
+            (StdioMode::Null, StdinDisposition::TerminalReplacedWithNull)
+        }
+        requested => (requested, StdinDisposition::AsRequested),
     }
-    Ok(())
 }
 
 /// Root status retained independently from descendant cleanup.
@@ -727,6 +737,7 @@ pub struct OwnedProcess {
     process_group: NonZeroI32,
     root_outcome: Option<RootOutcome>,
     cleanup_on_drop: bool,
+    stdin_disposition: StdinDisposition,
 }
 
 impl OwnedProcess {
@@ -759,9 +770,7 @@ impl OwnedProcess {
         options: &LaunchOptions,
         checkpoint: Option<&CheckpointWorkerEndpoint>,
     ) -> Result<Self, LaunchError> {
-        if options.stdin == StdioMode::Inherit {
-            validate_noninteractive_terminal(io::stdin().is_terminal())?;
-        }
+        let (stdin, stdin_disposition) = resolve_stdin(options.stdin, io::stdin().is_terminal());
         let executable = options
             .command
             .first()
@@ -783,7 +792,7 @@ impl OwnedProcess {
         }
         command.envs(&options.env);
         command
-            .stdin(options.stdin.open())
+            .stdin(stdin.open())
             .stdout(options.stdout.open())
             .stderr(options.stderr.open())
             .process_group(0);
@@ -855,7 +864,14 @@ impl OwnedProcess {
             process_group: root_pid,
             root_outcome,
             cleanup_on_drop: true,
+            stdin_disposition,
         })
+    }
+
+    /// Return how the root's standard input was resolved at launch.
+    #[must_use]
+    pub const fn stdin_disposition(&self) -> StdinDisposition {
+        self.stdin_disposition
     }
 
     /// Return the root PID as reported by the operating system.
