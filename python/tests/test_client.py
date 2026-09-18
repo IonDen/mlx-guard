@@ -1,5 +1,7 @@
 import dataclasses
 import json
+import os
+import pty
 import signal
 import subprocess
 import sys
@@ -9,7 +11,7 @@ import traceback
 import unittest
 from collections.abc import Mapping
 from pathlib import Path
-from typing import cast
+from typing import NoReturn, cast
 from unittest import mock
 
 import mlx_guard
@@ -744,3 +746,72 @@ with worker:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+TERMINAL_LINE = (
+    "mlx-guard: standard input is a terminal, so the command reads from /dev/null instead"
+)
+
+
+def _drain_pty(master: int) -> str:
+    """Read the pseudo-terminal until the child has exited and closed its side."""
+    chunks: list[bytes] = []
+    while True:
+        try:
+            data = os.read(master, 4096)
+        except OSError:
+            # macOS reports EIO once the slave side is closed.
+            break
+        if not data:
+            break
+        chunks.append(data)
+    return b"".join(chunks).decode(errors="replace")
+
+
+class TerminalStdinTests(unittest.TestCase):
+    """A script started from a terminal, the way the README quick start is typed."""
+
+    @staticmethod
+    def _child_main() -> NoReturn:
+        # Runs in the forked child whose stdin, stdout, and stderr are the pseudo-terminal. Writes
+        # go through the raw descriptors: under pytest, sys.stdout is a capture object.
+        code = 1
+        try:
+            with tempfile.TemporaryDirectory() as temporary:
+                result = mlx_guard.run(
+                    mlx_guard.RunConfig(
+                        command=("/bin/cat",),
+                        report=Path(temporary, "report.json"),
+                        max_footprint_bytes=1 << 40,
+                        wall_time_ms=5_000,
+                        sample_interval_ms=10,
+                    ),
+                    capture_output=True,
+                )
+                summary = f"RC={result.returncode} KIND={result.report.outcome.kind.value}\n"
+                os.write(1, summary.encode())
+                os.write(1, result.stderr or b"")
+                code = 0
+        except BaseException:  # the child must report, never unwind into the test runner
+            os.write(2, traceback.format_exc().encode())
+        finally:
+            os._exit(code)
+
+    def test_a_script_started_from_a_terminal_runs_the_command_with_dev_null(self) -> None:
+        # Red if the supervisor refuses a terminal on standard input (exit 64,
+        # `invalid_configuration`: the 0.2.0 behaviour that failed both README quick starts), if
+        # start() stops inheriting stdin so the supervisor no longer sees the terminal, or if the
+        # one-line diagnostic is missing from the supervisor's stderr. /bin/cat with the terminal
+        # passed on would block until the wall time ends it with 75.
+        pid, master = pty.fork()
+        if pid == 0:
+            self._child_main()
+        try:
+            output = _drain_pty(master)
+        finally:
+            os.close(master)
+        _, status = os.waitpid(pid, 0)
+
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0, output)
+        self.assertIn("RC=0 KIND=child_exited", output)
+        self.assertIn(TERMINAL_LINE, output)

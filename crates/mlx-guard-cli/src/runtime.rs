@@ -15,9 +15,9 @@ use mlx_guard_core::{
     PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults, ProcessIdentity,
     ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode,
     ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal, SignalReason,
-    SignalRecord, SignalResult, SignalTarget, StdioMode, SupervisorOutcome, TerminalKind,
-    TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason, VERSION,
-    checkpoint_signal_usr1, hangup_is_ignored, platform_support,
+    SignalRecord, SignalResult, SignalTarget, StdinDisposition, StdioMode, SupervisorOutcome,
+    TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason,
+    VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
 };
 
 use crate::completion::{
@@ -128,6 +128,7 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
             );
         }
     };
+    announce_launch(&prepared.process, None);
     let runtime = ObserveRuntime {
         inventory,
         process: prepared.process,
@@ -284,7 +285,7 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
     };
     // The workload is now launched; announce the ceiling this run authorises. Printed only on a
     // successful launch, so a configuration or launch failure never emits a spurious banner.
-    eprintln!("{banner}");
+    announce_launch(&prepared.process, Some(&banner));
     let checkpoint_signal = checkpoint_signal_usr1();
     let binding = CheckpointBinding::new(
         &mut checkpoint_channel,
@@ -1499,13 +1500,26 @@ fn early_exit_or_failure(
     }
 }
 
+/// Announce a successful launch on stderr: first, only when the command did not receive the
+/// terminal the supervisor itself was started with, one line saying so; then the run banner, when
+/// the mode has one. Silent for every other standard input, and never printed for a failed launch.
+fn announce_launch(process: &OwnedProcess, banner: Option<&str>) {
+    if process.stdin_disposition() == StdinDisposition::TerminalReplacedWithNull {
+        eprintln!(
+            "mlx-guard: standard input is a terminal, so the command reads from /dev/null instead"
+        );
+    }
+    if let Some(banner) = banner {
+        eprintln!("{banner}");
+    }
+}
+
 fn launch_outcome(kind: mlx_guard_core::LaunchErrorKind) -> SupervisorOutcome {
     match kind {
         mlx_guard_core::LaunchErrorKind::NotFound => SupervisorOutcome::LaunchNotFound,
         mlx_guard_core::LaunchErrorKind::NotExecutable => SupervisorOutcome::LaunchNotExecutable,
         mlx_guard_core::LaunchErrorKind::EmptyCommand
         | mlx_guard_core::LaunchErrorKind::InvalidWorkingDirectory
-        | mlx_guard_core::LaunchErrorKind::InteractiveTerminalUnsupported
         | mlx_guard_core::LaunchErrorKind::InvalidCheckpointChannel => {
             SupervisorOutcome::InvalidConfiguration
         }

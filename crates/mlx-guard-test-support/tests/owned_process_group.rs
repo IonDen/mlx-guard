@@ -11,8 +11,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mlx_guard_core::{
     Action, Event, LaunchErrorKind, LaunchOptions, NativeProcessInventory, OwnedProcess,
-    PolicyConfig, PolicyMachine, RootOutcome, SignalNumber, SignalResult, StdioMode,
-    validate_noninteractive_terminal,
+    PolicyConfig, PolicyMachine, RootOutcome, SignalNumber, SignalResult, StdinDisposition,
+    StdioMode, resolve_stdin,
 };
 use mlx_guard_test_support::root_identity;
 
@@ -193,7 +193,7 @@ fn piped_stdio_round_trips_without_becoming_control_data() {
 }
 
 #[test]
-fn launch_failures_and_interactive_terminal_are_rejected_before_work() {
+fn launch_failures_are_rejected_before_work_and_a_terminal_becomes_dev_null() {
     // Catches collapsing not-found/not-executable/cwd/TTY failures into an ambiguous spawn error.
     let mut missing = fixture("short-exit", 100);
     missing.command[0] = OsString::from("/definitely/missing/mlx-guard-command");
@@ -247,12 +247,23 @@ fn launch_failures_and_interactive_terminal_are_rejected_before_work() {
         )
     };
     assert!(slave.is_terminal());
+    // A terminal is not a launch failure any more: an inherited terminal becomes /dev/null, and
+    // the caller is told so. Red if the substitution is dropped (Inherit comes back), if it is
+    // applied to a non-terminal stdin, or if it touches an explicitly piped or null stdin.
     assert_eq!(
-        validate_noninteractive_terminal(slave.is_terminal())
-            .unwrap_err()
-            .kind(),
-        LaunchErrorKind::InteractiveTerminalUnsupported
+        resolve_stdin(StdioMode::Inherit, slave.is_terminal()),
+        (StdioMode::Null, StdinDisposition::TerminalReplacedWithNull)
     );
+    assert_eq!(
+        resolve_stdin(StdioMode::Inherit, false),
+        (StdioMode::Inherit, StdinDisposition::AsRequested)
+    );
+    for requested in [StdioMode::Piped, StdioMode::Null] {
+        assert_eq!(
+            resolve_stdin(requested, true),
+            (requested, StdinDisposition::AsRequested)
+        );
+    }
 }
 
 #[test]
