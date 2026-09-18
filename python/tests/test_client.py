@@ -2,6 +2,7 @@ import dataclasses
 import json
 import os
 import pty
+import select
 import signal
 import subprocess
 import sys
@@ -744,19 +745,30 @@ with worker:
         self.assertEqual(checkpoint["request_id"], 42)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 TERMINAL_LINE = (
     "mlx-guard: standard input is a terminal, so the command reads from /dev/null instead"
 )
 
 
-def _drain_pty(master: int) -> str:
-    """Read the pseudo-terminal until the child has exited and closed its side."""
+def _drain_pty(master: int, child: int, deadline_s: float) -> str:
+    """Read the pseudo-terminal until the child has exited and closed its side.
+
+    Bounded: a child that never closes the terminal is killed and the test fails with a message,
+    instead of hanging the whole run.
+    """
     chunks: list[bytes] = []
+    deadline = time.monotonic() + deadline_s
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            os.kill(child, signal.SIGKILL)
+            raise AssertionError(
+                f"the pty child did not finish within {deadline_s}s; output so far: "
+                f"{b''.join(chunks).decode(errors='replace')!r}"
+            )
+        ready, _, _ = select.select([master], [], [], remaining)
+        if not ready:
+            continue
         try:
             data = os.read(master, 4096)
         except OSError:
@@ -807,7 +819,7 @@ class TerminalStdinTests(unittest.TestCase):
         if pid == 0:
             self._child_main()
         try:
-            output = _drain_pty(master)
+            output = _drain_pty(master, pid, deadline_s=20.0)
         finally:
             os.close(master)
         _, status = os.waitpid(pid, 0)
@@ -815,3 +827,7 @@ class TerminalStdinTests(unittest.TestCase):
         self.assertEqual(os.waitstatus_to_exitcode(status), 0, output)
         self.assertIn("RC=0 KIND=child_exited", output)
         self.assertIn(TERMINAL_LINE, output)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -22,12 +22,10 @@ versions follow Semantic Versioning.
   command receives `/dev/null` instead, and the supervisor prints one stderr line:
   `mlx-guard: standard input is a terminal, so the command reads from /dev/null instead`. Any other
   standard input (a file, a pipe, an explicit `< /dev/null`) reaches the command unchanged and
-  prints nothing. Until 0.2.0 the same launch exited `64` with
+  prints nothing. Through 0.2.0 the same launch exited `64` with
   `interactive terminal input is unsupported` before starting anything, which is what every README
-  quick-start command and the Python example did when typed into Terminal; the retry with the same
-  report path then exited `74`. `LaunchErrorKind::InteractiveTerminalUnsupported` and
-  `validate_noninteractive_terminal` are gone from the core crate; `resolve_stdin` and
-  `OwnedProcess::stdin_disposition` replace them. Shell job control is still unsupported: a command
+  quick-start command and the Python example did when typed into Terminal; the CLI retry with the
+  same report path then exited `74`. Shell job control is still unsupported: a command
   that must read the keyboard cannot run under `mlx-guard`. The `< /dev/null` advice is removed from
   the README, `docs/EXAMPLES.md`, and `docs/PYTHON_API.md`.
 - Documentation only. `docs/PYTHON_API.md` now says which error permits a library to fall back to

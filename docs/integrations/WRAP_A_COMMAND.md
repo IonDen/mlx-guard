@@ -32,7 +32,7 @@ page are `python3`, used below to build the demo workload, and `jq` for the repo
 
 The transcripts below end in `< /dev/null`, which is how they were recorded. Typed into a
 terminal without it, every command still works: the supervised command reads `/dev/null` instead of
-the terminal, and `mlx-guard` prints one stderr line saying so before the output shown here.
+the terminal, and `mlx-guard` prints one stderr line saying so alongside the output shown here.
 
 ## The ladder
 

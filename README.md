@@ -193,7 +193,7 @@ went wrong.
 |---|---|---|
 | The command's own code | The command ended by itself and nothing intervened | Nothing. The report holds the footprint samples (the latest 4,096 on a long run) and, for `observe`, the peak |
 | `75` | A policy intervention: usually the footprint limit, the wall-time cap, or the launching parent exiting. Rarer reasons, such as an ignored Ctrl-C, appear in `signals[].reason` | Read `outcome` and `signals[].reason` in the report. For `footprint`, observe again, then fix the growth or raise the limit. If the job saves checkpoints, use `checkpoint.request_id` to find the saved state |
-| `64` | Invalid command or configuration, and nothing was launched | Fix the option the message names. The report path was still used, so rerun with a new report name |
+| `64` | Invalid command or configuration, and nothing was launched | Fix the option the message names |
 | `70` | The supervisor failed, usually because it lost its measurements three samples in a row or could not deliver KILL. `run` sends TERM, then KILL; `observe` sends nothing | First check whether the command is still alive: `observe` leaves it running, and a failed KILL may too. Then read `signals` and rerun. If it repeats, open an issue with the redacted report |
 | `74` | The report or journal could not be written. Before launch: the directory is missing or not owner-only, or the report path was already used. After launch: the run finished but the report is incomplete | Read the message. Use a new report name, or fix the directory (`mkdir -m 700 reports`) |
 | `126`, `127` | The executable after `--` was not runnable, or was not found | Fix the command line |

@@ -128,7 +128,6 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
             );
         }
     };
-    announce_launch(&prepared.process, None);
     let runtime = ObserveRuntime {
         inventory,
         process: prepared.process,
@@ -285,7 +284,7 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
     };
     // The workload is now launched; announce the ceiling this run authorises. Printed only on a
     // successful launch, so a configuration or launch failure never emits a spurious banner.
-    announce_launch(&prepared.process, Some(&banner));
+    eprintln!("{banner}");
     let checkpoint_signal = checkpoint_signal_usr1();
     let binding = CheckpointBinding::new(
         &mut checkpoint_channel,
@@ -465,6 +464,7 @@ fn prepare_observe_worker(
             outcome: launch_outcome(error.kind()),
             diagnostic: error.to_string(),
         })?;
+    announce_stdin_disposition(&process);
     let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
@@ -507,6 +507,7 @@ fn prepare_run_worker(
         outcome: launch_outcome(error.kind()),
         diagnostic: error.to_string(),
     })?;
+    announce_stdin_disposition(&process);
     let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
@@ -1500,17 +1501,15 @@ fn early_exit_or_failure(
     }
 }
 
-/// Announce a successful launch on stderr: first, only when the command did not receive the
-/// terminal the supervisor itself was started with, one line saying so; then the run banner, when
-/// the mode has one. Silent for every other standard input, and never printed for a failed launch.
-fn announce_launch(process: &OwnedProcess, banner: Option<&str>) {
+/// Tell the operator, once and on stderr, when the command did not receive the terminal the
+/// supervisor itself was started with. Printed as soon as the launch succeeded, before identity
+/// inspection, so a command that exits at once still gets the line. Silent for every other
+/// standard input, and never printed for a failed launch.
+fn announce_stdin_disposition(process: &OwnedProcess) {
     if process.stdin_disposition() == StdinDisposition::TerminalReplacedWithNull {
         eprintln!(
             "mlx-guard: standard input is a terminal, so the command reads from /dev/null instead"
         );
-    }
-    if let Some(banner) = banner {
-        eprintln!("{banner}");
     }
 }
 

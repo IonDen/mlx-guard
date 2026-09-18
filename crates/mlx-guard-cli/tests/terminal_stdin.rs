@@ -41,7 +41,9 @@ impl TestDirectory {
 
 impl Drop for TestDirectory {
     fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
+        // Tolerant on purpose: on the regression path the supervisor may still be finalising its
+        // report here, and a second panic during unwinding would abort the whole test binary.
+        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -96,10 +98,14 @@ fn wait_bounded(mut child: Child, deadline: Duration) -> (ExitStatus, Vec<u8>, V
             let output = child.wait_with_output().unwrap();
             return (output.status, output.stdout, output.stderr);
         }
-        assert!(
-            started.elapsed() < deadline,
-            "the supervisor did not finish within {deadline:?}: the command is blocked on stdin"
-        );
+        if started.elapsed() >= deadline {
+            // Leave no orphaned supervisor or command behind on the failure path.
+            child.kill().ok();
+            child.wait().ok();
+            panic!(
+                "the supervisor did not finish within {deadline:?}: the command is blocked on stdin"
+            );
+        }
         thread::sleep(Duration::from_millis(20));
     }
 }
@@ -211,6 +217,38 @@ fn observe_with_a_terminal_on_stdin_gives_the_command_dev_null_and_says_so() {
     assert_eq!(
         report_kind(&report_path),
         mlx_guard_core::TerminalKind::ChildExited { code: 0 }
+    );
+}
+
+#[test]
+fn a_command_that_exits_at_once_still_gets_the_terminal_line() {
+    // Red if the line is printed only after identity inspection and checkpoint negotiation: a
+    // root that exits before that (the early-exit window) would run with /dev/null and say
+    // nothing. /usr/bin/true exits in microseconds, so this case lands in that window often
+    // enough on a loaded runner to matter; the line must appear either way.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let mut pty = Pty::open();
+    let child = guard()
+        .args(["observe", "--sample-interval", "10ms", "--report"])
+        .arg(&report_path)
+        .args(["--", "/usr/bin/true"])
+        .stdin(pty.stdin())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the supervisor must start");
+    let (status, _stdout, stderr) = wait_bounded(child, Duration::from_secs(10));
+
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&stderr),
+        format!("{TERMINAL_LINE}\n")
     );
 }
 

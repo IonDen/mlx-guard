@@ -64,8 +64,9 @@ the command reads `/dev/null` instead and one stderr line says so. See the
 ## Captured smoke run
 
 This output was captured on 2026-09-12 on the M1 Max reference host (macOS 26.6.2) with the 0.2.0
-release build. Timing and footprint values vary by host, so the stable facts are the typed outcome,
-sample count, and absence of signals.
+release build, with standard input redirected, so it shows no terminal line. Timing and footprint
+values vary by host, so the stable facts are the typed outcome, sample count, and absence of
+signals.
 
 ```console
 $ mlx-guard observe --sample-interval 10ms --report reports/echo.json -- /bin/echo hello
