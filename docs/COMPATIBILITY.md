@@ -30,7 +30,7 @@ is not listed is untested as well.
 |---|---|---|---|
 | Apple M1 | none | untested | — |
 | Apple M1 Pro | none | untested | — |
-| Apple M1 Max | 32 GB | verified | [0.2.0 reference bundle](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/m1-max-32gb/README.md): MacBook Pro (MacBookPro18,2), 10 cores, macOS 26.6.2 (25G83), commit `59ea303`, captured 2026-09-11; the [soak bundle](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/m1-max-32gb/soak/README.md) on the same host |
+| Apple M1 Max | 32 GB | verified | [0.2.0 reference bundle](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/m1-max-32gb/README.md): MacBook Pro (MacBookPro18,2), 10 cores, macOS 26.6.2 (25G83), commit `59ea303`, captured 2026-09-11; the [soak bundle](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/m1-max-32gb/soak/README.md) on the same host. The 0.3.0 test suite and wheel proof also pass on this host on macOS 27.0 (26A428); the bounds were not re-measured there |
 | Apple M1 Ultra | none | untested | — |
 | Apple M1 (Virtual), GitHub `macos-15` runner | 7 GB, 3 vCPU | verified, shared VM | Full macOS suite on every push to `main`; [pooled escalation-envelope captures](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/github-macos-15-shared/README.md): workflow run 34591393999, commit `9d42fc8`, captured 2026-09-11 |
 | Apple M2 | none | untested | — |

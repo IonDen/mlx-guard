@@ -7,9 +7,10 @@ pure-Python `mlx_guard` package. There is no PyO3 module and no enforcement loop
 
 Releases publish `py3-none-macosx_11_0_arm64`. The Python code supports CPython 3.10 through 3.14,
 and the native executable requires Apple Silicon. The platform tag is the binary deployment target,
-not evidence that every macOS release from 11 onward has been tested. The verified local runtime is
-macOS 26.6.2 on the reference host in the [compatibility matrix](COMPATIBILITY.md), with
-publication also gated on the `macos-15` arm64 CI runner. The wheel includes the
+not evidence that every macOS release from 11 onward has been tested. The reference measurements
+were taken on macOS 26.6.2 on the host in the [compatibility matrix](COMPATIBILITY.md); the 0.3.0
+test suite and wheel proof also pass on macOS 27.0 on that host, without new measurements.
+Publication is also gated on the `macos-15` arm64 CI runner. The wheel includes the
 Apache license, third-party terms, a PEP 561 `py.typed` marker, and a CycloneDX Rust SBOM.
 
 `mlx_guard.__version__` comes from installed package metadata. `mlx_guard.binary_version()` runs the
