@@ -2,10 +2,10 @@
 
 ## Release target
 
-| Component | Supported in 0.2.x |
+| Component | Supported in 0.3.x |
 |---|---|
 | Hardware | Apple Silicon (`arm64`) |
-| Verified local runtime | macOS 26.6.2 (see the [compatibility matrix](COMPATIBILITY.md)) |
+| Verified local runtime | macOS 26.6.2 for the reference measurements; the 0.3.0 test suite and wheel proof also pass on macOS 27.0 on the same host, bounds not re-measured (see the [compatibility matrix](COMPATIBILITY.md)) |
 | Required release CI | GitHub `macos-15` arm64 |
 | Python | CPython 3.10–3.14 |
 | Installation | `py3-none-macosx_11_0_arm64` wheel |

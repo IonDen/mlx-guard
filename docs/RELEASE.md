@@ -85,7 +85,7 @@ or measurement code has changed.
 
 ## Publish
 
-Create and push the signed tag `vX.Y.Z` only after the preflight and branch checks pass. The release
+Create and push the annotated tag `vX.Y.Z` (signed once a signing key is configured) only after the preflight and branch checks pass. The release
 workflow rebuilds and tests the artifacts on macOS, then the isolated `pypi` job uses Trusted
 Publishing to upload the wheel with a PyPI publication attestation. The sdist remains a reviewed
 source artifact because unsupported platforms must not fall back to a native build. Publication is
