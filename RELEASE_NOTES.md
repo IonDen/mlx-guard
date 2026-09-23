@@ -1,65 +1,56 @@
-# mlx-guard 0.2.0
+# mlx-guard 0.3.0
 
-`mlx-guard` 0.2.0 is the second alpha of the external runtime safety supervisor for MLX workloads on
+`mlx-guard` 0.3.0 is the third alpha of the external runtime safety supervisor for MLX workloads on
 Apple Silicon. It launches one command in an owned process group, samples the group's
 macOS-accounted footprint, and applies an explicit memory limit and optional wall-time limit from
-outside the process. This release is about hardening what 0.1.0 shipped: the fail-closed paths that
-could terminate a healthy run are fixed, the awkward exits (root gone, parent gone, terminal hung
-up) have defined behavior, and every public surface now has a written stability status and a
-committed measurement behind its published bounds.
+outside the process. This is a small release about the first minutes with the tool: the commands in
+the README now work when you type them into Terminal, and the documentation follows one real job from
+the first run to the fix.
 
-Three changes, plus the exit-code moves two paragraphs below, need attention when upgrading.
-`ObserveConfig` and `RunConfig` are keyword-only; positional construction raises `TypeError`. When
-the process that launched `mlx-guard` exits, the owned group is now terminated by default and the
-run reports a policy intervention (exit 75); pass `--on-parent-exit=detach` or
-`on_parent_exit="detach"` to keep the old behavior. The cooperative checkpoint acknowledgement
-timeout rose from 100 ms to 1 s, and `run` accepts `--checkpoint-timeout` (10ms to 60s) to set it.
+One behavior change needs attention when upgrading. Through 0.2.0, a terminal on the supervisor's
+standard input refused the launch with exit 64 and `interactive terminal input is unsupported`,
+before anything started. Every quick-start command did exactly that when typed into Terminal, and a
+retry with the same report path then exited 74. From 0.3.0 the supervised command reads `/dev/null`
+instead, and the supervisor prints one line on stderr:
 
-Two bugs in 0.1.0 could stop a workload that was under its limit. A tracked child exiting between
-samples counted as a missing sample, so a command that retired short-lived children quickly tripped
-the fail-closed path in three intervals. A reading whose process-tree walk took longer than one
-sample interval was judged unusable, so a busy machine or a large tree could do the same. A
-confirmed child exit is now a containment event, and the freshness bounds have a floor independent
-of the interval. Both fixes are pinned by real-process tests; the release's soak run also exercises
-the first one at six escaping spawners.
+```
+mlx-guard: standard input is a terminal, so the command reads from /dev/null instead
+```
 
-Exit codes moved in two places. A root command that exits while other group members are still
-running gets a cleanup TERM, a one-second grace, and KILL if needed; the root's own status is
-reported unless KILL was required. A run that loses measurement while enforcement is active now
-exits 70 with its signals recorded, not 75. SIGHUP is captured and forwarded like SIGINT and
-SIGTERM, so closing the terminal no longer kills the supervisor without a report.
+A file, a pipe, or an explicit `< /dev/null` still reaches the command unchanged, and nothing extra
+is printed, so scripts that already redirect standard input see no difference. The Python client
+behaves the same way, because it passes the calling script's standard input to the supervisor. Shell
+job control is still unsupported: the command runs in its own process group, so a program that must
+read the keyboard cannot run under `mlx-guard`.
 
-Reports gained the fields a later process needs: the root's own `child_status`, survivors at root
-exit (observe reports), a `reason` on every signal, `escaped_count`, the parent-watch state, and on
-a completed checkpoint the `request_id`, `reason`, and path-free `artifact` facts, so a resume can
-join an interrupted run back to what the worker actually saved. Observe reports carry a
-`calibration` section with the highest complete footprint seen over the whole run, which is the
-number a limit should be chosen from; it is always marked `safety_certified: false`.
+The new tutorial, `TUTORIAL.md`, follows one ordinary job through the guard: a local-LLM document
+summarizer with a real memory leak, run under `observe`, then under a footprint limit, then with a
+cooperative checkpoint and a resume loop, and finally fixed. Its transcripts and reports were
+recorded on the reference host. The README now opens with that recorded intervention and a figure
+drawn from its report, puts the quick start in numbered steps, and adds a table that says, for each
+exit code, what happened and what to do next. The Python API guide says when a library may fall back
+to running a command without the guard, and what a worker should do when its checkpoint callback
+fails.
 
-The documentation set grew a stability table (`docs/STABILITY.md`) that says what may still change
-before 1.0 and how, a hardware compatibility matrix (`docs/COMPATIBILITY.md`) in which every cell is
-either backed by a committed bundle or marked untested, and two integration guides under
-`docs/integrations/` for wrapping a command without an adapter and for a Python library that wants a
-cooperative checkpoint and a resume key. `scripts/calibrate-host.sh` produces the calibration bundle
-for any Apple Silicon Mac in one command, and an issue template turns such a bundle into a
-community-measured cell.
+`mlx-train-perf` 0.8.0 is the first library to ship an `mlx-guard` integration. Its proof was
+re-recorded on the published 0.2.0 wheel and lives under `evidence/v0.2.0/mlx-train-perf/`: a
+checkpointed wall-time intervention with the saved partial artifact and matching request ids, plus
+the failure paths the library's own tests pin.
 
-Evidence for this release lives under `evidence/v0.2.0/`: the M1 Max 32 GB reference bundle
-(footprint accuracy, sampling cost, intervention latency, lifecycle scenarios, a 30-minute endurance
-run, and the escalation envelope, pooled with captures from GitHub's shared `macos-15` runner), a
-two-hour soak covering escaping churn, idle endurance, and in-group pid churn, and an in-house trial
-that ran an `mlx-lm` LoRA fine-tune and an `mflux` image generation under real limits. The runtime
-evidence is from macOS 26.6.2; the release workflow must also pass on the `macos-15` arm64 runner
-before publication. Intel Macs and other operating systems are not release targets.
+No sampling, policy, identity, or intervention code changed in this release, so the 0.2.0
+measurements under `evidence/v0.2.0/` still describe it: the M1 Max 32 GB reference bundle, the
+two-hour soak, and the escalation envelope. The reference-host evidence is from macOS 26.6.2. The
+release workflow must also pass on GitHub's `macos-15` arm64 runner before publication. Intel Macs
+and other operating systems are not release targets.
 
-The limits from 0.1.0 still hold. Sampling is periodic rather than atomic, a descendant can leave
-the process group, same-user hostile workloads are outside the threat model, and Metal allocations
-may remain charged after termination. One failure now has a name in the threat model: the IOGPU
-driver bug that panics macOS 26.4 and later under Metal workloads can fire with the footprint well
-inside any limit, and no external supervisor can reach it. Use `observe` across repeated
-representative runs before choosing a destructive limit.
+The limits from earlier releases still hold. Sampling is periodic rather than atomic, a descendant
+can leave the process group, same-user hostile workloads are outside the threat model, and Metal
+allocations may remain charged after termination. The IOGPU driver bug that panics macOS 26.4 and
+later under Metal workloads can fire with the footprint well inside any limit, and no external
+supervisor can reach it. Use `observe` across repeated representative runs before choosing a
+destructive limit.
 
-Start with the [examples](https://github.com/IonDen/mlx-guard/blob/main/docs/EXAMPLES.md), then
-read the [changelog](https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md),
-the [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md), and the
-[compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md).
+Start with the [tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL.md) or the
+[examples](https://github.com/IonDen/mlx-guard/blob/main/docs/EXAMPLES.md), then read the
+[changelog](https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md) and the
+[stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md).

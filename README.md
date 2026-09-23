@@ -38,7 +38,7 @@ It is for MLX work you launch and do not watch: fine-tunes, generation batches, 
 shell scripts. It does not fix a leak for you, and it cannot stop a kernel or driver failure;
 [Limits](https://github.com/IonDen/mlx-guard#limits-and-safety-boundary) lists what it cannot do.
 
-Version 0.2 is an alpha release. The
+Version 0.3 is an alpha release. The
 [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) says which
 surfaces may still change before 1.0. If you already use MetalGuard, the two tools guard against
 different failures and work together; the
