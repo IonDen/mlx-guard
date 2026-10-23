@@ -5,7 +5,6 @@ import signal
 import socket
 import struct
 import threading
-import traceback
 import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -84,20 +83,53 @@ class CheckpointWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 mlx_guard.CheckpointCallbackError,
                 "^checkpoint callback failed$",
+            ):
+                worker.poll()
+
+        acknowledgement = _read_frame(supervisor)
+        supervisor.close()
+        self.assertEqual(acknowledgement[50], 2)
+
+    def test_callback_exception_is_kept_as_the_cause(self) -> None:
+        # Catches poll() dropping the callback's own exception from the raised error.
+        supervisor, inherited_fd = _checkpoint_pair()
+        supervisor.sendall(_hello())
+        callback_error = OSError("disk full while saving the checkpoint")
+
+        def checkpoint(_request: mlx_guard.CheckpointRequest) -> mlx_guard.CheckpointResponse:
+            raise callback_error
+
+        with _worker_environment(inherited_fd):
+            worker = mlx_guard.CheckpointWorker.connect(checkpoint)
+        assert worker is not None
+        with worker:
+            _read_frame(supervisor)
+            supervisor.sendall(_request(request_id=9, deadline_ns=9_000_000))
+            os.kill(os.getpid(), signal.SIGUSR1)
+            with self.assertRaisesRegex(
+                mlx_guard.CheckpointCallbackError,
+                "^checkpoint callback failed$",
             ) as raised:
                 worker.poll()
 
         acknowledgement = _read_frame(supervisor)
         supervisor.close()
         self.assertEqual(acknowledgement[50], 2)
-        rendered = "".join(
-            traceback.format_exception(
-                type(raised.exception), raised.exception, raised.exception.__traceback__
-            )
-        )
-        self.assertNotIn(callback_canary, rendered)
-        self.assertIsNone(raised.exception.__cause__)
-        self.assertIsNone(raised.exception.__context__)
+        self.assertIs(raised.exception.__cause__, callback_error)
+
+    def test_keyboard_interrupt_in_callback_sends_failed_and_propagates(self) -> None:
+        # Catches poll() swallowing Ctrl-C into a CheckpointCallbackError.
+        interrupt = KeyboardInterrupt()
+        acknowledgement, raised = _poll_with_interrupting_callback(interrupt)
+        self.assertIs(raised, interrupt)
+        self.assertEqual(acknowledgement[50], 2)
+
+    def test_system_exit_in_callback_sends_failed_and_propagates(self) -> None:
+        # Catches poll() turning sys.exit() inside the callback into a CheckpointCallbackError.
+        request_exit = SystemExit(3)
+        acknowledgement, raised = _poll_with_interrupting_callback(request_exit)
+        self.assertIs(raised, request_exit)
+        self.assertEqual(acknowledgement[50], 2)
 
     def test_callback_must_explicitly_declare_a_result(self) -> None:
         supervisor, inherited_fd = _checkpoint_pair()
@@ -171,6 +203,34 @@ def _checkpoint_pair() -> tuple[socket.socket, int]:
 
 def _invalid_callback(_request: mlx_guard.CheckpointRequest) -> mlx_guard.CheckpointResponse:
     return cast(mlx_guard.CheckpointResponse, None)
+
+
+def _poll_with_interrupting_callback(
+    interrupt: BaseException,
+) -> tuple[bytes, BaseException | None]:
+    """Poll once with a callback that raises ``interrupt``; return the ack and what escaped."""
+    supervisor, inherited_fd = _checkpoint_pair()
+    supervisor.sendall(_hello())
+
+    def checkpoint(_request: mlx_guard.CheckpointRequest) -> mlx_guard.CheckpointResponse:
+        raise interrupt
+
+    with _worker_environment(inherited_fd):
+        worker = mlx_guard.CheckpointWorker.connect(checkpoint)
+    assert worker is not None
+    raised: BaseException | None = None
+    with worker:
+        _read_frame(supervisor)
+        supervisor.sendall(_request(request_id=11, deadline_ns=9_000_000))
+        os.kill(os.getpid(), signal.SIGUSR1)
+        try:
+            worker.poll()
+        except BaseException as error:
+            raised = error
+
+    acknowledgement = _read_frame(supervisor)
+    supervisor.close()
+    return acknowledgement, raised
 
 
 @contextmanager

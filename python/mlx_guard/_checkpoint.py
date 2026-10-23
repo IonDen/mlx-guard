@@ -178,15 +178,14 @@ class CheckpointWorker:
             raise CheckpointProtocolError("checkpoint request was repeated")
         self._handled = True
         request = _decode_request(_read_frame(self._channel), self._nonce)
-        callback_failed = False
         try:
             response: object = self._callback(request)
+        except Exception as error:
+            self._send(CheckpointResponse.failed(), request.request_id)
+            raise CheckpointCallbackError("checkpoint callback failed") from error
         except BaseException:
             self._send(CheckpointResponse.failed(), request.request_id)
-            response = None
-            callback_failed = True
-        if callback_failed:
-            raise CheckpointCallbackError("checkpoint callback failed")
+            raise
         if not isinstance(response, CheckpointResponse):
             self._send(CheckpointResponse.failed(), request.request_id)
             raise CheckpointCallbackError("checkpoint callback must return CheckpointResponse")
