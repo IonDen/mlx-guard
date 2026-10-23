@@ -69,7 +69,9 @@ impl fmt::Display for StorageError {
         formatter.write_str(match self.kind {
             StorageErrorKind::InvalidPath => "artifact target path is invalid",
             StorageErrorKind::UnsafeDirectory => "artifact directory is not private and owned",
-            StorageErrorKind::JournalExists => "journal target already exists",
+            StorageErrorKind::JournalExists => {
+                "journal target already exists; choose a new --report path"
+            }
             StorageErrorKind::CreateFailed => "journal target creation failed",
             StorageErrorKind::WriteFailed => "artifact write failed",
             StorageErrorKind::SyncFailed => "artifact synchronization failed",

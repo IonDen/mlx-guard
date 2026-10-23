@@ -614,6 +614,55 @@ fn invalid_working_directory_is_configuration_failure_before_launch() {
 
 #[cfg(target_os = "macos")]
 #[test]
+fn retry_after_a_pre_launch_failure_names_the_report_path_fix() {
+    // Catches the exit-74 message for a reused report path not telling the user what to do, and a
+    // retry that launches its command or overwrites the earlier report.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let missing_cwd = directory.0.join("missing");
+    let marker = directory.0.join("worker-launched");
+    let failed = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args(["run", "--max-footprint", "1TiB", "--cwd"])
+        .arg(&missing_cwd)
+        .args(["--report"])
+        .arg(&report_path)
+        .args(["--", "/usr/bin/touch"])
+        .arg(&marker)
+        .output()
+        .expect("the command must run");
+    assert_eq!(failed.status.code(), Some(64));
+    assert!(
+        report_path.exists(),
+        "the pre-launch failure keeps its report"
+    );
+
+    let retry = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args(["run", "--max-footprint", "1TiB", "--report"])
+        .arg(&report_path)
+        .args(["--", "/usr/bin/touch"])
+        .arg(&marker)
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(retry.status.code(), Some(74));
+    assert!(retry.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&retry.stderr),
+        "mlx-guard: journal target already exists; choose a new --report path\n"
+    );
+    assert!(!marker.exists());
+    let report = mlx_guard_core::ReportV1::from_json(
+        &fs::read_to_string(&report_path).expect("the first report must survive the retry"),
+    )
+    .unwrap();
+    assert_eq!(
+        report.outcome.kind,
+        mlx_guard_core::TerminalKind::InvalidConfiguration
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
 fn late_storage_loss_does_not_stop_wall_time_intervention() {
     // Catches an artifact failure disabling the safety loop after the worker has launched.
     let directory = TestDirectory::new();
