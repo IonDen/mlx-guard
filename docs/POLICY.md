@@ -36,6 +36,14 @@ it is a no-op, because the worker is still running and was promised its acknowle
 the parent's death does not change what that workload is doing. A suppressed `ParentExited` produces
 no transition and no signal; the evidence that it happened is `outcome.parent_exited_at_ms`.
 
+The delivery-failure rows mean a live member the supervisor could not signal. When a TERM, KILL, or
+forwarded signal meets an owned group that has no live member left, the command has already ended,
+and that is not a failure: the intervention stands (exit 75) and `child_status` records the
+command's own exit. Exit codes and their meanings are unchanged. Exit 70 for a signal delivery
+failure still means the group had a live member (or could not be scanned) and the signal was
+refused. A second terminal event or an escalation step that arrives while the group is going away
+does not produce it.
+
 Values between recovery and warning retain the previous normal or warning state. A sample at or
 above the ordinary limit contributes to the consecutive-breach count. A sample below that limit
 resets the count. A sample at or above the emergency threshold skips checkpoint and TERM grace.

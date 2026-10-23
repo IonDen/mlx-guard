@@ -5,6 +5,40 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- A command that has already ended is no longer reported as a supervisor failure. During an
+  escalation, a TERM, KILL, or forwarded signal that reaches an owned group with no live member now
+  counts as the command having ended: the intervention stands, `child_status` records the exit, and
+  the exit code is `75`. Before, a worker that was still tearing down could turn a working
+  intervention into `supervisor_failure` (exit `70`), because Darwin refuses a group signal with
+  `EPERM` while every member has exited but none is reaped yet. A refusal against a group that still
+  has a live member, or that cannot be scanned, stays a failure (`70`). Exit codes and their meanings
+  are unchanged, and report schema v1 is unchanged: such a signal is recorded as `process_missing`,
+  and `permission_denied` now means a live member remained.
+- When the package metadata is missing (vendored copies, broken installs, some frozen layouts),
+  `start()`, `supervisor_argv()`, and `load_report()` raise `SupervisorDiscoveryError`, and `start()`
+  does so before it launches anything. Before, the underlying `importlib.metadata` error escaped.
+  The documented fallback to a direct launch (`except SupervisorDiscoveryError`) now covers this case.
+
+### Changed
+
+- `CheckpointWorker.poll()` raises `CheckpointCallbackError` with the callback's own exception as
+  `__cause__`, so a traceback shows why the save failed. The error message is unchanged.
+  `KeyboardInterrupt` and `SystemExit` raised inside the callback still send the failed
+  acknowledgement, then propagate unchanged.
+- The exit-`74` message for a report path that is already in use is now
+  `journal target already exists; choose a new --report path`, so it names the fix.
+
+### Documentation
+
+- State a limit plainly: if the supervisor itself is killed with SIGKILL, the supervised command
+  keeps running. It is reparented to launchd in its own process group, only the hidden
+  `.<report-name>.journal` remains, and no final report is written. A launcher that stops a guarded
+  run should send a catchable signal (TERM or INT), which the supervisor forwards.
+- `docs/PYTHON_API.md` says to wait (bounded, for example `wait(timeout=10)`) after
+  `GuardProcess.cancel()` before the calling process exits.
+
 ## [0.3.0] - 2026-09-23
 
 ### Added

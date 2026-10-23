@@ -84,6 +84,11 @@ invocation. `--env` and `--clear-env` affect only the child.
 | Executable found but not runnable | 126 |
 | Executable not found | 127 |
 
+Exit 74 also covers a report path whose journal already exists. The supervisor prints
+`journal target already exists; choose a new --report path` and launches nothing.
+A signal that reaches an owned group with no live member means the command ended, so it does not
+produce 70; see the [policy contract](POLICY.md).
+
 A child may return a number also used by the supervisor. The typed final report distinguishes those
 cases; preserving the child's actual status takes priority over making every process code unique.
 Exit 70 outranks an intervention: if observation was lost, or the KILL signal itself could not be
