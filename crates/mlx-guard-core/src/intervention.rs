@@ -10,7 +10,8 @@ use crate::{
 use crate::{
     CheckpointArtifactMetadata, CheckpointChannel, CheckpointChannelRequestError,
     CheckpointEndpoint, CheckpointRejection, CheckpointWorkerStatus, ControlError,
-    ControlErrorKind, OwnedProcess, ProcessControlHandle, SignalResult,
+    ControlErrorKind, IdentityTracker, NativeProcessInventory, ObservationFailureKind,
+    OwnedProcess, ProcessControlHandle, ProcessIdentity, SignalResult, TrackingFrame,
 };
 
 /// Maximum number of recent intervention attempts retained per run.
@@ -108,6 +109,9 @@ pub struct CheckpointObservation {
 #[derive(Debug)]
 pub struct ProcessInterventionActuator<'a> {
     process: ProcessControlHandle,
+    /// The root's exact identity, bound once so a later group scan can be identity-tracked.
+    root: Option<ProcessIdentity>,
+    process_group: i32,
     checkpoint: Option<CheckpointBinding<'a>>,
 }
 
@@ -117,6 +121,11 @@ impl<'a> ProcessInterventionActuator<'a> {
     pub fn new(process: &OwnedProcess, checkpoint: Option<CheckpointBinding<'a>>) -> Self {
         Self {
             process: process.control_handle(),
+            root: NativeProcessInventory::new()
+                .inspect(process.root_pid().cast_signed())
+                .ok()
+                .map(|observation| observation.identity),
+            process_group: process.process_group_id(),
             checkpoint,
         }
     }
@@ -202,6 +211,31 @@ impl<'a> ProcessInterventionActuator<'a> {
     pub fn owned_group_exists(&self) -> Result<bool, ControlError> {
         self.process.owned_group_exists()
     }
+
+    /// Scan the owned group once, through the same identity tracking the sampler uses.
+    ///
+    /// Without the root identity bound at construction, or with a scan that cannot run, absence
+    /// is not shown and the group is treated as live.
+    fn group_has_live_member(&self) -> bool {
+        let Some(root) = self.root else {
+            return true;
+        };
+        let Ok(mut tracker) = IdentityTracker::new(root, self.process_group) else {
+            return true;
+        };
+        let Ok(snapshot) = NativeProcessInventory::new().snapshot_for_tracker(&tracker) else {
+            return true;
+        };
+        frame_shows_live_member(&tracker.update(snapshot))
+    }
+
+    fn classify_group_signal(
+        &self,
+        result: Result<SignalResult, ControlError>,
+    ) -> Result<ActuationOutcome, ActuationFailure> {
+        let result = result.map_err(|error| map_control_error(error.kind()))?;
+        map_group_signal_result(result, || self.group_has_live_member())
+    }
 }
 
 #[cfg(unix)]
@@ -235,21 +269,11 @@ impl InterventionActuator for ProcessInterventionActuator<'_> {
                 }
                 result
             }
-            Actuation::Term { .. } => self
-                .process
-                .terminate_group()
-                .map_err(|error| map_control_error(error.kind()))
-                .and_then(|result| map_signal_result(result, false)),
-            Actuation::Kill => self
-                .process
-                .kill_group()
-                .map_err(|error| map_control_error(error.kind()))
-                .and_then(|result| map_signal_result(result, false)),
-            Actuation::ForwardSignal(signal) => self
-                .process
-                .forward_terminal_signal(signal)
-                .map_err(|error| map_control_error(error.kind()))
-                .and_then(|result| map_signal_result(result, false)),
+            Actuation::Term { .. } => self.classify_group_signal(self.process.terminate_group()),
+            Actuation::Kill => self.classify_group_signal(self.process.kill_group()),
+            Actuation::ForwardSignal(signal) => {
+                self.classify_group_signal(self.process.forward_terminal_signal(signal))
+            }
         }
     }
 }
@@ -276,6 +300,37 @@ fn map_control_error(kind: ControlErrorKind) -> ActuationFailure {
         | ControlErrorKind::TerminalSignalMonitorAlreadyInstalled
         | ControlErrorKind::ClientReadyUnavailable
         | ControlErrorKind::SignalFailed => ActuationFailure::SignalFailed,
+    }
+}
+
+/// Whether one fresh scan of the owned group shows a member a group signal could still reach.
+///
+/// Only a confirmed disappearance counts toward absence. A member that could not be read, or an
+/// enumeration that failed outright, is treated as live, because absence was not shown.
+#[cfg(unix)]
+fn frame_shows_live_member(frame: &TrackingFrame) -> bool {
+    !frame.owned_members.is_empty()
+        || frame.observation_failures.iter().any(|failure| {
+            failure.kind != ObservationFailureKind::Disappeared || failure.pid.is_none()
+        })
+}
+
+/// Classify a TERM, KILL or forwarded signal sent to the owned group.
+///
+/// Darwin refuses a group signal with EPERM, not ESRCH, while every member of the group has
+/// exited but is not yet reaped, which is where a worker that is still tearing down leaves it. A
+/// refusal is therefore the command having ended, exactly like ESRCH, unless the group still has
+/// a live member. Only then is it the delivery failure the policy machine must fail closed on.
+#[cfg(unix)]
+fn map_group_signal_result(
+    result: SignalResult,
+    group_has_live_member: impl FnOnce() -> bool,
+) -> Result<ActuationOutcome, ActuationFailure> {
+    match result {
+        SignalResult::PermissionDenied if !group_has_live_member() => {
+            Ok(ActuationOutcome::ProcessMissing)
+        }
+        result => map_signal_result(result, false),
     }
 }
 
@@ -564,15 +619,21 @@ mod tests {
     use std::os::unix::net::UnixStream;
     use std::time::{Duration, Instant};
 
+    #[cfg(target_os = "macos")]
+    use super::{Actuation, InterventionActuator};
     use super::{
-        ActuationFailure, ActuationKind, CheckpointBinding, CheckpointObservation, Event,
-        ProcessInterventionActuator,
+        ActuationFailure, ActuationKind, ActuationOutcome, CheckpointBinding,
+        CheckpointObservation, Event, ProcessInterventionActuator, frame_shows_live_member,
+        map_group_signal_result,
     };
+    #[cfg(target_os = "macos")]
+    use crate::CheckpointDisposition;
     use crate::{
-        CheckpointAcknowledgement, CheckpointArtifactKind, CheckpointArtifactMetadata,
-        CheckpointChannel, CheckpointHello, CheckpointNonce, CheckpointRequest,
-        CheckpointWorkerStatus, LaunchOptions, NativeProcessInventory, OwnedProcess,
-        ProcessIdentity, StdioMode, checkpoint_signal_usr1,
+        AggregateFootprint, CheckpointAcknowledgement, CheckpointArtifactKind,
+        CheckpointArtifactMetadata, CheckpointChannel, CheckpointHello, CheckpointNonce,
+        CheckpointRequest, CheckpointWorkerStatus, LaunchOptions, NativeProcessInventory,
+        ObservationFailure, ObservationFailureKind, OwnedProcess, ProcessIdentity,
+        ProcessObservation, SignalResult, StdioMode, TrackingFrame, checkpoint_signal_usr1,
     };
 
     /// 4-byte length header plus the 38-byte negotiation body.
@@ -687,6 +748,181 @@ mod tests {
                 "the acknowledgement never reached the supervisor"
             );
         }
+    }
+
+    fn identity(pid: i32) -> ProcessIdentity {
+        ProcessIdentity {
+            pid,
+            start_abstime: 1_000,
+        }
+    }
+
+    fn live_member(pid: i32) -> ProcessObservation {
+        ProcessObservation {
+            identity: identity(pid),
+            parent_pid: 1,
+            process_group_id: 100,
+            footprint_bytes: Some(4_096),
+            exited: false,
+        }
+    }
+
+    fn frame(
+        owned_members: Vec<ProcessObservation>,
+        observation_failures: Vec<ObservationFailure>,
+    ) -> TrackingFrame {
+        TrackingFrame {
+            owned_members,
+            escape_observed: false,
+            events: Vec::new(),
+            aggregate_footprint: AggregateFootprint::Complete(0),
+            observation_failures,
+            root_exit_observed: true,
+        }
+    }
+
+    fn failure(pid: Option<i32>, kind: ObservationFailureKind) -> ObservationFailure {
+        ObservationFailure { pid, kind }
+    }
+
+    #[test]
+    fn a_refused_group_signal_with_no_live_member_means_the_command_ended() {
+        // Catches EPERM from a group of exited, unreaped members staying a delivery failure, which
+        // turns an intervention that worked into exit 70.
+        assert_eq!(
+            map_group_signal_result(SignalResult::PermissionDenied, || false),
+            Ok(ActuationOutcome::ProcessMissing)
+        );
+    }
+
+    #[test]
+    fn a_refused_group_signal_with_a_live_member_stays_a_failure() {
+        // Catches the "ended" reading swallowing a real refusal: a live member the supervisor may
+        // not signal is exactly the failure exit 70 exists for.
+        assert_eq!(
+            map_group_signal_result(SignalResult::PermissionDenied, || true),
+            Err(ActuationFailure::PermissionDenied)
+        );
+    }
+
+    #[test]
+    fn group_results_other_than_a_refusal_keep_their_meaning_whatever_the_liveness() {
+        // Catches the liveness reading leaking past EPERM: a delivered signal must stay delivered
+        // and an unexpected errno must stay a failure even for a group with no live member.
+        for live in [false, true] {
+            assert_eq!(
+                map_group_signal_result(SignalResult::Delivered, || live),
+                Ok(ActuationOutcome::Delivered)
+            );
+            assert_eq!(
+                map_group_signal_result(SignalResult::ProcessMissing, || live),
+                Ok(ActuationOutcome::ProcessMissing)
+            );
+            assert_eq!(
+                map_group_signal_result(SignalResult::Failed, || live),
+                Err(ActuationFailure::SignalFailed)
+            );
+        }
+    }
+
+    #[test]
+    fn a_group_with_only_confirmed_exits_has_no_live_member() {
+        // Catches a reaped root (its confirmed disappearance) being read as a live member, which
+        // would leave every refused signal to an ended group a supervisor failure.
+        assert!(!frame_shows_live_member(&frame(Vec::new(), Vec::new())));
+        assert!(!frame_shows_live_member(&frame(
+            Vec::new(),
+            vec![failure(Some(42), ObservationFailureKind::Disappeared)]
+        )));
+    }
+
+    #[test]
+    fn a_live_member_or_an_unreadable_one_keeps_the_group_alive() {
+        // Catches proof of absence being claimed without it: a live member, a member that could
+        // not be read, or an enumeration that failed outright all leave the refusal a failure.
+        assert!(frame_shows_live_member(&frame(
+            vec![live_member(42)],
+            Vec::new()
+        )));
+        for kind in [
+            ObservationFailureKind::PermissionDenied,
+            ObservationFailureKind::StaleIdentity,
+            ObservationFailureKind::MalformedData,
+            ObservationFailureKind::Unsupported,
+            ObservationFailureKind::EnumerationFailed,
+            ObservationFailureKind::Unavailable,
+        ] {
+            assert!(
+                frame_shows_live_member(&frame(Vec::new(), vec![failure(Some(42), kind)])),
+                "{kind:?}"
+            );
+        }
+        assert!(frame_shows_live_member(&frame(
+            Vec::new(),
+            vec![failure(None, ObservationFailureKind::Disappeared)]
+        )));
+    }
+
+    /// Launch a root that exits at once and return it after it has exited but before any reap.
+    #[cfg(target_os = "macos")]
+    fn exited_unreaped_root() -> OwnedProcess {
+        let process = OwnedProcess::launch(&LaunchOptions {
+            command: vec![OsString::from("/usr/bin/true")],
+            cwd: None,
+            clear_env: false,
+            env: BTreeMap::new(),
+            stdin: StdioMode::Null,
+            stdout: StdioMode::Null,
+            stderr: StdioMode::Null,
+        })
+        .expect("/usr/bin/true launches into its own process group");
+        let pid = process.root_pid().cast_signed();
+        let deadline = Instant::now() + READ_TIMEOUT;
+        while !NativeProcessInventory::new()
+            .inspect(pid)
+            .is_ok_and(|observation| observation.exited)
+        {
+            assert!(Instant::now() < deadline, "the root never exited");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        process
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn term_and_kill_to_an_exited_unreaped_group_report_it_missing() {
+        // Catches the actuator handing the platform's EPERM for an ended group straight to policy.
+        let process = exited_unreaped_root();
+        // The premise this classification exists for, measured on Darwin: a group whose only
+        // member has exited but is not yet reaped refuses the signal instead of reporting ESRCH.
+        assert!(matches!(
+            process.terminate_group(),
+            Ok(SignalResult::PermissionDenied)
+        ));
+        let mut actuator = ProcessInterventionActuator::new(&process, None);
+
+        let term = actuator.execute(
+            ms(0),
+            Actuation::Term {
+                checkpoint: CheckpointDisposition::SkippedNotNegotiated,
+            },
+        );
+        let kill = actuator.execute(ms(0), Actuation::Kill);
+
+        assert_eq!(term, Ok(ActuationOutcome::ProcessMissing));
+        assert_eq!(kill, Ok(ActuationOutcome::ProcessMissing));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_running_group_reads_as_live_and_an_ended_one_does_not() {
+        // Catches the liveness scan missing a running root (which would excuse a real refusal) or
+        // counting an exited, unreaped one (which would leave the ended group a failure).
+        let running = inert_root();
+        let ended = exited_unreaped_root();
+
+        assert!(ProcessInterventionActuator::new(&running, None).group_has_live_member());
+        assert!(!ProcessInterventionActuator::new(&ended, None).group_has_live_member());
     }
 
     #[test]

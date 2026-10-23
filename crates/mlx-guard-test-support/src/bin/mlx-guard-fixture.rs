@@ -5,6 +5,7 @@ use std::fs::{File, OpenOptions};
 use std::hint::black_box;
 use std::io::{self, BufRead, Read, Write};
 use std::os::fd::FromRawFd;
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::process::{Command, Stdio};
@@ -55,6 +56,17 @@ const DAEMONIZE_OBSERVATION_HOLD: Duration = Duration::from_millis(200);
 /// disk: the acknowledgement frame carries the worker's own claim, not an independently verified
 /// fact.
 const ARTIFACT_SIZE_BYTES: u64 = 1_048_576;
+
+/// Accepted range, in milliseconds, for how long a `zombie-holder` keeps the owned group alive
+/// with no live member in it.
+///
+/// The lower bound leaves the supervisor several 10 ms sampling iterations to act inside the
+/// window even on a starved runner; the upper bound keeps the unsignallable holder, which no
+/// owned-group cleanup can reach, a short-lived stray at worst.
+const HOLD_MS_RANGE: std::ops::RangeInclusive<u64> = 100..=300;
+
+/// Environment variable naming the pid a `zombie-holder` interrupts once its launcher has exited.
+const INTERRUPT_PID_ENV: &str = "MLX_GUARD_FIXTURE_INTERRUPT_PID";
 
 static CHECKPOINT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -112,6 +124,9 @@ fn run() -> Result<(), RunError> {
         "checkpoint-spoof" => run_checkpoint_worker("spoof", limits),
         "checkpoint-exit-before-ready" => run_checkpoint_worker("exit-before-ready", limits),
         "checkpoint-hang-before-ready" => run_checkpoint_worker("hang-before-ready", limits),
+        "checkpoint-fail-linger" => run_checkpoint_worker("fail-linger", limits),
+        "term-held-zombie" => run_term_held_zombie(limits),
+        "zombie-holder" => run_zombie_holder(limits),
         "short-exit" => Ok(()),
         "setsid" => run_setsid(),
         "ignore-term" => run_ignore_term(),
@@ -757,6 +772,9 @@ extern "C" fn checkpoint_signal_handler(_signal: libc::c_int) {
 }
 
 fn run_checkpoint_worker(mode: &str, limits: FixtureLimits) -> Result<(), RunError> {
+    if mode == "fail-linger" {
+        hold_ms(limits)?;
+    }
     let fd: i32 = env::var(CHECKPOINT_FD_ENV)
         .map_err(|_| RunError::usage("checkpoint descriptor is required"))?
         .parse()
@@ -812,6 +830,9 @@ fn run_checkpoint_worker(mode: &str, limits: FixtureLimits) -> Result<(), RunErr
     if mode == "blocked" {
         thread::sleep(Duration::from_millis(limits.allocation_bytes()));
     }
+    if mode == "fail-linger" {
+        return acknowledge_failure_and_exit(&mut channel, &request, limits);
+    }
     let allocation = if mode == "allocate" {
         let length = usize::try_from(limits.allocation_bytes())
             .map_err(|_| RunError::fixture("checkpoint allocation does not fit usize"))?;
@@ -850,6 +871,177 @@ fn run_checkpoint_worker(mode: &str, limits: FixtureLimits) -> Result<(), RunErr
         .and_then(|()| channel.flush())
         .map_err(|error| RunError::protocol(format!("checkpoint ack failed: {error}")))?;
     black_box(&allocation);
+    loop {
+        thread::park();
+    }
+}
+
+/// Acknowledge the request as failed and exit 1, as a worker whose checkpoint write failed does.
+///
+/// The owned group is made to outlive this root with no live member in it before the failed
+/// acknowledgement leaves, so the supervisor can only read that acknowledgement while the group is
+/// already going away: the window a slowly exiting worker opens.
+fn acknowledge_failure_and_exit(
+    channel: &mut File,
+    request: &CheckpointRequest,
+    limits: FixtureLimits,
+) -> Result<(), RunError> {
+    let holder = hold_owned_group_open(limits, None)?;
+    let failed =
+        CheckpointAcknowledgement::for_request(request, CheckpointWorkerStatus::Failed, None)
+            .encode();
+    channel
+        .write_all(&failed)
+        .and_then(|()| channel.flush())
+        .map_err(|error| RunError::protocol(format!("checkpoint ack failed: {error}")))?;
+    black_box(&holder);
+    std::process::exit(1);
+}
+
+/// Read the bounded hold, in milliseconds, that the zombie-holding modes carry in the bytes slot.
+fn hold_ms(limits: FixtureLimits) -> Result<u64, RunError> {
+    let hold = limits.allocation_bytes();
+    if !HOLD_MS_RANGE.contains(&hold) {
+        return Err(RunError::usage(format!(
+            "hold must be within {}..={} ms",
+            HOLD_MS_RANGE.start(),
+            HOLD_MS_RANGE.end()
+        )));
+    }
+    Ok(hold)
+}
+
+/// Start a `zombie-holder` and return once the owned group holds an exited, unreaped member.
+///
+/// From then until the holder's bounded hold ends, the owned group outlives every live member
+/// this root started: Darwin answers a group signal with EPERM while it holds only exited
+/// processes, which is the state a worker that is still tearing down leaves behind.
+fn hold_owned_group_open(
+    limits: FixtureLimits,
+    interrupt_pid: Option<i32>,
+) -> Result<std::process::Child, RunError> {
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let mut command = Command::new(executable);
+    command
+        .args([
+            "zombie-holder",
+            &hold_ms(limits)?.to_string(),
+            &limits.wall_time().as_millis().to_string(),
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    if let Some(pid) = interrupt_pid {
+        command.env(INTERRUPT_PID_ENV, pid.to_string());
+    }
+    let mut holder = command
+        .spawn()
+        .map_err(|error| RunError::fixture(format!("zombie holder failed: {error}")))?;
+    let stdout = holder
+        .stdout
+        .take()
+        .ok_or_else(|| RunError::fixture("zombie holder stdout unavailable"))?;
+    let mut line = String::new();
+    io::BufReader::new(stdout)
+        .read_line(&mut line)
+        .map_err(|error| RunError::fixture(format!("zombie holder read failed: {error}")))?;
+    if line.trim() != "HELD" {
+        return Err(RunError::fixture(format!(
+            "zombie holder never held the group: {line:?}"
+        )));
+    }
+    Ok(holder)
+}
+
+/// Leave the owned group, park one exited member inside it unreaped, and hold it for the bounded
+/// time in the bytes slot.
+///
+/// The holder joins its own process group in the same session, so the supervisor's group signals
+/// never reach it, and only it can reap the member it parks. It never does: once it exits, the
+/// member is reparented and reaped, and the owned group disappears.
+fn run_zombie_holder(limits: FixtureLimits) -> Result<(), RunError> {
+    let hold = hold_ms(limits)?;
+    let interrupt_pid = env::var_os(INTERRUPT_PID_ENV)
+        .map(|value| {
+            value
+                .to_str()
+                .and_then(|text| text.parse::<i32>().ok())
+                .filter(|pid| *pid > 1)
+                .ok_or_else(|| RunError::usage("interrupt pid must be a pid above 1"))
+        })
+        .transpose()?;
+    // SAFETY: these process-group calls take no pointers; failure is checked before use.
+    let owned_group = unsafe { libc::getpgrp() };
+    // SAFETY: as above; moving this process into a new group of its own in the same session.
+    if unsafe { libc::setpgid(0, 0) } == -1 {
+        return Err(RunError::fixture(format!(
+            "setpgid failed: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    let executable = env::current_exe()
+        .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
+    let member = Command::new(executable)
+        .args([
+            "short-exit",
+            "1",
+            &limits.wall_time().as_millis().to_string(),
+        ])
+        .process_group(owned_group)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| RunError::fixture(format!("parked member failed: {error}")))?;
+    let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
+    // SAFETY: `info` is writable for one siginfo_t, and WNOWAIT leaves the member unreaped.
+    if unsafe {
+        libc::waitid(
+            libc::P_PID,
+            member.id(),
+            info.as_mut_ptr(),
+            libc::WEXITED | libc::WNOWAIT,
+        )
+    } == -1
+    {
+        return Err(RunError::fixture(format!(
+            "parked member wait failed: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    write_phase("HELD")?;
+    if let Some(pid) = interrupt_pid {
+        // Reparenting to launchd is the evidence that the launching root has exited. The
+        // watchdog bounds this wait if it never does.
+        // SAFETY: getppid has no preconditions.
+        while unsafe { libc::getppid() } != 1 {
+            thread::sleep(Duration::from_millis(1));
+        }
+        // SAFETY: the pid was validated as above 1; SIGINT is a valid terminal signal.
+        if unsafe { libc::kill(pid, libc::SIGINT) } == -1 {
+            return Err(RunError::fixture(format!(
+                "interrupt failed: {}",
+                io::Error::last_os_error()
+            )));
+        }
+    }
+    thread::sleep(Duration::from_millis(hold));
+    // Dropping a `Child` neither kills nor reaps it, so the member stays parked until this exits.
+    black_box(&member);
+    Ok(())
+}
+
+/// Park an exited member in the owned group, then idle with the default TERM disposition.
+///
+/// The holder interrupts this root's parent once TERM has ended the root, so a second terminal
+/// event reaches the supervisor while the owned group is going away with no live member.
+fn run_term_held_zombie(limits: FixtureLimits) -> Result<(), RunError> {
+    // SAFETY: getppid has no preconditions.
+    let supervisor = unsafe { libc::getppid() };
+    let holder = hold_owned_group_open(limits, Some(supervisor))?;
+    write_phase("READY mode=term-held-zombie")?;
+    black_box(&holder);
     loop {
         thread::park();
     }
