@@ -1,0 +1,280 @@
+{
+  "schema_version": 1,
+  "command": "MLX_GUARD_FIXTURE=<path> MLX_GUARD_RUNTIME_CALIBRATION_OUTPUT=<path> cargo test -p mlx-guard-cli --test reference_runtime_calibration reference_host_runtime_measurements_write_raw_and_derived_json -- --ignored --exact --nocapture",
+  "ramp": {
+    "rate_bytes_per_second": 134217728,
+    "limit_bytes": 67108864,
+    "raw": [
+      {
+        "triggering_footprint_bytes": 75071896,
+        "overshoot_bytes": 7963032,
+        "decision_at_milliseconds": 669,
+        "first_group_signal_at_milliseconds": 669,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 56
+      },
+      {
+        "triggering_footprint_bytes": 77218224,
+        "overshoot_bytes": 10109360,
+        "decision_at_milliseconds": 679,
+        "first_group_signal_at_milliseconds": 679,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 75825584,
+        "overshoot_bytes": 8716720,
+        "decision_at_milliseconds": 668,
+        "first_group_signal_at_milliseconds": 668,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 58
+      },
+      {
+        "triggering_footprint_bytes": 79315352,
+        "overshoot_bytes": 12206488,
+        "decision_at_milliseconds": 696,
+        "first_group_signal_at_milliseconds": 696,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 81084848,
+        "overshoot_bytes": 13975984,
+        "decision_at_milliseconds": 708,
+        "first_group_signal_at_milliseconds": 708,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 59
+      },
+      {
+        "triggering_footprint_bytes": 78594480,
+        "overshoot_bytes": 11485616,
+        "decision_at_milliseconds": 685,
+        "first_group_signal_at_milliseconds": 685,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 77513112,
+        "overshoot_bytes": 10404248,
+        "decision_at_milliseconds": 683,
+        "first_group_signal_at_milliseconds": 683,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 79102384,
+        "overshoot_bytes": 11993520,
+        "decision_at_milliseconds": 693,
+        "first_group_signal_at_milliseconds": 693,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 79593880,
+        "overshoot_bytes": 12485016,
+        "decision_at_milliseconds": 698,
+        "first_group_signal_at_milliseconds": 698,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 58
+      },
+      {
+        "triggering_footprint_bytes": 76153240,
+        "overshoot_bytes": 9044376,
+        "decision_at_milliseconds": 672,
+        "first_group_signal_at_milliseconds": 672,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 61
+      },
+      {
+        "triggering_footprint_bytes": 79921584,
+        "overshoot_bytes": 12812720,
+        "decision_at_milliseconds": 701,
+        "first_group_signal_at_milliseconds": 701,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 51
+      },
+      {
+        "triggering_footprint_bytes": 77857200,
+        "overshoot_bytes": 10748336,
+        "decision_at_milliseconds": 684,
+        "first_group_signal_at_milliseconds": 684,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 50
+      },
+      {
+        "triggering_footprint_bytes": 77513136,
+        "overshoot_bytes": 10404272,
+        "decision_at_milliseconds": 682,
+        "first_group_signal_at_milliseconds": 682,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 73908656,
+        "overshoot_bytes": 6799792,
+        "decision_at_milliseconds": 647,
+        "first_group_signal_at_milliseconds": 647,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 76939672,
+        "overshoot_bytes": 9830808,
+        "decision_at_milliseconds": 679,
+        "first_group_signal_at_milliseconds": 679,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 59
+      },
+      {
+        "triggering_footprint_bytes": 79413680,
+        "overshoot_bytes": 12304816,
+        "decision_at_milliseconds": 697,
+        "first_group_signal_at_milliseconds": 697,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 80298416,
+        "overshoot_bytes": 13189552,
+        "decision_at_milliseconds": 701,
+        "first_group_signal_at_milliseconds": 701,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 58
+      },
+      {
+        "triggering_footprint_bytes": 77709720,
+        "overshoot_bytes": 10600856,
+        "decision_at_milliseconds": 682,
+        "first_group_signal_at_milliseconds": 682,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 78234032,
+        "overshoot_bytes": 11125168,
+        "decision_at_milliseconds": 678,
+        "first_group_signal_at_milliseconds": 678,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      },
+      {
+        "triggering_footprint_bytes": 74023320,
+        "overshoot_bytes": 6914456,
+        "decision_at_milliseconds": 657,
+        "first_group_signal_at_milliseconds": 657,
+        "decision_to_signal_milliseconds": 0,
+        "observed_decrease_latency_milliseconds": null,
+        "finalization_latency_milliseconds": 60
+      }
+    ],
+    "overshoot_p95_bytes": 13189552,
+    "decision_to_signal_p95_milliseconds": 0,
+    "observed_decrease_count": 0,
+    "right_censored_decrease_count": 20
+  },
+  "external_terminal": [
+    {
+      "signal": "SIGTERM",
+      "raw_finalization_nanoseconds": [
+        50797125,
+        51055333,
+        51529708,
+        52865542,
+        53106375,
+        53156458,
+        53328375,
+        53496375,
+        53704083,
+        53828333,
+        53950375,
+        54011500,
+        54013750,
+        54151083,
+        54161875,
+        54916500,
+        56088083,
+        56398625,
+        56899625,
+        58124291
+      ],
+      "p95_finalization_nanoseconds": 56899625,
+      "maximum_finalization_nanoseconds": 58124291
+    },
+    {
+      "signal": "SIGINT",
+      "raw_finalization_nanoseconds": [
+        46932667,
+        47855250,
+        47924125,
+        48994333,
+        49146125,
+        49165417,
+        49227708,
+        50331042,
+        50706250,
+        50920291,
+        51237917,
+        51891375,
+        51953709,
+        52181917,
+        53064792,
+        53269083,
+        55197584,
+        55778917,
+        56170250,
+        60385667
+      ],
+      "p95_finalization_nanoseconds": 56170250,
+      "maximum_finalization_nanoseconds": 60385667
+    }
+  ],
+  "bounds": [
+    {
+      "measure": "128 MiB/s bounded-ramp threshold overshoot p95",
+      "target": "<= 16 MiB",
+      "observed": 13189552,
+      "unit": "bytes",
+      "passed": true
+    },
+    {
+      "measure": "threshold decision to first signal p95",
+      "target": "<= 10 ms",
+      "observed": 0,
+      "unit": "milliseconds",
+      "passed": true
+    },
+    {
+      "measure": "external TERM to final report p95",
+      "target": "<= 100 ms",
+      "observed": 56899625,
+      "unit": "nanoseconds",
+      "passed": true
+    },
+    {
+      "measure": "external INT to final report p95",
+      "target": "<= 100 ms",
+      "observed": 56170250,
+      "unit": "nanoseconds",
+      "passed": true
+    }
+  ]
+}

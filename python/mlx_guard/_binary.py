@@ -8,7 +8,13 @@ import os
 import stat
 import subprocess
 import sysconfig
-from importlib.metadata import Distribution, PackagePath, distribution, version
+from importlib.metadata import (
+    Distribution,
+    PackageNotFoundError,
+    PackagePath,
+    distribution,
+    version,
+)
 from pathlib import Path
 
 _DISTRIBUTION_NAME = "mlx-guard"
@@ -29,7 +35,10 @@ class BinaryVersionError(BinaryDiscoveryError):
 
 def binary_path() -> Path:
     """Return the verified executable installed for the active Python interpreter."""
-    package = distribution(_DISTRIBUTION_NAME)
+    try:
+        package = distribution(_DISTRIBUTION_NAME)
+    except PackageNotFoundError as error:
+        raise BinaryDiscoveryError("package metadata is missing") from error
     candidate = Path(sysconfig.get_path("scripts"), _BINARY_NAME)
     _validate_file(candidate)
     record = _find_record(package, candidate)
@@ -39,7 +48,10 @@ def binary_path() -> Path:
 
 def binary_version() -> str:
     """Run the verified executable and return its matching package version."""
-    expected = version(_DISTRIBUTION_NAME)
+    try:
+        expected = version(_DISTRIBUTION_NAME)
+    except PackageNotFoundError as error:
+        raise BinaryDiscoveryError("package metadata is missing") from error
     try:
         completed = subprocess.run(  # noqa: S603 - wheel RECORD authenticates the exact binary.
             [binary_path(), "--version"],

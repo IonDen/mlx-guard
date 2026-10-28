@@ -36,7 +36,9 @@ reaches the command unchanged. Give the script `< /dev/null` yourself if you wan
 
 `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()` methods return
 the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor; calling it again
-requests the native immediate-escalation path.
+requests the native immediate-escalation path. After `cancel()`, wait (bounded, for example
+`wait(timeout=10)`) before the calling process exits, so the supervisor can finish cleaning up the
+command's process group and write the report.
 
 Both `ObserveConfig` and `RunConfig` accept `on_parent_exit` (`"terminate"` or
 `"detach"`; `None`, the default, omits the flag and defers to the native default of `terminate`).
@@ -65,13 +67,21 @@ occupied report targets, missing reports, malformed reports, and exit/report con
 distinct `GuardError` subclasses. Successful journals are retained, so use a unique report path per
 run or archive/remove both the report and its `.<name>.journal` deliberately.
 
+If the supervisor process itself is killed with SIGKILL, the supervised command keeps running and
+no final report is written (see [process control](PROCESS_CONTROL.md)). Stop a guarded run with
+`cancel()` or another catchable signal, never SIGKILL.
+
 ### Falling back to a direct launch
 
 A library that launches its workload directly when `mlx-guard` is unavailable must decide by where
 the error was raised, not by its type. `start()` validates the packaged binary before it launches
 the supervisor, so a `SupervisorDiscoveryError` from `start()` means no worker ran and a direct
-launch is safe. The same exception type can also come out of `GuardProcess.wait()` or
-`GuardProcess.poll()`, because `load_report()` checks the binary version again when it reads the
+launch is safe. That includes the case where the package metadata is missing (a vendored copy, a
+broken install, some frozen layouts). `import mlx_guard` still succeeds then, and `start()`,
+`supervisor_argv()`, and `load_report()` raise `SupervisorDiscoveryError`; `start()` does so before
+it launches anything. Reading `mlx_guard.__version__` in that situation raises
+`importlib.metadata.PackageNotFoundError`. The same exception type can also come out of
+`GuardProcess.wait()` or `GuardProcess.poll()`, because `load_report()` checks the binary version again when it reads the
 final report. By then the command has already run, and launching it again would run the workload
 twice, the second time unsupervised. `SupervisorStartError` is not proof of a clean slate either:
 the readiness handshake can fail after the worker was launched. `run()` is `start()` followed by
@@ -123,7 +133,10 @@ application-level threading choice, not an mlx-guard guarantee.
 The helper sends `completed` only when the callback explicitly returns
 `CheckpointResponse.completed()`. The callback, not the helper, decides whether its bytes are
 durable. Exceptions and invalid returns send a failed acknowledgement, and `poll()` then raises
-`CheckpointCallbackError` on the thread that called it. The supervisor goes on to TERM whatever the
+`CheckpointCallbackError` on the thread that called it, with the callback's own exception as
+`__cause__`; the error message itself is fixed. `KeyboardInterrupt` and `SystemExit` raised inside
+the callback also send the failed acknowledgement, then propagate unchanged and are not wrapped.
+The supervisor goes on to TERM whatever the
 acknowledgement said. A worker that would rather be ended by that signal than by its own
 unhandled exception should catch `mlx_guard.CheckpointError` around `poll()`, log it, and keep
 its loop alive until the signal arrives. Artifact metadata contains

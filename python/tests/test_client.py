@@ -10,7 +10,9 @@ import tempfile
 import time
 import traceback
 import unittest
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from typing import NoReturn, cast
 from unittest import mock
@@ -631,6 +633,56 @@ with worker:
         ):
             mlx_guard.start(config)
 
+    def test_missing_package_metadata_fails_start_before_any_process(self) -> None:
+        # Catches start() leaking importlib's PackageNotFoundError instead of a GuardError.
+        with tempfile.TemporaryDirectory() as temporary:
+            config = mlx_guard.ObserveConfig(
+                command=("/bin/true",),
+                report=Path(temporary, "report.json"),
+            )
+            with (
+                _missing_package_metadata(),
+                mock.patch(
+                    "mlx_guard._client.subprocess.Popen",
+                    side_effect=AssertionError("no process may start without package metadata"),
+                ),
+                self.assertRaisesRegex(
+                    mlx_guard.SupervisorDiscoveryError,
+                    "^native supervisor validation failed$",
+                ),
+            ):
+                mlx_guard.start(config)
+
+    def test_missing_package_metadata_fails_supervisor_argv(self) -> None:
+        # Catches supervisor_argv() leaking importlib's PackageNotFoundError.
+        config = mlx_guard.ObserveConfig(command=("/bin/true",), report=Path("report.json"))
+        with (
+            _missing_package_metadata(),
+            self.assertRaisesRegex(
+                mlx_guard.SupervisorDiscoveryError,
+                "^native supervisor validation failed$",
+            ),
+        ):
+            mlx_guard.supervisor_argv(config)
+
+    def test_missing_package_metadata_fails_load_report(self) -> None:
+        # Catches load_report() leaking importlib's PackageNotFoundError at the version check.
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary, "report.json")
+            path.write_text(
+                '{"schema_version": 1, "package_version": "0.3.0"}',
+                encoding="utf-8",
+            )
+            path.chmod(0o600)
+            with (
+                _missing_package_metadata(),
+                self.assertRaisesRegex(
+                    mlx_guard.SupervisorDiscoveryError,
+                    "^native supervisor validation failed$",
+                ),
+            ):
+                mlx_guard.load_report(path)
+
     def test_retained_journal_rejects_report_path_before_start(self) -> None:
         # Catches loading a stale prior report after native O_EXCL rejects the retained journal.
         with tempfile.TemporaryDirectory() as temporary:
@@ -743,6 +795,22 @@ with worker:
         self.assertIsInstance(checkpoint, Mapping)
         assert isinstance(checkpoint, Mapping)
         self.assertEqual(checkpoint["request_id"], 42)
+
+
+@contextmanager
+def _missing_package_metadata() -> Iterator[None]:
+    """Simulate an install whose ``mlx-guard`` distribution metadata is absent."""
+    with (
+        mock.patch(
+            "mlx_guard._binary.distribution",
+            side_effect=PackageNotFoundError("mlx-guard"),
+        ),
+        mock.patch(
+            "mlx_guard._binary.version",
+            side_effect=PackageNotFoundError("mlx-guard"),
+        ),
+    ):
+        yield
 
 
 TERMINAL_LINE = (

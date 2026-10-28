@@ -38,7 +38,7 @@ It is for MLX work you launch and do not watch: fine-tunes, generation batches, 
 shell scripts. It does not fix a leak for you, and it cannot stop a kernel or driver failure;
 [Limits](https://github.com/IonDen/mlx-guard#limits-and-safety-boundary) lists what it cannot do.
 
-Version 0.3 is an alpha release. The
+Version 0.3.1 is an alpha release. The
 [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) says which
 surfaces may still change before 1.0. If you already use MetalGuard, the two tools guard against
 different failures and work together; the
@@ -195,7 +195,7 @@ went wrong.
 | `75` | A policy intervention: usually the footprint limit, the wall-time cap, or the launching parent exiting. Rarer reasons, such as an ignored Ctrl-C, appear in `signals[].reason` | Read `outcome` and `signals[].reason` in the report. For `footprint`, observe again, then fix the growth or raise the limit. If the job saves checkpoints, use `checkpoint.request_id` to find the saved state |
 | `64` | Invalid command or configuration, and nothing was launched | Fix the option the message names |
 | `70` | The supervisor failed, usually because it lost its measurements three samples in a row or could not deliver KILL. `run` sends TERM, then KILL; `observe` sends nothing | First check whether the command is still alive: `observe` leaves it running, and a failed KILL may too. Then read `signals` and rerun. If it repeats, open an issue with the redacted report |
-| `74` | The report or journal could not be written. Before launch: the directory is missing or not owner-only, or the report path was already used. After launch: the run finished but the report is incomplete | Read the message. Use a new report name, or fix the directory (`mkdir -m 700 reports`) |
+| `74` | The report or journal could not be written. Before launch: the directory is missing or not owner-only, or the report path was already used (`journal target already exists; choose a new --report path`). After launch: the run finished but the report is incomplete | Read the message. Use a new report name, or fix the directory (`mkdir -m 700 reports`) |
 | `126`, `127` | The executable after `--` was not runnable, or was not found | Fix the command line |
 | `128 + n` | The command was ended by signal `n`, for example a forwarded Ctrl-C | Nothing, if you sent the signal |
 
@@ -219,6 +219,11 @@ field.
 - KILL does not make the Metal driver give memory back at once.
 
 - It never chooses a destructive limit for you.
+
+- If the supervisor itself is killed with SIGKILL, the command keeps running, in its own process
+  group under launchd, and no final report is written; only the hidden `.<report-name>.journal`
+  remains. A launcher that stops a guarded run should send TERM or INT, which the supervisor
+  forwards.
 
 - It cannot act during a kernel or system-wide failure. One such failure has a name: the IOGPU
   driver bug that panics macOS 26.4 and later under Metal workloads (unfixed as of late August
@@ -281,7 +286,7 @@ Check support and evidence:
 |---|---|
 | [Support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md) | Supported platforms and release boundaries |
 | [Compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) | Which hardware setups have measured evidence, which are untested, and how to fill a cell |
-| [M1 Max 32 GB evidence](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/m1-max-32gb/README.md) | Raw 0.2 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
+| [M1 Max 32 GB evidence (0.3.1)](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.3.1/m1-max-32gb/README.md) | Raw 0.3.1 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
 | [Security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) | Vulnerability reporting |
 | [Changelog](https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md) | What changed in each release |
 

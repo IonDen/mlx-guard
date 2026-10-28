@@ -46,6 +46,28 @@ no longer has a target by the time the signal is sent, the supervisor records th
 result `process_missing` rather than treating it as a failure; it is not evidence that anything
 went wrong.
 
+On macOS, a signal to a process group whose members have all exited but are not yet reaped
+(including a process still tearing down) fails with `EPERM`, not `ESRCH`. Before treating such a
+refusal as a failure, `run` rescans the owned group by exact process identity. It counts the refusal
+as the command having ended only when no live member remains and every member was readable; the
+attempt is then recorded as `process_missing`. A refusal against a group with a live member, or one
+that cannot be scanned, stays a signal delivery failure (exit 70). This applies to the signals `run`
+sends to the owned group: TERM, KILL, and a forwarded terminal signal. `observe` does not do this
+rescan: it records a group signal as delivered or refused, as before. Checkpoint requests to the
+cooperative endpoint are unchanged.
+
+## If the supervisor is killed
+
+All cleanup of the owned group runs inside the supervisor. If the supervisor itself is killed with
+SIGKILL, nothing is left to signal the group: the command keeps running, reparented to launchd, in
+its own process group (not the launcher's). The report directory then holds only the hidden
+`.<report-name>.journal`, and no final report is written. Remove the leftover command yourself with
+`kill -KILL -<pgid>`, where the group id is the command's pid. A launcher that stops a guarded run
+should send a catchable signal (TERM or INT): the supervisor forwards it, the command ends, and the
+final report is written. If a launcher SIGKILLs the supervisor, or its whole process group, the
+workload survives. An unguarded command in the launcher's own group would end when that group is
+killed.
+
 ## Signal routing
 
 SIGHUP, SIGINT, and SIGTERM are accepted as first external terminal signals. They are forwarded

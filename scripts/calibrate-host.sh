@@ -62,34 +62,17 @@ if ! hardware_json=$(system_profiler -json SPHardwareDataType 2>&1); then
 fi
 # The calibration tests record the text report and keep only its English-labelled lines, so a
 # host whose report is in another language is refused now rather than failing forty minutes in.
-if ! system_profiler SPHardwareDataType 2>/dev/null | grep -Eq '^ *Chip:' \
-    || ! system_profiler SPHardwareDataType 2>/dev/null | grep -Eq '^ *Memory:'; then
+hardware_text=$(system_profiler SPHardwareDataType 2>/dev/null || true)
+if ! grep -Eq '^ *Chip:' <<<"$hardware_text" || ! grep -Eq '^ *Memory:' <<<"$hardware_text"; then
     echo "the hardware report is not in English; set the system language to English for the calibration run" >&2
     exit 69
 fi
 profile=$(scripts/host-profile-label.sh <<<"$hardware_json")
-# The five allowlisted hardware facts, rendered from the language-independent JSON keys, and the
+# The five allowlisted hardware facts (the JSON keys, except the core count, which comes from the
+# English text report because the JSON core code changed its field order in macOS 27), and the
 # identifiers the host reports, which the publish scan must never find in the bundle.
 hardware_facts() {
-    python3 -c '
-import json, sys
-record = json.load(sys.stdin)["SPHardwareDataType"][0]
-labels = [("Model Name", "machine_name"), ("Model Identifier", "machine_model"), ("Chip", "chip_type"),
-          ("Total Number of Cores", "number_processors"), ("Memory", "physical_memory")]
-def render(key, value):
-    # number_processors is encoded "proc T:P:E:x"; the text report says "T (P Performance and E Efficiency)".
-    parts = str(value).split()
-    if key == "number_processors" and len(parts) == 2 and parts[0] == "proc":
-        counts = parts[1].split(":")
-        if len(counts) >= 3 and all(c.isdigit() for c in counts[:3]):
-            return f"{counts[0]} ({counts[1]} Performance and {counts[2]} Efficiency)"
-    return str(value)
-if sys.argv[1] == "sanitized":
-    print("\n".join(f"{label}: {render(key, record[key])}" for label, key in labels if key in record))
-else:
-    for key in ("serial_number", "platform_UUID", "provisioning_UDID"):
-        print(record.get(key, ""))
-' "$1" <<<"$hardware_json"
+    { printf '%s\0' "$hardware_json"; printf '%s' "$hardware_text"; } | scripts/hardware-facts.sh "$1"
 }
 sanitized_hardware=$(hardware_facts sanitized)
 host_identifiers=()

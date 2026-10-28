@@ -27,6 +27,9 @@ The supervisor does not defend against:
   caller's files, or attacks the supervisor;
 - root, kernel, hypervisor, driver, hardware, or system-wide failures;
 - atomic enforcement of unified memory or immediate Metal-driver reclamation;
+- the supervisor itself being killed with SIGKILL: the supervised command keeps running, reparented
+  to launchd in its own process group, and only the hidden `.<report-name>.journal` remains. Stop a
+  guarded run with a catchable signal (TERM or INT), which the supervisor forwards;
 - availability loss between samples, before launch completes, or while durable storage fails;
 - prompt, model, dataset, checkpoint, or command-output confidentiality outside the guard report.
 

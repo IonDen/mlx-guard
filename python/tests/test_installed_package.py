@@ -7,6 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
+from importlib.metadata import PackageNotFoundError
 from pathlib import Path
 from unittest import mock
 
@@ -57,6 +58,36 @@ class InstalledPackageTests(unittest.TestCase):
                 mlx_guard.binary_path()
         finally:
             saved.rename(binary)
+
+    def test_missing_distribution_metadata_is_a_discovery_error(self) -> None:
+        # Catches binary_path() leaking importlib's PackageNotFoundError past the typed errors.
+        with (
+            mock.patch(
+                "mlx_guard._binary.distribution",
+                side_effect=PackageNotFoundError("mlx-guard"),
+            ),
+            self.assertRaisesRegex(
+                mlx_guard.BinaryDiscoveryError,
+                "^package metadata is missing$",
+            ) as raised,
+        ):
+            mlx_guard.binary_path()
+        self.assertIsInstance(raised.exception.__cause__, PackageNotFoundError)
+
+    def test_missing_version_metadata_is_a_discovery_error(self) -> None:
+        # Catches binary_version() leaking importlib's PackageNotFoundError past the typed errors.
+        with (
+            mock.patch(
+                "mlx_guard._binary.version",
+                side_effect=PackageNotFoundError("mlx-guard"),
+            ),
+            self.assertRaisesRegex(
+                mlx_guard.BinaryDiscoveryError,
+                "^package metadata is missing$",
+            ) as raised,
+        ):
+            mlx_guard.binary_version()
+        self.assertIsInstance(raised.exception.__cause__, PackageNotFoundError)
 
     def test_non_executable_packaged_binary_is_rejected(self) -> None:
         binary = mlx_guard.binary_path()
