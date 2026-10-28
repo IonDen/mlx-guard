@@ -77,9 +77,11 @@ A library that launches its workload directly when `mlx-guard` is unavailable mu
 the error was raised, not by its type. `start()` validates the packaged binary before it launches
 the supervisor, so a `SupervisorDiscoveryError` from `start()` means no worker ran and a direct
 launch is safe. That includes the case where the package metadata is missing (a vendored copy, a
-broken install, some frozen layouts): `start()`, `supervisor_argv()`, and `load_report()` raise
-`SupervisorDiscoveryError`, and `start()` does so before it launches anything. The same exception type can also come out of `GuardProcess.wait()` or
-`GuardProcess.poll()`, because `load_report()` checks the binary version again when it reads the
+broken install, some frozen layouts). `import mlx_guard` still succeeds then, and `start()`,
+`supervisor_argv()`, and `load_report()` raise `SupervisorDiscoveryError`; `start()` does so before
+it launches anything. Reading `mlx_guard.__version__` in that situation raises
+`importlib.metadata.PackageNotFoundError`. The same exception type can also come out of
+`GuardProcess.wait()` or `GuardProcess.poll()`, because `load_report()` checks the binary version again when it reads the
 final report. By then the command has already run, and launching it again would run the workload
 twice, the second time unsupervised. `SupervisorStartError` is not proof of a clean slate either:
 the readiness handshake can fail after the worker was launched. `run()` is `start()` followed by

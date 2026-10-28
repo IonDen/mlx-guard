@@ -15,8 +15,13 @@
 //! and the contract docs that describe it (`PROCESS_CONTROL.md`, `THREAT_MODEL.md`, the README
 //! limits) must change together.
 //!
-//! The command is the bounded `idle-stall` fixture (1 byte, 10 s wall ceiling, no CPU). The orphan
-//! is killed by a process-group drop guard, so a failing assertion leaves nothing behind.
+//! The command is the bounded `idle-stall` fixture (1 byte, 10 s wall ceiling, no CPU). Cleanup
+//! has two guards. Until the deliberate kill, a supervisor guard stops a still-running supervisor
+//! with SIGTERM, which it forwards to the owned group before it exits, and falls back to SIGKILL
+//! only if the supervisor has not exited within two seconds. From the moment the command's pid is
+//! known, a process-group guard SIGKILLs the owned group. A failing assertion therefore leaves
+//! nothing behind, except in the SIGKILL fallback before the command's pid is known, where the
+//! fixture's own 10 s ceiling ends the command.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -36,6 +41,10 @@ static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 /// Path to the `mlx-guard` CLI binary, a sibling of this crate's fixture binary in the cargo
 /// target directory. `CARGO_BIN_EXE_mlx-guard` exists only inside `mlx-guard-cli`, so the binary
 /// must be built first (`cargo test --workspace` and CI's `--all-targets` build it).
+///
+/// `cargo test -p mlx-guard-test-support` does not rebuild that binary, so a sibling left over
+/// from another version could stand in for the code under test. Its `--version` must name this
+/// workspace's version before it is used.
 fn mlx_guard_binary() -> PathBuf {
     let path = Path::new(FIXTURE)
         .parent()
@@ -45,6 +54,17 @@ fn mlx_guard_binary() -> PathBuf {
         path.exists(),
         "the mlx-guard CLI binary is not built at {}; build it with \
          `cargo build -p mlx-guard-cli --bin mlx-guard` first",
+        path.display()
+    );
+    let version = Command::new(&path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .output()
+        .expect("mlx-guard --version must run");
+    assert_eq!(
+        String::from_utf8_lossy(&version.stdout).trim(),
+        format!("mlx-guard {}", env!("CARGO_PKG_VERSION")),
+        "{} is a stale build; rebuild it with `cargo build -p mlx-guard-cli --bin mlx-guard`",
         path.display()
     );
     path
@@ -76,11 +96,29 @@ impl Drop for TestDirectory {
     }
 }
 
-/// Kills and reaps the supervisor if the test ends before it was killed on purpose.
+/// Stops and reaps the supervisor if the test ends before it was killed on purpose.
+///
+/// SIGTERM comes first: the supervisor forwards it to the owned group and exits once the group
+/// is gone, so the command does not outlive it. SIGKILL is the fallback for a supervisor that
+/// has not exited within the bounded wait, and it can leave the command running until the
+/// fixture's own wall ceiling.
 struct SupervisorGuard(Child);
 
 impl Drop for SupervisorGuard {
     fn drop(&mut self) {
+        // An already reaped supervisor's pid may name another process by now: never signal it.
+        if !matches!(self.0.try_wait(), Ok(None)) {
+            return;
+        }
+        let pid = i32::try_from(self.0.id()).expect("a child pid fits in pid_t");
+        // SAFETY: the pid is this test's own child, not yet reaped, so it cannot have been reused.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while matches!(self.0.try_wait(), Ok(None)) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
@@ -210,7 +248,8 @@ fn sigkilled_supervisor_orphans_its_group_and_leaves_only_the_journal() {
     let mut supervisor = SupervisorGuard(supervisor);
     wait_for_first_sample(&journal_path);
     let command_pid = only_child_of(supervisor_pid);
-    // The owned group is led by the command itself; arm the cleanup before anything can fail.
+    // The owned group is led by the command itself; arm its cleanup as soon as its pid is known.
+    // Until here, a failure is cleaned up by the supervisor guard's SIGTERM.
     let orphan_group = OrphanGroupGuard {
         process_group: command_pid,
     };

@@ -1,0 +1,5647 @@
+{
+  "schema_version": 1,
+  "package_version": "0.3.0",
+  "run": {
+    "run_id": "run_05cdb6765e80e5259a7b3bd32a8c4ce3",
+    "executable_basename": "mlx-guard-fixture",
+    "argument_count": 3
+  },
+  "capabilities": {
+    "darwin_footprint": {
+      "status": "available",
+      "value": true
+    },
+    "owned_process_group": {
+      "status": "available",
+      "value": true
+    },
+    "checkpoint_channel": {
+      "status": "available",
+      "value": true
+    }
+  },
+  "configuration": {
+    "mode": "enforce",
+    "max_footprint_bytes": 1099511627776,
+    "warning_footprint_bytes": 989560464999,
+    "recovery_footprint_bytes": 879609302222,
+    "emergency_footprint_bytes": 1209462790553,
+    "required_breach_samples": 2,
+    "max_missing_samples": 3,
+    "wall_time_ms": 1000,
+    "sample_interval_ms": 10,
+    "max_sample_age_ms": 500,
+    "max_sample_window_ms": 250,
+    "checkpoint_timeout_ms": 1000,
+    "term_grace_ms": 1000,
+    "on_parent_exit": "terminate",
+    "parent_watch": "active"
+  },
+  "samples": [
+    {
+      "captured_at_ms": 0,
+      "processed_at_ms": 0,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 81992
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "unknown"
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 0,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 0,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 0,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 0,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 0,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 0,
+            "freshness": "initial_unknown"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 15,
+      "processed_at_ms": 15,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 81992
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 15,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 15,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 15,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 15,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 15,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 15,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 28,
+      "processed_at_ms": 28,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 163960
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 5976249
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 28,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 28,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 28,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 28,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 28,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 28,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 40,
+      "processed_at_ms": 40,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 93956511
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 40,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 40,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 40,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 40,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 40,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 40,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 55,
+      "processed_at_ms": 56,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 56,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 56,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 56,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 56,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 56,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 55,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 66,
+      "processed_at_ms": 66,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 66,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 66,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 66,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 66,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 66,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 66,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 79,
+      "processed_at_ms": 79,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 79,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 79,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 79,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 79,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 79,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 79,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 94,
+      "processed_at_ms": 94,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 94,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 94,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 94,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 94,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 94,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 94,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 109,
+      "processed_at_ms": 109,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 109,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 109,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 109,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 109,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 109,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 109,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 123,
+      "processed_at_ms": 124,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 124,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 124,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 124,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 124,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 124,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 123,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 138,
+      "processed_at_ms": 138,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 138,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 138,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 138,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 138,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 138,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 138,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 153,
+      "processed_at_ms": 153,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 153,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 153,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 153,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 153,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 153,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 153,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 167,
+      "processed_at_ms": 167,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 167,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 167,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 167,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 167,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 167,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 167,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 181,
+      "processed_at_ms": 182,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 182,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 182,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 182,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 182,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 182,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 181,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 196,
+      "processed_at_ms": 196,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 196,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 196,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 196,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 196,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 196,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 196,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 211,
+      "processed_at_ms": 211,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 211,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 211,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 211,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 211,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 211,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 211,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 221,
+      "processed_at_ms": 221,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 221,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 221,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 221,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 221,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 221,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 221,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 236,
+      "processed_at_ms": 236,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 236,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 236,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 236,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 236,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 236,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 236,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 250,
+      "processed_at_ms": 250,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 250,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 250,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 250,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 250,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 250,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 250,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 264,
+      "processed_at_ms": 264,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 264,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 264,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 264,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 264,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 264,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 264,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 279,
+      "processed_at_ms": 279,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 279,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 279,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 279,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 279,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 279,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 279,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 293,
+      "processed_at_ms": 293,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 293,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 293,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 293,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 293,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 293,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 293,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 307,
+      "processed_at_ms": 307,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 307,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 307,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 307,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 307,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 307,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 307,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 321,
+      "processed_at_ms": 321,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 321,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 321,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 321,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 321,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 321,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 321,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 336,
+      "processed_at_ms": 336,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 336,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 336,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 336,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 336,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 336,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 336,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 351,
+      "processed_at_ms": 351,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 351,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 351,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 351,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 351,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 351,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 351,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 367,
+      "processed_at_ms": 367,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 367,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 367,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 367,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 367,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 367,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 367,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 380,
+      "processed_at_ms": 381,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 381,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 381,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 381,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 381,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 381,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 380,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 394,
+      "processed_at_ms": 394,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 394,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 394,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 394,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 394,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 394,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 394,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 408,
+      "processed_at_ms": 408,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 408,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 408,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 408,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 408,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 408,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 408,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 422,
+      "processed_at_ms": 422,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 422,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 422,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 422,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 422,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 422,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 422,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 434,
+      "processed_at_ms": 434,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 434,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 434,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 434,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 434,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 434,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 434,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 447,
+      "processed_at_ms": 447,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 447,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 447,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 447,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 447,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 447,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 447,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 459,
+      "processed_at_ms": 459,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 459,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 459,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 459,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 459,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 459,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 459,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 473,
+      "processed_at_ms": 473,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 473,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 473,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 473,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 473,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 473,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 473,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 487,
+      "processed_at_ms": 487,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 487,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 487,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 487,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 487,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 487,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 487,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 498,
+      "processed_at_ms": 498,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 498,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 498,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 498,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 498,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 498,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 498,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 510,
+      "processed_at_ms": 510,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 510,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 510,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 510,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 510,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 510,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 510,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 524,
+      "processed_at_ms": 524,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 524,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 524,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 524,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 524,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 524,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 524,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 538,
+      "processed_at_ms": 538,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 538,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 538,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 538,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 538,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 538,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 538,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 553,
+      "processed_at_ms": 553,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 553,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 553,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 553,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 553,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 553,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 553,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 565,
+      "processed_at_ms": 565,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 565,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 565,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 565,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 565,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 565,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 565,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 578,
+      "processed_at_ms": 578,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 578,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 578,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 578,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 578,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 578,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 578,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 589,
+      "processed_at_ms": 589,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 589,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 589,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 589,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 589,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 589,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 589,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 603,
+      "processed_at_ms": 603,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 603,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 603,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 603,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 603,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 603,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 603,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 614,
+      "processed_at_ms": 615,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 615,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 615,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 615,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 615,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 615,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 614,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 625,
+      "processed_at_ms": 625,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 625,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 625,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 625,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 625,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 625,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 625,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 640,
+      "processed_at_ms": 640,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 640,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 640,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 640,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 640,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 640,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 640,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 653,
+      "processed_at_ms": 653,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 653,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 653,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 653,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 653,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 653,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 653,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 667,
+      "processed_at_ms": 667,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 667,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 667,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 667,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 667,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 667,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 667,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 681,
+      "processed_at_ms": 681,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115092480
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3231629312
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 681,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 681,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 681,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 681,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 681,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 681,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 696,
+      "processed_at_ms": 696,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 696,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 696,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 696,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 696,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 696,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 696,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 708,
+      "processed_at_ms": 709,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 709,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 709,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 709,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 709,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 709,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 708,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 723,
+      "processed_at_ms": 723,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 723,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 723,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 723,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 723,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 723,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 723,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 737,
+      "processed_at_ms": 737,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 737,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 737,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 737,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 737,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 737,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 737,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 746,
+      "processed_at_ms": 746,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 746,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 746,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 746,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 746,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 746,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 746,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 760,
+      "processed_at_ms": 760,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 760,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 760,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 760,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 760,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 760,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 760,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 775,
+      "processed_at_ms": 775,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 775,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 775,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 775,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 775,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 775,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 775,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 786,
+      "processed_at_ms": 786,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 786,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 786,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 786,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 786,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 786,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 786,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 799,
+      "processed_at_ms": 799,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 799,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 799,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 799,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 799,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 799,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 799,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 814,
+      "processed_at_ms": 814,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 814,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 814,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 814,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 814,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 814,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 814,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 828,
+      "processed_at_ms": 828,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 828,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 828,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 828,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 828,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 828,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 828,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 840,
+      "processed_at_ms": 840,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 840,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 840,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 840,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 840,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 840,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 840,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 852,
+      "processed_at_ms": 852,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 852,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 852,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 852,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 852,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 852,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 852,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 865,
+      "processed_at_ms": 865,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 865,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 865,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 865,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 865,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 865,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 865,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 878,
+      "processed_at_ms": 878,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 878,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 878,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 878,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 878,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 878,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 878,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 889,
+      "processed_at_ms": 889,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 889,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 889,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 889,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 889,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 889,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 889,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 903,
+      "processed_at_ms": 903,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 903,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 903,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 903,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 903,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 903,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 903,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 918,
+      "processed_at_ms": 918,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 918,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 918,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 918,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 918,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 918,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 918,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 933,
+      "processed_at_ms": 933,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 933,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 933,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 933,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 933,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 933,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 933,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 944,
+      "processed_at_ms": 944,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 944,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 944,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 944,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 944,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 944,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 944,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 954,
+      "processed_at_ms": 954,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 954,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 954,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 954,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 954,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 954,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 954,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 966,
+      "processed_at_ms": 966,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 966,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 966,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 966,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 966,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 966,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 966,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 977,
+      "processed_at_ms": 977,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 977,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 977,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 977,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 977,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 977,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 977,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 987,
+      "processed_at_ms": 987,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 987,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 987,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 987,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 987,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 987,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 987,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 998,
+      "processed_at_ms": 998,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 998,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 998,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 998,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 998,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 998,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 998,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 1008,
+      "processed_at_ms": 1008,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 1261928
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": 0
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 1008,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 1008,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 1008,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 1008,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 1008,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 1008,
+            "freshness": "fresh"
+          }
+        }
+      }
+    },
+    {
+      "captured_at_ms": 1044,
+      "processed_at_ms": 1044,
+      "window_ms": 1,
+      "aggregate_footprint_bytes": {
+        "status": "available",
+        "value": 0
+      },
+      "advisory": {
+        "pressure_events": {
+          "status": "unknown"
+        },
+        "swap_bytes": {
+          "status": "available",
+          "value": 3305570304
+        },
+        "compressor_bytes": {
+          "status": "available",
+          "value": 2115076096
+        },
+        "wired_bytes": {
+          "status": "available",
+          "value": 3227795456
+        },
+        "growth_bytes_per_second": {
+          "status": "available",
+          "value": -35240403
+        },
+        "pressure_level": {
+          "status": "unknown"
+        },
+        "metadata": {
+          "pressure_events": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 1044,
+            "freshness": "initial_unknown"
+          },
+          "pressure_level": {
+            "scope": "system",
+            "source": "dispatch_memory_pressure",
+            "captured_at_ms": 1044,
+            "freshness": "initial_unknown"
+          },
+          "swap_bytes": {
+            "scope": "system",
+            "source": "sysctl_vm_swapusage",
+            "captured_at_ms": 1044,
+            "freshness": "fresh"
+          },
+          "compressor_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 1044,
+            "freshness": "fresh"
+          },
+          "wired_bytes": {
+            "scope": "system",
+            "source": "host_statistics64",
+            "captured_at_ms": 1044,
+            "freshness": "fresh"
+          },
+          "growth_bytes_per_second": {
+            "scope": "owned_process_group",
+            "source": "derived_footprint_samples",
+            "captured_at_ms": 1044,
+            "freshness": "fresh"
+          }
+        }
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "at_ms": 1009,
+      "from": "normal",
+      "to": "checkpoint_requested",
+      "aggregate_footprint_bytes": 1261928
+    },
+    {
+      "at_ms": 1034,
+      "from": "checkpoint_requested",
+      "to": "terminating",
+      "aggregate_footprint_bytes": 1261928
+    },
+    {
+      "at_ms": 1059,
+      "from": "terminating",
+      "to": "exited",
+      "aggregate_footprint_bytes": 0
+    }
+  ],
+  "signals": [
+    {
+      "at_ms": 1009,
+      "signal": 30,
+      "target": "cooperative_endpoint",
+      "result": "delivered",
+      "reason": "wall_time"
+    },
+    {
+      "at_ms": 1034,
+      "signal": 15,
+      "target": "owned_process_group",
+      "result": "delivered",
+      "reason": "wall_time"
+    }
+  ],
+  "checkpoint": {
+    "status": "acknowledged_unverified_durability",
+    "at_ms": 1034,
+    "request_id": 13378288211050129862,
+    "reason": "wall_time"
+  },
+  "escape": {
+    "detected": {
+      "status": "available",
+      "value": false
+    }
+  },
+  "artifact_errors": [],
+  "outcome": {
+    "at_ms": 1059,
+    "kind": "policy_intervention",
+    "final_footprint_bytes": {
+      "status": "available",
+      "value": 0
+    },
+    "child_status": {
+      "status": "signaled",
+      "signal": 15
+    }
+  },
+  "privacy": {
+    "redacted_before_persistence": true,
+    "file_mode": "0600",
+    "upload": "disabled",
+    "retention": "user_managed",
+    "capture": "redacted_metadata_only"
+  }
+}

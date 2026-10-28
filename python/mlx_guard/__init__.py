@@ -1,6 +1,7 @@
 """Python access to the packaged native ``mlx-guard`` supervisor."""
 
 from importlib.metadata import version
+from typing import TYPE_CHECKING
 
 from ._binary import (
     BinaryDiscoveryError,
@@ -44,7 +45,17 @@ from ._client import (
     supervisor_argv,
 )
 
-__version__ = version("mlx-guard")
+if TYPE_CHECKING:
+    __version__: str
+else:
+
+    def __getattr__(name: str) -> str:
+        # Read on access, so the package imports without its distribution metadata; reading
+        # `__version__` then raises PackageNotFoundError.
+        if name == "__version__":
+            return version("mlx-guard")
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "BinaryDiscoveryError",

@@ -626,8 +626,6 @@ mod tests {
         CheckpointObservation, Event, ProcessInterventionActuator, frame_shows_live_member,
         map_group_signal_result,
     };
-    #[cfg(target_os = "macos")]
-    use crate::CheckpointDisposition;
     use crate::{
         AggregateFootprint, CheckpointAcknowledgement, CheckpointArtifactKind,
         CheckpointArtifactMetadata, CheckpointChannel, CheckpointHello, CheckpointNonce,
@@ -635,6 +633,8 @@ mod tests {
         ObservationFailure, ObservationFailureKind, OwnedProcess, ProcessIdentity,
         ProcessObservation, SignalResult, StdioMode, TrackingFrame, checkpoint_signal_usr1,
     };
+    #[cfg(target_os = "macos")]
+    use crate::{CheckpointDisposition, SignalNumber};
 
     /// 4-byte length header plus the 38-byte negotiation body.
     const HELLO_FRAME_BYTES: usize = 42;
@@ -891,7 +891,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn term_and_kill_to_an_exited_unreaped_group_report_it_missing() {
-        // Catches the actuator handing the platform's EPERM for an ended group straight to policy.
+        // Catches the actuator handing the platform's EPERM for an ended group straight to policy,
+        // for TERM, KILL and a forwarded terminal signal alike.
         let process = exited_unreaped_root();
         // The premise this classification exists for, measured on Darwin: a group whose only
         // member has exited but is not yet reaped refuses the signal instead of reporting ESRCH.
@@ -908,9 +909,15 @@ mod tests {
             },
         );
         let kill = actuator.execute(ms(0), Actuation::Kill);
+        // A terminal signal forwarded from the supervisor goes through the same classification.
+        let forwarded = actuator.execute(
+            ms(0),
+            Actuation::ForwardSignal(SignalNumber::new(15).expect("15 is a valid signal number")),
+        );
 
         assert_eq!(term, Ok(ActuationOutcome::ProcessMissing));
         assert_eq!(kill, Ok(ActuationOutcome::ProcessMissing));
+        assert_eq!(forwarded, Ok(ActuationOutcome::ProcessMissing));
     }
 
     #[cfg(target_os = "macos")]

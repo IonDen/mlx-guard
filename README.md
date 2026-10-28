@@ -38,7 +38,7 @@ It is for MLX work you launch and do not watch: fine-tunes, generation batches, 
 shell scripts. It does not fix a leak for you, and it cannot stop a kernel or driver failure;
 [Limits](https://github.com/IonDen/mlx-guard#limits-and-safety-boundary) lists what it cannot do.
 
-Version 0.3 is an alpha release. The
+Version 0.3.1 is an alpha release. The
 [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) says which
 surfaces may still change before 1.0. If you already use MetalGuard, the two tools guard against
 different failures and work together; the
@@ -286,7 +286,7 @@ Check support and evidence:
 |---|---|
 | [Support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md) | Supported platforms and release boundaries |
 | [Compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) | Which hardware setups have measured evidence, which are untested, and how to fill a cell |
-| [M1 Max 32 GB evidence](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.2.0/m1-max-32gb/README.md) | Raw 0.2 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
+| [M1 Max 32 GB evidence (0.3.1)](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.3.1/m1-max-32gb/README.md) | Raw 0.3.1 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
 | [Security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) | Vulnerability reporting |
 | [Changelog](https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md) | What changed in each release |
 

@@ -6,12 +6,14 @@
 //! Darwin answers a signal sent to a process group whose members have all exited, but are not yet
 //! reaped, with EPERM rather than ESRCH. A worker that is still tearing down when TERM or KILL
 //! reaches its group is in that state. The fixtures here park an exited member inside the owned
-//! group for a bounded 100–300 ms, so the group stays in that state long enough for every
-//! escalation step to meet it, instead of for the microseconds a real teardown race gives.
+//! group and keep it there until the supervisor's journal records the signal under test, so that
+//! signal is known to have met the group in that state. Without that, a group that had already
+//! gone away would answer ESRCH, which also reads as `process_missing`, and the test would pass
+//! without exercising anything. The fixture's wall-time watchdog bounds the hold.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -51,11 +53,46 @@ impl Drop for TestDirectory {
     }
 }
 
-/// Supervise one fixture under a one-second wall limit and return the result and its report.
-fn run_under_wall_limit(command: &[&str]) -> (RuntimeResult, ReportV1) {
+/// A file that exists only while the in-process supervisor runs.
+///
+/// The zombie holder interrupts the supervisor, which is this test process, only while the
+/// marker exists, so a run that went wrong cannot interrupt a later test.
+struct InterruptMarker(PathBuf);
+
+impl InterruptMarker {
+    fn create(path: PathBuf) -> Self {
+        fs::write(&path, b"").unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for InterruptMarker {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
+/// One supervised run and, for a held group, what the zombie holder recorded on release.
+struct Run {
+    result: RuntimeResult,
+    report: ReportV1,
+    /// `None` when the holder never saw its signal recorded and its watchdog ended the hold.
+    hold_record: Option<String>,
+}
+
+/// Supervise one fixture under a one-second wall limit.
+fn run_under_wall_limit(command: &[&str]) -> Run {
     let _runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
+    let hold_record = directory.0.join("hold-record");
+    let journal_env = env_assignment(
+        "MLX_GUARD_FIXTURE_RELEASE_JOURNAL",
+        &directory.0.join(".report.json.journal"),
+    );
+    let record_env = env_assignment("MLX_GUARD_FIXTURE_HOLD_RECORD", &hold_record);
+    let marker_path = directory.0.join("interrupt-allowed");
+    let marker_env = env_assignment("MLX_GUARD_FIXTURE_INTERRUPT_MARKER", &marker_path);
     let mut arguments = vec![
         "mlx-guard",
         "run",
@@ -65,6 +102,12 @@ fn run_under_wall_limit(command: &[&str]) -> (RuntimeResult, ReportV1) {
         "1s",
         "--sample-interval",
         "10ms",
+        "--env",
+        &journal_env,
+        "--env",
+        &record_env,
+        "--env",
+        &marker_env,
         "--report",
         report_path.to_str().unwrap(),
         "--",
@@ -72,10 +115,20 @@ fn run_under_wall_limit(command: &[&str]) -> (RuntimeResult, ReportV1) {
     arguments.extend_from_slice(command);
     let parsed = parse_cli(arguments).unwrap();
 
+    let marker = InterruptMarker::create(marker_path);
     let result = execute(parsed);
+    drop(marker);
 
     let report = ReportV1::from_json(&fs::read_to_string(&report_path).unwrap()).unwrap();
-    (result, report)
+    Run {
+        result,
+        report,
+        hold_record: fs::read_to_string(&hold_record).ok(),
+    }
+}
+
+fn env_assignment(name: &str, path: &Path) -> String {
+    format!("{name}={}", path.to_str().unwrap())
 }
 
 /// Return every recorded signal as its number, the reason given for it, and its result.
@@ -98,9 +151,18 @@ fn never_failed_closed(report: &ReportV1) -> bool {
 fn a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention() {
     // Catches the TERM that answers a failed checkpoint being reported as a delivery failure
     // (exit 70, "signal delivery failed") when the worker's group has no live member left.
-    let (result, report) =
-        run_under_wall_limit(&[FIXTURE, "checkpoint-fail-linger", "300", "5000"]);
+    let Run {
+        result,
+        report,
+        hold_record,
+    } = run_under_wall_limit(&[FIXTURE, "checkpoint-fail-linger", "1", "5000"]);
 
+    assert_eq!(
+        hold_record.as_deref(),
+        Some("released after signal 15 was recorded\n"),
+        "the group stopped holding its exited member before the TERM was recorded, so this run \
+         cannot tell an ended group from a vanished one: {report:#?}"
+    );
     assert_eq!(
         (result.outcome, result.stderr.as_str()),
         (SupervisorOutcome::PolicyIntervention, ""),
@@ -140,8 +202,18 @@ fn a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention() {
 fn a_terminal_signal_while_the_group_dies_does_not_fail_the_supervisor() {
     // Catches the KILL a second terminal event asks for being reported as a delivery failure when
     // the TERM before it already ended every live member of the group.
-    let (result, report) = run_under_wall_limit(&[FIXTURE, "term-held-zombie", "300", "5000"]);
+    let Run {
+        result,
+        report,
+        hold_record,
+    } = run_under_wall_limit(&[FIXTURE, "term-held-zombie", "1", "5000"]);
 
+    assert_eq!(
+        hold_record.as_deref(),
+        Some("released after signal 9 was recorded\n"),
+        "the group stopped holding its exited member before the KILL was recorded, so this run \
+         cannot tell an ended group from a vanished one: {report:#?}"
+    );
     assert_eq!(
         (result.outcome, result.stderr.as_str()),
         (SupervisorOutcome::PolicyIntervention, ""),
@@ -169,9 +241,13 @@ fn a_terminal_signal_while_the_group_dies_does_not_fail_the_supervisor() {
 
 #[test]
 fn a_live_term_ignoring_group_still_escalates_to_a_delivered_kill() {
-    // Negative control: catches an "already ended" reading leaking onto a group whose members are
-    // alive and merely ignore TERM, which must still be escalated to a KILL that is delivered.
-    let (result, report) = run_under_wall_limit(&[FIXTURE, "fanout-ignore-term", "2", "5000"]);
+    // Escalation control: catches a change that stops the TERM-then-KILL escalation of a live
+    // group whose members ignore TERM, or records either delivered signal as anything else. A live
+    // group answers both signals with delivery, never with EPERM, so this run does not reach the
+    // refusal branch; a refusal from a live member staying a failure is pinned by the unit test
+    // `a_refused_group_signal_with_a_live_member_stays_a_failure` in mlx-guard-core.
+    let Run { result, report, .. } =
+        run_under_wall_limit(&[FIXTURE, "fanout-ignore-term", "2", "5000"]);
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);

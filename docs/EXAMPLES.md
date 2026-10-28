@@ -63,8 +63,9 @@ the command reads `/dev/null` instead and one stderr line says so. See the
 
 ## Captured smoke run
 
-This output was captured on 2026-09-23 on the M1 Max 32 GB (macOS 27.0) with the 0.3.0
-release build, with standard input redirected, so it shows no terminal line. Timing and footprint
+This output was captured on 2026-10-28 on the M1 Max 32 GB (macOS 27.2) with a 0.3.1
+build, with standard input redirected, so it shows no terminal line. The reference
+measurements are on macOS 27.0.1. Timing and footprint
 values vary by host, so the stable facts are the typed outcome, sample count, and absence of
 signals.
 

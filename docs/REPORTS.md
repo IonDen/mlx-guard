@@ -71,9 +71,10 @@ facts. Each signal record carries `reason`:
 `observation_failure`, or `supervisor_fault`. All three fields are absent from reports written before
 they existed.
 
-A signal attempt's `result` is `process_missing` when the target was already gone. That includes a
-group signal refused only because the group had ended: every member exited and none was reaped yet.
-`permission_denied` is recorded only when a live member remained. Schema v1 is unchanged.
+A signal attempt's `result` is `process_missing` when the target was already gone. In `run`, that
+includes a group signal refused only because the group had ended: every member exited and none was
+reaped yet. In `run`, `permission_denied` is recorded only when a live member remained. `observe`
+records a group signal as delivered or refused, without that liveness check. Schema v1 is unchanged.
 
 `configuration.on_parent_exit` records the requested behavior when the process that launched
 `mlx-guard` exits: `terminate` or `detach`. `configuration.parent_watch` records whether, and how,
@@ -166,8 +167,8 @@ single-use while `.<report-name>.journal` exists. Choose a unique report name fo
 explicitly archive/remove both files after reviewing them. The Python client raises
 `ReportPathInUseError` before launch when it sees the retained journal; the native CLI rejects the
 same target during exclusive journal creation, exits `74`, and prints
-`journal target already exists; choose a new --report path`. Neither path interprets an older report as the new
-run's result.
+`journal target already exists; choose a new --report path`. Neither path interprets an older report
+as the new run's result.
 
 If the supervisor is killed with SIGKILL, the journal is all that is left: no final report is written
 and the supervised command keeps running (see [process control](PROCESS_CONTROL.md)). The journal

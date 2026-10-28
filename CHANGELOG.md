@@ -5,6 +5,8 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-28
+
 ### Fixed
 
 - A command that has already ended is no longer reported as a supervisor failure. During an
@@ -14,12 +16,18 @@ versions follow Semantic Versioning.
   intervention into `supervisor_failure` (exit `70`), because Darwin refuses a group signal with
   `EPERM` while every member has exited but none is reaped yet. A refusal against a group that still
   has a live member, or that cannot be scanned, stays a failure (`70`). Exit codes and their meanings
-  are unchanged, and report schema v1 is unchanged: such a signal is recorded as `process_missing`,
-  and `permission_denied` now means a live member remained.
-- When the package metadata is missing (vendored copies, broken installs, some frozen layouts),
-  `start()`, `supervisor_argv()`, and `load_report()` raise `SupervisorDiscoveryError`, and `start()`
-  does so before it launches anything. Before, the underlying `importlib.metadata` error escaped.
-  The documented fallback to a direct launch (`except SupervisorDiscoveryError`) now covers this case.
+  are unchanged, and report schema v1 is unchanged. This applies to `run`: there, such a signal is
+  recorded as `process_missing`, and `permission_denied` now means a live member remained. `observe`
+  still records a group signal as delivered or refused, without the liveness check.
+- `import mlx_guard` now succeeds when the package metadata is missing (vendored copies, broken
+  installs, some frozen layouts). In that case `start()`, `supervisor_argv()`, and `load_report()`
+  raise `SupervisorDiscoveryError`, and `start()` does so before it launches anything, so the
+  documented fallback to a direct launch (`except SupervisorDiscoveryError`) covers it. Reading
+  `mlx_guard.__version__` without the metadata raises `importlib.metadata.PackageNotFoundError`.
+  Before, the import itself failed with that error. On a normal install `__version__` is unchanged.
+- `scripts/calibrate-host.sh` now renders the core counts correctly on macOS 27, which reports
+  them in a new four-part form. Before, the provenance line read "0 Performance and 8 Efficiency"
+  on an M1 Max. The measurements were never affected.
 
 ### Changed
 
@@ -32,6 +40,15 @@ versions follow Semantic Versioning.
 
 ### Documentation
 
+- The reference measurements were re-captured on macOS 27.0.1 and every bound holds
+  (`evidence/v0.3.1/m1-max-32gb/`). The bundle was captured at the commit before the
+  version bump, so its binaries report 0.3.0; the supervisor code is identical to the release.
+  Anonymous 64 MiB error is 32,816 B (0.049%), the 16-member
+  sample-window p95 is 0.186 ms, and external TERM to final report is 56.9 ms at p95. The new
+  calibration README records one capture-script defect: its provenance file misreads the core
+  count, which this release fixes. The compatibility matrix, support matrix, and packaging notes
+  now cite this bundle, and the policy document's escalation envelope carries its numbers. The
+  0.2.0 bundle stays as the macOS 26.6.2 measurement.
 - State a limit plainly: if the supervisor itself is killed with SIGKILL, the supervised command
   keeps running. It is reparented to launchd in its own process group, only the hidden
   `.<report-name>.journal` remains, and no final report is written. A launcher that stops a guarded
@@ -284,7 +301,8 @@ versions follow Semantic Versioning.
   strict Python report permissions, unpredictable checkpoint request IDs, locked dependencies,
   CycloneDX SBOM, release checksums, and a self-contained Trusted Publishing workflow.
 
-[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/IonDen/mlx-guard/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/IonDen/mlx-guard/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/IonDen/mlx-guard/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/IonDen/mlx-guard/releases/tag/v0.1.0

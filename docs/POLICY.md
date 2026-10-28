@@ -73,14 +73,14 @@ maxima are not user-configurable, and the effective values are recorded in each 
 
 | Scenario | Measured interval | p95 (ms) | Maximum (ms) |
 |---|---|---:|---:|
-| `checkpoint_ack_idle` | request to acknowledgement | 31 | 31 |
-| `checkpoint_ack_idle` | TERM to quiet | 33 | 33 |
-| `checkpoint_ack_loaded` | request to acknowledgement | 29 | 30 |
-| `checkpoint_ack_loaded` | TERM to quiet | 24 | 25 |
-| `group_term` | TERM to quiet | 39 | 41 |
-| `group_kill` | KILL to quiet | 36 | 39 |
+| `checkpoint_ack_idle` | request to acknowledgement | 27 | 27 |
+| `checkpoint_ack_idle` | TERM to quiet | 29 | 32 |
+| `checkpoint_ack_loaded` | request to acknowledgement | 27 | 27 |
+| `checkpoint_ack_loaded` | TERM to quiet | 27 | 29 |
+| `group_term` | TERM to quiet | 34 | 35 |
+| `group_kill` | KILL to quiet | 28 | 31 |
 
-Measured on the M1 Max 32 GB reference host (macOS 26.6.2, 25G83), 20 repetitions per scenario,
+Measured on the M1 Max 32 GB reference host (macOS 27.0.1, 26A434), 20 repetitions per scenario,
 `resolution_ms: 10` — every mark is a supervisor-loop timestamp quantized to that interval, not an
 instantaneous event time. `*_to_quiet` marks the loop observing the root reaped and the owned
 group empty, never the reap instant itself. The measured binaries are unoptimized debug builds, so
@@ -93,7 +93,7 @@ the same derivation
 delivered group TERM to observed-quiet — but measured under different conditions (a sixteen-member
 group, a wall-time trigger, and 10 ms sampling here, versus a single ramp worker, a footprint
 trigger, and 50 ms sampling there), so the two figures are related by construction, not
-interchangeable. The full raw record is `evidence/v0.2.0/m1-max-32gb/escalation-envelope.json`.
+interchangeable. The full raw record is `evidence/v0.3.1/m1-max-32gb/escalation-envelope.json`.
 
 A dispatch-only workflow captures the same artifact on GitHub's shared macos-15 VM (3 vCPU / 7 GB)
 as corroboration; those runs are labeled shared-VM, pooled across at least five captures, and
