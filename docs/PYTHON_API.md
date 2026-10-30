@@ -67,6 +67,29 @@ occupied report targets, missing reports, malformed reports, and exit/report con
 distinct `GuardError` subclasses. Successful journals are retained, so use a unique report path per
 run or archive/remove both the report and its `.<name>.journal` deliberately.
 
+### Explaining a non-zero result
+
+Every `RunResult` from `run()`, `GuardProcess.wait()`, and `GuardProcess.poll()` has an
+`explanation` field. It is keyword-only (`str | None`, default `None`), so `RunResult(returncode,
+report, stdout, stderr)` still works. When the CLI printed the two plain outcome lines, `explanation`
+holds the same text without the `mlx-guard: ` prefix, joined by a newline, with no trailing
+newline:
+
+```text
+what happened: <sentence>
+what to do: <sentence> More: <link>
+```
+
+It is `None` when the CLI printed no such lines: exit 0, and a command's own exit code that
+`mlx-guard` does not also use. The field is computed from the report, so it is set whether or not
+you capture output. The text may change between releases; read `result.report.outcome.kind` in
+code. See the [CLI contract](CLI.md#plain-outcome-lines) and the
+[troubleshooting page](TROUBLESHOOTING.md).
+
+Outcomes that leave no report never produce a `RunResult`, so they have no `explanation`. They keep
+raising `MissingReportError` (and `ReportPathInUseError` for a used report path). Their plain lines
+reach your stderr, or `iter_output()` under `capture_output=True`.
+
 If the supervisor process itself is killed with SIGKILL, the supervised command keeps running and
 no final report is written (see [process control](PROCESS_CONTROL.md)). Stop a guarded run with
 `cancel()` or another catchable signal, never SIGKILL.

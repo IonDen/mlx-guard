@@ -13,6 +13,8 @@
 # One documentation surface IS read by a test: docs/images/limit-intervention.svg is generated
 # from the tutorial evidence bundle, and python/tests/test_limit_figure.py fails when the two
 # differ. A change to either side is therefore "code", so the Python job runs that test.
+# README.md is code for the same reason: python/tests/test_troubleshooting_doc.py reads its
+# exit-code table and checks it against the troubleshooting page.
 set -euo pipefail
 
 seen=0
@@ -20,11 +22,11 @@ while IFS= read -r path || [[ -n $path ]]; do
     [[ -z $path ]] && continue
     seen=1
     case "$path" in
-        docs/images/limit-intervention.svg | evidence/v0.2.0/tutorial/*)
+        docs/images/limit-intervention.svg | docs/TROUBLESHOOTING.md | README.md | evidence/v0.2.0/tutorial/*)
             echo code
             exit 0
             ;;
-        README.md | CHANGELOG.md | RELEASE_NOTES.md | SECURITY.md | LICENSE | THIRD_PARTY_LICENSES.md | TUTORIAL.md) ;;
+        CHANGELOG.md | RELEASE_NOTES.md | SECURITY.md | LICENSE | THIRD_PARTY_LICENSES.md | TUTORIAL.md) ;;
         docs/* | evidence/*) ;;
         *)
             echo code
