@@ -171,14 +171,25 @@ fn run_guard(report_path: &Path, mode_args: &[&str], worker_args: &[String]) -> 
         .unwrap()
 }
 
-/// The residual stderr worth recording as a scenario diagnostic, with the expected pre-launch
-/// banner (`run` announces the emergency threshold before launching) filtered out so it never reads
-/// as an anomaly in the calibration evidence.
+/// Lines every run is expected to print: the pre-launch banner (`run` announces the emergency
+/// threshold before launching) and the two plain lines a non-zero exit ends with.
+const EXPECTED_LINE_PREFIXES: [&str; 3] = [
+    "mlx-guard: enforcing a",
+    "mlx-guard: what happened: ",
+    "mlx-guard: what to do: ",
+];
+
+/// The residual stderr worth recording as a scenario diagnostic, with the expected lines filtered
+/// out so they never read as an anomaly in the calibration evidence.
 fn scenario_diagnostic(stderr: &[u8]) -> Option<String> {
     let text = String::from_utf8_lossy(stderr);
     let residual = text
         .lines()
-        .filter(|line| !line.starts_with("mlx-guard: enforcing a"))
+        .filter(|line| {
+            !EXPECTED_LINE_PREFIXES
+                .iter()
+                .any(|prefix| line.starts_with(prefix))
+        })
         .collect::<Vec<_>>()
         .join("\n");
     let residual = residual.trim().to_owned();
@@ -201,6 +212,30 @@ fn scenario_diagnostic_drops_the_launch_banner_but_keeps_a_real_anomaly() {
         Some("mlx-guard: artifact read failed".to_owned())
     );
     assert_eq!(scenario_diagnostic(b""), None);
+}
+
+#[test]
+fn scenario_diagnostic_drops_the_plain_lines_but_keeps_a_real_anomaly() {
+    // Catches the plain "what happened" / "what to do" lines every non-zero run now ends with
+    // being recorded as an anomaly, or the filter swallowing a real diagnostic beside them.
+    let intervention = b"mlx-guard: enforcing a 1099511627776-byte footprint limit; emergency KILL at 1209462790553 bytes, about 10% above the limit\n\
+mlx-guard: what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard sent SIGTERM to the command's process group at 1.0 s.\n\
+mlx-guard: what to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v0.4.0/docs/TROUBLESHOOTING.md#75-the-wall-time-limit\n";
+    assert_eq!(scenario_diagnostic(intervention), None);
+    let late_storage = b"mlx-guard: enforcing a 100-byte footprint limit; emergency KILL at 110 bytes, about 10% above the limit\n\
+mlx-guard: artifact read failed\n\
+mlx-guard: what happened: the command was supervised, but mlx-guard could not write its complete report (reading the journal back failed); safety enforcement was not affected.\n\
+mlx-guard: what to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v0.4.0/docs/TROUBLESHOOTING.md#74-after-launch\n";
+    assert_eq!(
+        scenario_diagnostic(late_storage),
+        Some("mlx-guard: artifact read failed".to_owned())
+    );
+    // Only the two exact prefixes are expected output; a line that merely mentions the words
+    // is still an anomaly.
+    assert_eq!(
+        scenario_diagnostic(b"mlx-guard: what happened next is unknown\n"),
+        Some("mlx-guard: what happened next is unknown".to_owned())
+    );
 }
 
 fn scenario_record(

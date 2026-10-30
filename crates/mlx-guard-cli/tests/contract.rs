@@ -436,3 +436,211 @@ fn command_argv_preserves_non_utf8_os_strings() {
     };
     assert_eq!(observe.common.command, [raw]);
 }
+
+/// The parse error for one command line, which must be rejected.
+fn parse_error(args: &[&str]) -> mlx_guard_cli::CliParseError {
+    parse_cli(std::iter::once("mlx-guard").chain(args.iter().copied()))
+        .expect_err("this command line must be rejected")
+}
+
+#[test]
+fn clap_invalid_value_yields_the_flag() {
+    // Catches the flag taken as clap's whole `--max-footprint <MAX_FOOTPRINT_BYTES>` token, or
+    // not taken at all, for a value clap's own parser rejected.
+    for (args, flag) in [
+        (
+            &[
+                "run",
+                "--max-footprint",
+                "6GB",
+                "--report",
+                "r.json",
+                "--",
+                "x",
+            ][..],
+            "--max-footprint",
+        ),
+        (
+            &[
+                "run",
+                "--max-footprint",
+                "1TiB",
+                "--wall-time",
+                "5x",
+                "--report",
+                "r.json",
+                "--",
+                "x",
+            ][..],
+            "--wall-time",
+        ),
+        (
+            &[
+                "observe",
+                "--sample-interval",
+                "10 ms",
+                "--report",
+                "r.json",
+                "--",
+                "x",
+            ][..],
+            "--sample-interval",
+        ),
+        (
+            &[
+                "run",
+                "--max-footprint",
+                "1TiB",
+                "--on-parent-exit",
+                "later",
+                "--report",
+                "r.json",
+                "--",
+                "x",
+            ][..],
+            "--on-parent-exit",
+        ),
+    ] {
+        assert_eq!(parse_error(args).flag(), Some(flag), "{args:?}");
+    }
+}
+
+#[test]
+fn unknown_argument_yields_no_flag() {
+    // Catches the whitelist being bypassed: clap's `InvalidArg` for an unknown argument is the
+    // text the user typed, which must never become the flag the plain lines print.
+    for args in [
+        &[
+            "run",
+            "--RDCT_flag_c4n4ry",
+            "--max-footprint",
+            "1TiB",
+            "--report",
+            "r.json",
+            "--",
+            "x",
+        ][..],
+        &[
+            "run",
+            "--max-footprint=1TiB",
+            "--report",
+            "r.json",
+            "--RDCT_c4n4ry=v",
+            "--",
+            "x",
+        ][..],
+        &["frobnicate", "--report", "r.json"][..],
+    ] {
+        assert_eq!(parse_error(args).flag(), None, "{args:?}");
+    }
+}
+
+#[test]
+fn contract_error_carries_its_flag() {
+    // Catches a contract (post-clap) error that forgets which flag it is about, so the plain
+    // lines fall back to "the command line" for a setting the error already names.
+    for (args, flag) in [
+        (
+            &[
+                "run",
+                "--max-footprint",
+                "1B",
+                "--report",
+                "r.json",
+                "--",
+                "x",
+            ][..],
+            "--max-footprint",
+        ),
+        (
+            &[
+                "run",
+                "--max-footprint",
+                "18446744073709551615B",
+                "--report",
+                "r.json",
+                "--",
+                "x",
+            ][..],
+            "--max-footprint",
+        ),
+        (
+            &[
+                "observe",
+                "--sample-interval",
+                "1ms",
+                "--report",
+                "r.json",
+                "--",
+                "x",
+            ][..],
+            "--sample-interval",
+        ),
+        (
+            &["observe", "--env", "FOO", "--report", "r.json", "--", "x"][..],
+            "--env",
+        ),
+        (
+            &["observe", "--env", "=v", "--report", "r.json", "--", "x"][..],
+            "--env",
+        ),
+        (
+            &[
+                "observe", "--env", "K=1", "--env", "K=2", "--report", "r.json", "--", "x",
+            ][..],
+            "--env",
+        ),
+    ] {
+        let error = parse_error(args);
+        assert!(!error.is_display_only(), "{args:?}");
+        assert_eq!(error.flag(), Some(flag), "{args:?}: {error}");
+    }
+}
+
+#[test]
+fn unknown_argument_named_like_a_whitelisted_flag_yields_no_flag() {
+    // Catches the whitelist being checked against clap's `InvalidArg` text without the error
+    // kind: in observe mode `--max-footprint` is an unknown argument, so its typed text must be
+    // dropped even though it spells a whitelisted flag.
+    let error = parse_error(&[
+        "observe",
+        "--max-footprint",
+        "1GiB",
+        "--report",
+        "r.json",
+        "--",
+        "x",
+    ]);
+    assert_eq!(error.flag(), None, "{error}");
+}
+
+#[test]
+fn a_missing_command_after_the_separator_yields_the_command_token() {
+    // Catches clap's `<COMMAND>...` token not being normalised (the trailing `...` kept), so a
+    // run with nothing to supervise names no flag at all.
+    for args in [
+        &["run", "--max-footprint", "1TiB", "--report", "r.json"][..],
+        &["run", "--max-footprint", "1TiB", "--report", "r.json", "--"][..],
+        &["observe", "--report", "r.json", "--"][..],
+    ] {
+        assert_eq!(parse_error(args).flag(), Some("<COMMAND>"), "{args:?}");
+    }
+}
+
+#[test]
+fn a_repeated_report_yields_no_flag() {
+    // Catches an `ArgumentConflict` error leaking the flag clap names in its context, when the
+    // fix is not a value of that flag but dropping the repeat.
+    let error = parse_error(&[
+        "run",
+        "--max-footprint",
+        "1TiB",
+        "--report",
+        "a.json",
+        "--report",
+        "b.json",
+        "--",
+        "x",
+    ]);
+    assert_eq!(error.flag(), None, "{error}");
+}
