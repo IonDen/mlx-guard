@@ -65,6 +65,119 @@ fn assert_only_launch_banner(stderr: &[u8]) {
     );
 }
 
+/// The troubleshooting link that ends the "what to do" line, pinned to this build's release tag.
+fn doc_link(anchor: &str) -> String {
+    format!(
+        "https://github.com/IonDen/mlx-guard/blob/v{}/docs/TROUBLESHOOTING.md#{anchor}",
+        mlx_guard_core::VERSION
+    )
+}
+
+/// The two plain lines exactly as stderr carries them: both prefixes, the link, a newline each.
+fn plain_lines(happened: &str, to_do: &str, anchor: &str) -> String {
+    format!(
+        "mlx-guard: what happened: {happened}\nmlx-guard: what to do: {to_do} More: {}\n",
+        doc_link(anchor)
+    )
+}
+
+/// The plain lines for a command line that was not accepted, with or without a whitelisted flag.
+fn command_line_lines(flag: Option<&str>) -> String {
+    match flag {
+        Some(flag) => plain_lines(
+            &format!(
+                "the command line was not accepted ({flag}), so nothing was launched and no \
+                 report was written."
+            ),
+            &format!("fix {flag} as the error above says, then run the command again."),
+            "64-the-command-line",
+        ),
+        None => plain_lines(
+            "the command line was not accepted, so nothing was launched and no report was written.",
+            "fix the command line as the error above says, then run the command again.",
+            "64-the-command-line",
+        ),
+    }
+}
+
+#[cfg(target_os = "macos")]
+/// Assert a non-zero `run`'s stderr is exactly three lines: the launch banner, then the
+/// "what happened" line, then the "what to do" line ending in the link to `anchor`. Returns the
+/// two plain lines (newline-ended) so a caller can also pin their exact text.
+fn assert_banner_then_plain_lines(stderr: &[u8], anchor: &str) -> String {
+    let text = String::from_utf8_lossy(stderr);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(
+        lines.len(),
+        3,
+        "a non-zero run's stderr must be the banner and the two plain lines: {text:?}"
+    );
+    assert!(
+        lines[0].contains("emergency KILL"),
+        "the first stderr line must be the launch banner: {text:?}"
+    );
+    assert!(
+        lines[1].starts_with("mlx-guard: what happened: "),
+        "the second stderr line must say what happened: {text:?}"
+    );
+    assert!(
+        lines[2].starts_with("mlx-guard: what to do: "),
+        "the third stderr line must say what to do: {text:?}"
+    );
+    assert!(
+        lines[2].ends_with(&format!(" More: {}", doc_link(anchor))),
+        "the what-to-do line must link #{anchor}: {text:?}"
+    );
+    assert!(
+        text.ends_with('\n'),
+        "the last line must be newline-ended: {text:?}"
+    );
+    format!("{}\n{}\n", lines[1], lines[2])
+}
+
+#[cfg(target_os = "macos")]
+/// A duration as the plain lines speak it, for the sub-minute range these runs produce: whole
+/// milliseconds below one second, otherwise tenths of a second rounded half up (spec section 4).
+/// Panics outside that range so a starved run fails loudly instead of being compared to a guess.
+fn spoken_ms(ms: u64) -> String {
+    assert!(ms < 59_950, "{ms} ms is outside the sub-minute range");
+    if ms < 1000 {
+        format!("{ms} ms")
+    } else {
+        let tenths = (ms + 50) / 100;
+        format!("{}.{} s", tenths / 10, tenths % 10)
+    }
+}
+
+#[cfg(target_os = "macos")]
+/// A byte count as the plain lines speak it, for the range a small real process reaches: whole
+/// bytes below 1 KiB, otherwise hundredths of KiB or MiB rounded half up, stepping up to MiB when
+/// the KiB figure rounds to 1024 (spec section 4). Panics at 1 GiB and above, so an unexpected
+/// value fails loudly instead of being compared with a guess.
+fn spoken_bytes(bytes: u64) -> String {
+    const KIB: u64 = 1 << 10;
+    const MIB: u64 = 1 << 20;
+    assert!(
+        bytes < 1 << 30,
+        "{bytes} bytes is outside the KiB/MiB range"
+    );
+    if bytes < KIB {
+        return format!("{bytes} B");
+    }
+    let (unit, name) = if bytes < MIB {
+        let kib_hundredths = (bytes * 100 + KIB / 2) / KIB;
+        if kib_hundredths < 102_400 {
+            (KIB, "KiB")
+        } else {
+            (MIB, "MiB")
+        }
+    } else {
+        (MIB, "MiB")
+    };
+    let hundredths = (bytes * 100 + unit / 2) / unit;
+    format!("{}.{:02} {name}", hundredths / 100, hundredths % 100)
+}
+
 #[cfg(target_os = "macos")]
 fn wait_for_first_sample(journal_path: &std::path::Path) {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -98,7 +211,140 @@ fn help_is_successful_and_invalid_input_is_usage() {
         .expect("the command must run");
     assert_eq!(invalid.status.code(), Some(64));
     assert!(invalid.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&invalid.stderr).contains("Usage: mlx-guard <COMMAND>"));
+    let text = String::from_utf8_lossy(&invalid.stderr);
+    assert!(text.contains("Usage: mlx-guard <COMMAND>"));
+    // A missing subcommand is a rejected command line too, so clap's usage text is followed by
+    // the flag-less plain lines. Red if the parse-error path of main prints none, names a flag
+    // nobody gave, or prints the generic configuration row instead.
+    assert!(
+        text.ends_with(&command_line_lines(None)),
+        "stderr must end with the flag-less command-line lines: {text:?}"
+    );
+}
+
+#[test]
+fn invalid_byte_unit_names_the_flag_in_the_plain_line() {
+    // Catches flag extraction returning clap's whole `--max-footprint <MAX_FOOTPRINT_BYTES>`
+    // token (or nothing) instead of the bare whitelisted flag.
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args([
+            "run",
+            "--max-footprint",
+            "6GB",
+            "--report",
+            "reports/r.json",
+            "--",
+            "/usr/bin/true",
+        ])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(output.stdout.is_empty());
+    let text = String::from_utf8_lossy(&output.stderr);
+    let clap_error = text
+        .strip_suffix(&command_line_lines(Some("--max-footprint")))
+        .unwrap_or_else(|| {
+            panic!("stderr must end with the --max-footprint plain lines: {text:?}")
+        });
+    assert!(
+        clap_error
+            .starts_with("error: invalid value '6GB' for '--max-footprint <MAX_FOOTPRINT_BYTES>'"),
+        "clap's own error must stay first and unchanged: {text:?}"
+    );
+    assert!(clap_error.ends_with('\n'), "{text:?}");
+}
+
+#[test]
+fn contract_parse_error_ends_its_line_before_the_plain_lines() {
+    // Catches the contract error still being printed without its newline, so the error text and
+    // the "what happened" line run together on one line.
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args([
+            "run",
+            "--max-footprint",
+            "1B",
+            "--report",
+            "reports/r.json",
+            "--",
+            "/usr/bin/true",
+        ])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        format!(
+            "--max-footprint must be at least 2B\n{}",
+            command_line_lines(Some("--max-footprint"))
+        )
+    );
+}
+
+#[test]
+fn help_and_version_print_no_plain_lines() {
+    // Catches the display-only parse path (help, version) getting the plain lines as if it had
+    // rejected the command line.
+    for args in [
+        &["--help"][..],
+        &["--version"][..],
+        &["run", "--help"][..],
+        &["observe", "--help"][..],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+            .args(args)
+            .output()
+            .expect("the command must run");
+        assert_eq!(output.status.code(), Some(0), "{args:?}");
+        assert!(
+            output.stderr.is_empty(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(!stdout.is_empty(), "{args:?} must print its text");
+        assert!(
+            !stdout.contains("what happened:") && !stdout.contains("what to do:"),
+            "{args:?}: {stdout:?}"
+        );
+    }
+}
+
+#[test]
+fn unknown_option_text_is_never_echoed_by_the_plain_lines() {
+    // Catches the flag whitelist being bypassed: clap's `InvalidArg` for an unknown argument is
+    // the user's typed text, which must stay in clap's own line and never reach the plain lines.
+    let marker = "RDCT_E2E_parse_c4n4ry";
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args([
+            "run",
+            &format!("--{marker}"),
+            "--max-footprint",
+            "1TiB",
+            "--report",
+            "reports/r.json",
+            "--",
+            "/usr/bin/true",
+        ])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(output.status.code(), Some(64));
+    let text = String::from_utf8_lossy(&output.stderr);
+    let last_two: Vec<&str> = text.lines().rev().take(2).collect();
+    assert!(
+        last_two.iter().all(|line| !line.contains(marker)),
+        "a plain line echoed the unknown option: {text:?}"
+    );
+    let clap_error = text
+        .strip_suffix(&command_line_lines(None))
+        .unwrap_or_else(|| panic!("stderr must end with the flag-less plain lines: {text:?}"));
+    assert!(
+        clap_error.contains(marker),
+        "clap's line still names the unknown option: {text:?}"
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -122,7 +368,15 @@ fn unsafe_report_directory_fails_before_worker_launch() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "mlx-guard: artifact directory is not private and owned\n"
+        format!(
+            "mlx-guard: artifact directory is not private and owned\n{}",
+            plain_lines(
+                "the report directory is missing, not yours, or not owner-only (mode 0700), so \
+                 nothing was launched.",
+                "create the directory with mkdir -m 700, or fix its owner and mode, then run again.",
+                "74-report-directory",
+            )
+        )
     );
     assert!(!marker.exists());
 }
@@ -139,7 +393,15 @@ fn unsupported_platform_fails_before_worker_launch() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "mlx-guard: OS-accounted footprint observation is unsupported on this platform\n"
+        format!(
+            "mlx-guard: OS-accounted footprint observation is unsupported on this platform\n{}",
+            plain_lines(
+                "mlx-guard needs macOS to read the OS-accounted footprint, so it launched nothing \
+                 and wrote no report.",
+                "run it on a Mac with Apple Silicon.",
+                "70-before-launch",
+            )
+        )
     );
 }
 
@@ -227,7 +489,7 @@ fn run_wall_limit_drives_policy_term_and_returns_intervention_status() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_only_launch_banner(&output.stderr);
+    let plain = assert_banner_then_plain_lines(&output.stderr, "75-the-wall-time-limit");
     assert!(String::from_utf8_lossy(&output.stdout).starts_with("mlx-guard: policy_intervention"));
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
@@ -254,6 +516,26 @@ fn run_wall_limit_drives_policy_term_and_returns_intervention_status() {
     assert_eq!(
         report.checkpoint.status,
         mlx_guard_core::CheckpointStatus::NotNegotiated
+    );
+    // Red if the wall row names the wrong limit, or the TERM time is taken from anything but
+    // the TERM record.
+    let term = report
+        .signals
+        .iter()
+        .find(|signal| signal.signal == 15)
+        .expect("the TERM record");
+    assert_eq!(
+        plain,
+        plain_lines(
+            &format!(
+                "the run reached the 30 ms wall-time limit you set, so mlx-guard sent SIGTERM to \
+                 the command's process group at {}.",
+                spoken_ms(term.at_ms)
+            ),
+            "raise --wall-time if the command needs longer, or find out why it ran longer than \
+             expected.",
+            "75-the-wall-time-limit",
+        )
     );
 }
 
@@ -407,7 +689,8 @@ fn run_emergency_footprint_breach_kills_the_owned_group() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_only_launch_banner(&output.stderr);
+    // Red if the emergency KILL is explained as anything but the emergency row.
+    let plain = assert_banner_then_plain_lines(&output.stderr, "75-emergency-kill");
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -419,10 +702,45 @@ fn run_emergency_footprint_breach_kills_the_owned_group() {
     assert!(report.signals.iter().any(
         |signal| signal.signal == 9 && signal.result == mlx_guard_core::SignalResult::Delivered
     ));
-    assert!(report.transitions.iter().any(|transition| {
-        transition.from == mlx_guard_core::PolicyState::Normal
-            && transition.to == mlx_guard_core::PolicyState::Emergency
-    }));
+    let emergency = report
+        .transitions
+        .iter()
+        .find(|transition| {
+            transition.from == mlx_guard_core::PolicyState::Normal
+                && transition.to == mlx_guard_core::PolicyState::Emergency
+        })
+        .unwrap_or_else(|| panic!("no transition to emergency: {report:#?}"));
+    let footprint = emergency
+        .aggregate_footprint_bytes
+        .unwrap_or_else(|| panic!("the emergency transition carries its sample: {report:#?}"));
+    let kill_at_ms = report
+        .signals
+        .iter()
+        .find(|signal| signal.signal == 9)
+        .map_or_else(
+            || panic!("no KILL record: {report:#?}"),
+            |signal| signal.at_ms,
+        );
+    // A 2 B limit gives a 3 B emergency threshold: one tenth of 2 B rounds down to zero, and the
+    // band is never narrower than 1 B. Red if the row names the wrong sample, threshold, gap,
+    // limit or time, or drops "at once" or the no-grace clause.
+    assert_eq!(
+        plain,
+        plain_lines(
+            &format!(
+                "one sample of the OS-accounted footprint, {}, was at or above the emergency \
+                 threshold of 3 B, which is 1 B more than your 2 B limit, so mlx-guard sent \
+                 SIGKILL to the command's process group at once at {}, with no checkpoint and no \
+                 grace period.",
+                spoken_bytes(footprint),
+                spoken_ms(kill_at_ms)
+            ),
+            "find what allocates that much between samples, or raise --max-footprint if that \
+             peak is expected; a shorter --sample-interval sees growth sooner.",
+            "75-emergency-kill",
+        ),
+        "{report:#?}"
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -457,7 +775,15 @@ fn first_sigint_is_forwarded_and_the_child_signal_status_is_preserved() {
     let output = guard.wait_with_output().expect("supervisor must terminate");
 
     assert_eq!(output.status.code(), Some(130));
-    assert_only_launch_banner(&output.stderr);
+    // Red if a forwarded SIGINT is told as a signal from somewhere else.
+    assert_eq!(
+        assert_banner_then_plain_lines(&output.stderr, "signal-passed-on-by-mlx-guard"),
+        plain_lines(
+            "the command ended on SIGINT, which mlx-guard received and passed on to it.",
+            "nothing to do if you sent it.",
+            "signal-passed-on-by-mlx-guard",
+        )
+    );
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -511,7 +837,16 @@ fn repeated_terminal_signal_escalates_to_group_kill() {
     let output = guard.wait_with_output().expect("supervisor must terminate");
 
     assert_eq!(output.status.code(), Some(137));
-    assert_only_launch_banner(&output.stderr);
+    // Red if the second-terminal-signal KILL loses its n = 9 variant.
+    assert_eq!(
+        assert_banner_then_plain_lines(&output.stderr, "signal-passed-on-by-mlx-guard"),
+        plain_lines(
+            "the command ended on SIGKILL, which mlx-guard sent after a second terminal signal \
+             arrived.",
+            "nothing to do if you sent it.",
+            "signal-passed-on-by-mlx-guard",
+        )
+    );
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -560,7 +895,16 @@ fn observe_forwards_sigterm_without_turning_it_into_policy_intervention() {
     let output = guard.wait_with_output().expect("supervisor must terminate");
 
     assert_eq!(output.status.code(), Some(143));
-    assert!(output.stderr.is_empty());
+    // Observe prints no banner, so the plain lines are the whole of stderr. Red if observe's
+    // forwarded SIGTERM gets no lines or is explained as a policy intervention.
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        plain_lines(
+            "the command ended on SIGTERM, which mlx-guard received and passed on to it.",
+            "nothing to do if you sent it.",
+            "signal-passed-on-by-mlx-guard",
+        )
+    );
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -599,7 +943,17 @@ fn invalid_working_directory_is_configuration_failure_before_launch() {
     assert!(output.stdout.is_empty());
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
-        "mlx-guard: child working directory is invalid\n"
+        format!(
+            "mlx-guard: child working directory is invalid\n{}",
+            plain_lines(
+                "mlx-guard refused a launch setting before starting the command, so nothing ran; \
+                 the error line on stderr names the setting.",
+                "--cwd must name an existing directory, and --env must not set \
+                 MLX_GUARD_CHECKPOINT_FD; fix the one named, and give the retry a new --report \
+                 name, because this run kept its report.",
+                "64-a-launch-setting",
+            )
+        )
     );
     assert!(!marker.exists());
     let report = mlx_guard_core::ReportV1::from_json(
@@ -648,7 +1002,16 @@ fn retry_after_a_pre_launch_failure_names_the_report_path_fix() {
     assert!(retry.stdout.is_empty());
     assert_eq!(
         String::from_utf8_lossy(&retry.stderr),
-        "mlx-guard: journal target already exists; choose a new --report path\n"
+        format!(
+            "mlx-guard: journal target already exists; choose a new --report path\n{}",
+            plain_lines(
+                "an earlier run already used this report path, and its report and hidden journal \
+                 are kept, so nothing was launched.",
+                "pass a new --report name, or move both the report and its hidden \
+                 .<name>.journal away before reusing the path.",
+                "74-report-path-already-used",
+            )
+        )
     );
     assert!(!marker.exists());
     let report = mlx_guard_core::ReportV1::from_json(
@@ -708,6 +1071,22 @@ fn late_storage_loss_does_not_stop_wall_time_intervention() {
         stderr.contains("mlx-guard: artifact read failed"),
         "the late-storage failure notice must still reach stderr: {stderr}"
     );
+    // The diagnostic stays, and the plain lines come after it and after everything else.
+    // Red if the late-74 path gets no lines, the before-launch row, or loses the failure kind.
+    assert!(
+        stderr.ends_with(&format!(
+            "mlx-guard: artifact read failed\n{}",
+            plain_lines(
+                "the command was supervised, but mlx-guard could not write its complete report \
+                 (reading the journal back failed); safety enforcement was not affected.",
+                "check free disk space and that nothing else changed the report directory during \
+                 the run; the hidden .<name>.journal beside the report path keeps what was saved. \
+                 Use a new --report name next time.",
+                "74-after-launch",
+            )
+        )),
+        "the diagnostic, then the after-launch plain lines, must end stderr: {stderr}"
+    );
     // Waiting out the worker's five-second sleep is the failure this catches; four seconds
     // separates it from the 100 ms wall intervention with CI scheduler headroom.
     assert!(started.elapsed() < Duration::from_secs(4));
@@ -742,7 +1121,7 @@ fn policy_kills_a_worker_that_outlives_term_grace() {
         .expect("the command must run");
 
     assert_eq!(output.status.code(), Some(75));
-    assert_only_launch_banner(&output.stderr);
+    let plain = assert_banner_then_plain_lines(&output.stderr, "75-the-wall-time-limit");
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -754,6 +1133,24 @@ fn policy_kills_a_worker_that_outlives_term_grace() {
             .map(|signal| signal.signal)
             .collect::<Vec<_>>(),
         [15, 9]
+    );
+    // Red if the KILL suffix is dropped, or its gap is measured from the outcome instead of
+    // from the TERM record.
+    let (term, kill) = (&report.signals[0], &report.signals[1]);
+    assert_eq!(
+        plain,
+        plain_lines(
+            &format!(
+                "the run reached the 30 ms wall-time limit you set, so mlx-guard sent SIGTERM to \
+                 the command's process group at {}, and SIGKILL {} later because it was still \
+                 running.",
+                spoken_ms(term.at_ms),
+                spoken_ms(kill.at_ms - term.at_ms)
+            ),
+            "raise --wall-time if the command needs longer, or find out why it ran longer than \
+             expected.",
+            "75-the-wall-time-limit",
+        )
     );
     assert!(report.transitions.iter().any(|transition| {
         transition.from == mlx_guard_core::PolicyState::Terminating
@@ -825,6 +1222,9 @@ fn run_preserves_nonzero_exit_status_when_child_exits_before_identity_inspection
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
+    // The command's own non-reserved exit code explains itself: red if the plain lines are
+    // printed for it.
+    assert_only_launch_banner(&output.stderr);
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(&report_path).expect("final report must exist"),
     )
@@ -847,17 +1247,38 @@ fn launch_failures_keep_their_exact_status_and_final_report_kind() {
     let directory = TestDirectory::new();
     let not_executable = directory.0.join("not-executable");
     fs::write(&not_executable, b"not an executable").unwrap();
+    // Red if the two launch rows are swapped, or a launch failure prints no plain lines.
     let cases = [
         (
             PathBuf::from("/definitely/missing/mlx-guard-worker"),
             127,
-            "mlx-guard: command was not found\n",
+            format!(
+                "mlx-guard: command was not found\n{}",
+                plain_lines(
+                    "no executable was found for the command named after --, so nothing was \
+                     launched.",
+                    "check the spelling, give the full path, or activate the environment that \
+                     provides it; give the retry a new --report name, because this run kept its \
+                     report.",
+                    "127-not-found",
+                )
+            ),
             mlx_guard_core::TerminalKind::LaunchNotFound,
         ),
         (
             not_executable,
             126,
-            "mlx-guard: command is not executable\n",
+            format!(
+                "mlx-guard: command is not executable\n{}",
+                plain_lines(
+                    "the file named after -- exists but could not be run, so nothing was \
+                     launched.",
+                    "make it executable (chmod +x) or put its interpreter first, as in -- python \
+                     script.py; give the retry a new --report name, because this run kept its \
+                     report.",
+                    "126-not-executable",
+                )
+            ),
             mlx_guard_core::TerminalKind::LaunchNotExecutable,
         ),
     ];
@@ -880,4 +1301,58 @@ fn launch_failures_keep_their_exact_status_and_final_report_kind() {
         .unwrap();
         assert_eq!(report.outcome.kind, terminal);
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "known bug: -- \"\" exits 70, should be 64 (command-line row)"]
+fn an_empty_command_is_a_rejected_command_line() {
+    // Catches an empty command after `--` reaching the run-identity step (exit 70, "could not set
+    // up the run's identity") instead of being refused with the command line, before any report
+    // directory work, as the 64 command-line row says ("no report was written").
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args(["run", "--max-footprint", "1TiB", "--report"])
+        .arg(&report_path)
+        .args(["--", ""])
+        .output()
+        .expect("the command must run");
+
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(64), "stderr: {text}");
+    assert!(output.stdout.is_empty());
+    assert!(
+        text.ends_with(&command_line_lines(Some("the command after --"))),
+        "stderr must end with the command-line lines naming the command: {text:?}"
+    );
+    assert!(
+        !report_path.exists(),
+        "a refused command line writes no report"
+    );
+}
+
+#[test]
+fn a_missing_command_is_named_as_the_command_after_the_separator() {
+    // Catches clap's `<COMMAND>` token printed raw, or not named, in the plain lines when nothing
+    // follows `--`.
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args([
+            "run",
+            "--max-footprint",
+            "1TiB",
+            "--report",
+            "reports/r.json",
+            "--",
+        ])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(output.stdout.is_empty());
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        text.ends_with(&command_line_lines(Some("the command after --"))),
+        "stderr must end with the missing-command plain lines: {text:?}"
+    );
 }
