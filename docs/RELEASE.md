@@ -24,8 +24,9 @@ the version in one commit and refreshes, by hand:
 - `README.md`: the status line ("Version X.Y is ..."), and any scope sentences that name the
   previous version. `SECURITY.md` names no version, so it needs no edit; if a version-bound
   support statement is ever added there, it joins this list.
-- Evidence: re-run and commit reference measurements only when runtime, timing, policy, or
-  measurement code changed since the last release; when a new bundle lands, move the links in
+- Evidence: re-run and commit reference measurements only when supervision behaviour changed since the
+  last release (sampling, policy, identity tracking, intervention, and their timing or measurement
+  code), not when only the text a finished run prints changed; when a new bundle lands, move the links in
   `README.md`, `docs/COMPATIBILITY.md`, and `docs/integrations/MLX_TRAIN_PERF.md` to it.
   `scripts/calibrate-reference-host.sh <out>` (with `<out>` outside the repository) runs the six
   measurements as chunks through `scripts/calibrate-host.sh`, writes each chunk's JSON as it
