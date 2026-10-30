@@ -4,6 +4,7 @@
 mod advisory;
 #[cfg(unix)]
 mod checkpoint;
+pub mod explain;
 #[cfg(unix)]
 mod identity;
 mod intervention;
