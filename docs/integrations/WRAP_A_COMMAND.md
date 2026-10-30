@@ -104,6 +104,11 @@ $ echo $?
 75
 ```
 
+The transcripts here were recorded before 0.4.0. Since 0.4.0, a run that ends with a non-zero exit
+also prints the two plain outcome lines on stderr, so you will see them under the summary line when
+you repeat these examples. The one exception is a command's own exit code that mlx-guard does not
+also use, which prints nothing. See the [troubleshooting page](../TROUBLESHOOTING.md).
+
 ```console
 $ jq '.outcome.kind, .checkpoint, .signals' reports/run-wall-time.json
 "policy_intervention"

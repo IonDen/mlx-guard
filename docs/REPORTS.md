@@ -131,6 +131,14 @@ corpus, and real-process tests plant a marker in every launch channel — argume
 working directory, executable path, and process output — then scan the persisted report and
 journal for survival.
 
+The two plain outcome lines on stderr (see the [CLI contract](CLI.md#plain-outcome-lines)) print only
+the report fields named in this paragraph, plus fixed text (choosing which sentence to print also
+reads the run mode, each transition's from and to states, and `checkpoint.reason`): `outcome` (kind, code, time, child
+status, parent exit time), the numeric `configuration` values, the footprint value and time of each
+`transitions` entry, each `signals` record's signal number, target, result, reason and time, the
+`checkpoint` status and request id, and the status of the last sample. They never contain argv,
+environment values, paths (including the `--report` path), the executable name, or command output.
+
 Raw sensitive capture is not available, even as an opt-in. The only explicit capture
 option is a correlation hash with the form `sha256:` followed by 64 lowercase hexadecimal digits.
 Hash a random, non-secret correlation identifier. Do not hash a path, token, prompt, model ID, or
