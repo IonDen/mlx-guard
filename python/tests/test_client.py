@@ -2,6 +2,7 @@ import dataclasses
 import json
 import os
 import pty
+import re
 import select
 import signal
 import subprocess
@@ -572,11 +573,20 @@ with worker:
 
         checkpoint = result.report.payload["checkpoint"]
         # `run` prints the emergency-band banner on stderr as it launches; whether it reaches the
-        # captured buffer is timing-dependent, so tolerate it being present or absent, but nothing
-        # other than that banner should appear.
-        for line in (result.stderr or b"").splitlines():
-            if line:
-                self.assertIn(b"emergency KILL", line, result.stderr)
+        # captured buffer is timing-dependent, so tolerate it being present or absent. After it,
+        # the only lines are the two plain-outcome lines, and the Python field carries the same
+        # text (a second parity check on a real run). Catches an extra or reordered native line,
+        # or the field disagreeing with the CLI on an acknowledged checkpoint.
+        lines = [line for line in (result.stderr or b"").decode("utf-8").splitlines() if line]
+        if lines and "emergency KILL" in lines[0]:
+            lines = lines[1:]
+        self.assertEqual(len(lines), 2, result.stderr)
+        self.assertTrue(lines[0].startswith("mlx-guard: what happened: "), result.stderr)
+        self.assertTrue(lines[1].startswith("mlx-guard: what to do: "), result.stderr)
+        self.assertTrue(lines[1].endswith("#75-the-wall-time-limit"), result.stderr)
+        self.assertEqual(
+            result.explanation, "\n".join(line.removeprefix("mlx-guard: ") for line in lines)
+        )
         self.assertIsInstance(checkpoint, Mapping)
         assert isinstance(checkpoint, Mapping)
         self.assertEqual(checkpoint["status"], "acknowledged_unverified_durability")
@@ -615,6 +625,127 @@ with worker:
         self.assertIsInstance(configuration, Mapping)
         assert isinstance(configuration, Mapping)
         self.assertEqual(configuration["checkpoint_timeout_ms"], 2_000)
+
+    def test_explanation_equals_native_stderr_lines(self) -> None:
+        # Catches the Python explainer and the native CLI disagreeing on a real wall-time run:
+        # the field must equal the CLI's last two stderr lines with the `mlx-guard: ` prefix gone.
+        with tempfile.TemporaryDirectory() as temporary:
+            result = mlx_guard.run(
+                mlx_guard.RunConfig(
+                    command=("/bin/sleep", "5"),
+                    report=Path(temporary, "wall.json"),
+                    max_footprint_bytes=1024**4,
+                    wall_time_ms=200,
+                    sample_interval_ms=10,
+                ),
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 75)
+        native = _native_plain_lines(result.stderr)
+        self.assertIsNotNone(native, f"no plain lines on native stderr: {result.stderr!r}")
+        self.assertEqual(result.explanation, native)
+
+    def test_explanation_present_without_capture(self) -> None:
+        # Catches the field derived from captured stderr instead of the report: with the default
+        # capture_output=False nothing is captured, and the explanation must still be present.
+        with tempfile.TemporaryDirectory() as temporary:
+            result = mlx_guard.run(
+                mlx_guard.RunConfig(
+                    command=("/bin/sleep", "5"),
+                    report=Path(temporary, "wall.json"),
+                    max_footprint_bytes=1024**4,
+                    wall_time_ms=200,
+                    sample_interval_ms=10,
+                ),
+            )
+
+        self.assertEqual(result.returncode, 75)
+        self.assertIsNone(result.stderr)
+        assert result.explanation is not None, "a policy intervention must carry an explanation"
+        self.assertRegex(
+            result.explanation,
+            r"\Awhat happened: the run reached the 200 ms wall-time limit you set, so mlx-guard "
+            r"sent SIGTERM to the command's process group at (\d+ ms|\d+\.\d s)\.\n"
+            r"what to do: raise --wall-time if the command needs longer, or find out why it ran "
+            r"longer than expected\. More: https://github\.com/IonDen/mlx-guard/blob/v"
+            + re.escape(result.report.package_version)
+            + r"/docs/TROUBLESHOOTING\.md#75-the-wall-time-limit\Z",
+        )
+
+    def test_launch_not_found_carries_the_127_explanation(self) -> None:
+        # Catches a launch-not-found result left without its explanation, or given the 126 text:
+        # the expected text is the shared corpus row for 127, linked to the report's version.
+        corpus = (
+            Path(__file__).resolve().parents[2]
+            / "crates/mlx-guard-core/tests/fixtures/explain/cases.json"
+        )
+        rows = json.loads(corpus.read_text(encoding="utf-8"))
+        (text,) = [row["text"] for row in rows if row["row"] == "127"]
+        with tempfile.TemporaryDirectory() as temporary:
+            result = mlx_guard.run(
+                mlx_guard.ObserveConfig(
+                    command=("/definitely/missing/mlx-guard-worker",),
+                    report=Path(temporary, "missing.json"),
+                ),
+            )
+
+        self.assertEqual(result.returncode, 127)
+        self.assertEqual(
+            result.explanation, text.replace("{version}", result.report.package_version)
+        )
+
+    def test_explanation_never_contains_command_env_cwd_or_report_path(self) -> None:
+        # Catches a sentence that interpolates the executable, an argument, an --env name or
+        # value, the working directory or the report path. Each carries its own canary.
+        canaries = (
+            "RDCT_EXE_c4n4ry",
+            "RDCT_ARG_c4n4ry",
+            "RDCT_ENVK_c4n4ry",
+            "RDCT_ENVV_c4n4ry",
+            "RDCT_CWD_c4n4ry",
+            "RDCT_RPT_c4n4ry",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            worker = root / "RDCT_EXE_c4n4ry"
+            worker.write_text("#!/bin/sh\nexec /bin/sleep 5\n", encoding="utf-8")
+            worker.chmod(0o700)
+            cwd = root / "RDCT_CWD_c4n4ry"
+            cwd.mkdir(mode=0o700)
+            reports = root / "RDCT_RPT_c4n4ry"
+            reports.mkdir(mode=0o700)
+            result = mlx_guard.run(
+                mlx_guard.RunConfig(
+                    command=(str(worker), "RDCT_ARG_c4n4ry"),
+                    report=reports / "RDCT_RPT_c4n4ry.json",
+                    max_footprint_bytes=1024**4,
+                    wall_time_ms=200,
+                    sample_interval_ms=10,
+                    cwd=cwd,
+                    env=(("RDCT_ENVK_c4n4ry", "RDCT_ENVV_c4n4ry"),),
+                ),
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 75)
+        explanation = result.explanation
+        # Present, so the check cannot pass by the field staying silent.
+        assert explanation is not None, "a policy intervention must carry an explanation"
+        self.assertNotIn(temporary, explanation)
+        plain = [
+            line
+            for line in (result.stderr or b"").decode("utf-8").splitlines()
+            if line.startswith("mlx-guard: what ")
+        ]
+        # Both plain lines are scanned, so the loop below cannot pass on an empty list (a prefix
+        # filter that matches nothing, or the CLI printing no plain lines).
+        self.assertEqual(len(plain), 2, result.stderr)
+        for canary in canaries:
+            with self.subTest(canary=canary):
+                self.assertNotIn(canary, explanation)
+                for line in plain:
+                    self.assertNotIn(canary, line)
 
     def test_discovery_failure_is_mapped_without_starting_a_process(self) -> None:
         config = mlx_guard.ObserveConfig(
@@ -795,6 +926,20 @@ with worker:
         self.assertIsInstance(checkpoint, Mapping)
         assert isinstance(checkpoint, Mapping)
         self.assertEqual(checkpoint["request_id"], 42)
+
+
+def _native_plain_lines(stderr: bytes | None) -> str | None:
+    """Return the CLI's two closing plain lines without their prefix, or ``None`` if absent."""
+    lines = (stderr or b"").decode("utf-8").splitlines()
+    if len(lines) < 2:
+        return None
+    happened, to_do = lines[-2], lines[-1]
+    if not (
+        happened.startswith("mlx-guard: what happened: ")
+        and to_do.startswith("mlx-guard: what to do: ")
+    ):
+        return None
+    return "\n".join(line.removeprefix("mlx-guard: ") for line in (happened, to_do))
 
 
 @contextmanager

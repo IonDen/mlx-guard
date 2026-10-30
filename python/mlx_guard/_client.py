@@ -10,13 +10,14 @@ import signal
 import stat
 import subprocess
 from collections.abc import Iterable, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
 from typing import IO, NoReturn, TypeAlias, cast
 
 from ._binary import BinaryDiscoveryError, binary_path, binary_version
+from ._explain import explain_payload
 
 _CHECKPOINT_FD_ENV = "MLX_GUARD_CHECKPOINT_FD"
 _MAX_U64 = (1 << 64) - 1
@@ -178,6 +179,7 @@ class RunResult:
     report: Report
     stdout: bytes | None
     stderr: bytes | None
+    explanation: str | None = field(default=None, kw_only=True)
 
 
 class GuardProcess:
@@ -264,6 +266,7 @@ class GuardProcess:
             report=report,
             stdout=bytes(self._stdout) if self._capture_output else None,
             stderr=bytes(self._stderr) if self._capture_output else None,
+            explanation=explain_payload(report.payload),
         )
         return self._result
 
