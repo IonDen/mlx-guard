@@ -103,6 +103,30 @@ it. When the launching parent exits under the default `--on-parent-exit=terminat
 that as a supervisor-initiated intervention: TERM, one-second grace, KILL if still alive, and the
 result is a policy intervention (75). `--on-parent-exit=detach` never opens this path.
 
+## Plain outcome lines
+
+When `run` or `observe` ends with a non-zero exit, `mlx-guard` writes two more lines on stderr,
+after every other line it writes at the end of the run (the stdout summary line and any diagnostic
+come first):
+
+```text
+mlx-guard: what happened: <sentence>
+mlx-guard: what to do: <sentence> More: <link to a section of docs/TROUBLESHOOTING.md>
+```
+
+The two lines always come as a pair. They are not printed on exit 0, for `--help` or `--version`,
+or when the command ends with its own exit code that `mlx-guard` does not also use (anything but 64,
+70, 74, 75, 126, or 127). A command that ends with 64, 70, 74, 75, 126, or 127 on its own gets the
+lines, which say so. A command ended by a signal always gets them.
+
+The bytes are identical on a terminal, a pipe, and a file: no colour, no wrapping that depends on
+width, and no option or environment variable to turn them off. The lines are built only from the
+final report, or from the error `mlx-guard` already holds when no report exists. They never contain
+the command or its arguments, environment values, paths (the `--report` path included), the
+executable name, or command output. The [troubleshooting page](TROUBLESHOOTING.md) explains each
+case. The wording may change between releases; the prefixes, the placement, and the privacy rule are
+stable (see [STABILITY](STABILITY.md)).
+
 ## Signals, terminal, and stdio
 
 The native parent handles SIGHUP, SIGINT, and SIGTERM. The first terminal signal is forwarded

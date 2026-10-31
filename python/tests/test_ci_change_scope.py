@@ -28,7 +28,6 @@ class ChangeScopeTests(unittest.TestCase):
     def test_documentation_only_change_set_is_docs(self) -> None:
         # Red if the allowlist drops any of these surfaces, or the script defaults to "code".
         changed = [
-            "README.md",
             "CHANGELOG.md",
             "docs/CLI.md",
             "docs/integrations/WRAP_A_COMMAND.md",
@@ -48,11 +47,17 @@ class ChangeScopeTests(unittest.TestCase):
         self.assertEqual(classify(["evidence/v0.2.0/tutorial/reports/run-limit.json"]), "code")
         self.assertEqual(classify(["evidence/v0.2.0/tutorial/transcripts/run-limit.txt"]), "code")
         self.assertEqual(classify(["evidence/v0.2.0/tutorial/provenance.json"]), "code")
-        self.assertEqual(classify(["README.md", "docs/images/limit-intervention.svg"]), "code")
+        self.assertEqual(classify(["CHANGELOG.md", "docs/images/limit-intervention.svg"]), "code")
+
+    def test_the_readme_is_code(self) -> None:
+        # Red if README.md is back on the documentation allowlist: the troubleshooting doc test
+        # reads its exit-code table, so a README-only change must run the Python job.
+        self.assertEqual(classify(["README.md"]), "code")
+        self.assertEqual(classify(["README.md", "CHANGELOG.md"]), "code")
 
     def test_one_code_path_makes_the_whole_set_code(self) -> None:
         # Red if the script decides by majority instead of any-code-wins.
-        self.assertEqual(classify(["README.md", "crates/mlx-guard-core/src/policy.rs"]), "code")
+        self.assertEqual(classify(["CHANGELOG.md", "crates/mlx-guard-core/src/policy.rs"]), "code")
 
     def test_workflow_and_packaging_changes_are_code(self) -> None:
         # Red if .github/ or pyproject.toml slip into the documentation allowlist.
@@ -70,7 +75,7 @@ class ChangeScopeTests(unittest.TestCase):
         # the set would be waved through as documentation, which is the fail-open direction.
         completed = subprocess.run(
             [str(SCRIPT)],
-            input="README.md\ncrates/mlx-guard-core/src/policy.rs",
+            input="CHANGELOG.md\ncrates/mlx-guard-core/src/policy.rs",
             capture_output=True,
             text=True,
             check=True,

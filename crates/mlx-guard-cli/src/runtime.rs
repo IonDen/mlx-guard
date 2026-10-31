@@ -19,6 +19,12 @@ use mlx_guard_core::{
     TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason,
     VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
 };
+use mlx_guard_core::{
+    FinalizedArtifacts,
+    explain::{
+        EarlyCause, StorageClass, StoragePhase, explain_early, explain_report, generic_early_cause,
+    },
+};
 
 use crate::completion::{
     Completion, CompletionInputs, complete, supervisor_outcome, terminal_kind,
@@ -65,12 +71,90 @@ pub struct RuntimeResult {
 }
 
 impl RuntimeResult {
+    /// A report-less failure: the diagnostic, then the plain lines of the outcome's generic cause.
     fn failure(outcome: SupervisorOutcome, message: &str) -> Self {
+        let mut stderr = format!("mlx-guard: {message}\n");
+        if let Some(cause) = generic_early_cause(outcome) {
+            stderr.push_str(&explain_early(cause).stderr_lines());
+        }
         Self {
             outcome,
             stdout: String::new(),
-            stderr: format!("mlx-guard: {message}\n"),
+            stderr,
         }
+    }
+
+    /// A report-less failure with its exact cause: the diagnostic, then that cause's plain lines.
+    fn refused(outcome: SupervisorOutcome, message: &str, cause: EarlyCause) -> Self {
+        Self {
+            outcome,
+            stdout: String::new(),
+            stderr: format!(
+                "mlx-guard: {message}\n{}",
+                explain_early(cause).stderr_lines()
+            ),
+        }
+    }
+}
+
+/// A finalized run: the summary on stdout when `summary`, then on stderr the diagnostic line and
+/// the plain lines the final report explains.
+fn finished(
+    outcome: SupervisorOutcome,
+    artifacts: &FinalizedArtifacts,
+    diagnostic: Option<String>,
+    summary: bool,
+) -> RuntimeResult {
+    let mut stderr =
+        diagnostic.map_or_else(String::new, |message| format!("mlx-guard: {message}\n"));
+    if let Some(plain) = explain_report(&artifacts.report) {
+        stderr.push_str(&plain.stderr_lines());
+    }
+    RuntimeResult {
+        outcome,
+        stdout: if summary {
+            artifacts.summary.clone()
+        } else {
+            String::new()
+        },
+        stderr,
+    }
+}
+
+/// Finalize a supervised run's journal. A storage failure after launch keeps its diagnostic and
+/// gets the after-launch plain lines, with the failure kind read before the journal is released.
+fn finish_journal(
+    journal: ResilientJournal<SecureJournal>,
+    outcome: SupervisorOutcome,
+    diagnostic: Option<String>,
+) -> RuntimeResult {
+    let notice = journal.stderr_notice();
+    let failure = journal.failure_kind();
+    let Some(mut journal) = journal.into_inner() else {
+        let cause = EarlyCause::Storage {
+            kind: failure.map_or(StorageClass::Unknown, StorageClass::from),
+            phase: StoragePhase::AfterLaunch,
+        };
+        return RuntimeResult {
+            outcome: SupervisorOutcome::PartialArtifactFailure,
+            stdout: String::new(),
+            stderr: format!(
+                "{}\n{}",
+                notice.unwrap_or("mlx-guard: artifact persistence failed"),
+                explain_early(cause).stderr_lines()
+            ),
+        };
+    };
+    match journal.finalize() {
+        Ok(artifacts) => finished(outcome, &artifacts, diagnostic, true),
+        Err(error) => RuntimeResult::refused(
+            SupervisorOutcome::PartialArtifactFailure,
+            &error.to_string(),
+            EarlyCause::Storage {
+                kind: error.kind().into(),
+                phase: StoragePhase::AfterLaunch,
+            },
+        ),
     }
 }
 
@@ -78,9 +162,10 @@ impl RuntimeResult {
 #[must_use]
 pub fn execute(parsed: ParsedCli) -> RuntimeResult {
     if platform_support() != PlatformSupport::Darwin {
-        return RuntimeResult::failure(
+        return RuntimeResult::refused(
             SupervisorOutcome::SupervisorFailure,
             "OS-accounted footprint observation is unsupported on this platform",
+            EarlyCause::UnsupportedPlatform,
         );
     }
     match parsed.mode {
@@ -168,15 +253,17 @@ fn initialize(
 ) -> Result<(NativeProcessInventory, SecureJournal, u64), RuntimeResult> {
     let inventory = NativeProcessInventory::new();
     if inventory.probe_footprint().is_err() {
-        return Err(RuntimeResult::failure(
+        return Err(RuntimeResult::refused(
             SupervisorOutcome::SupervisorFailure,
             "OS-accounted footprint observation is unavailable",
+            EarlyCause::FootprintUnavailable,
         ));
     }
     let Ok(run) = run_identity(common) else {
-        return Err(RuntimeResult::failure(
+        return Err(RuntimeResult::refused(
             SupervisorOutcome::SupervisorFailure,
             "secure run identity generation failed",
+            EarlyCause::RunIdentity,
         ));
     };
     let header = JournalHeader {
@@ -197,12 +284,17 @@ fn initialize(
         configuration,
         privacy: PrivacyDefaults::default(),
     };
-    let mut journal = SecureJournal::initialize(&common.report_path).map_err(|error| {
-        RuntimeResult::failure(
+    let before_launch = |error: mlx_guard_core::StorageError| {
+        RuntimeResult::refused(
             SupervisorOutcome::PartialArtifactFailure,
             &error.to_string(),
+            EarlyCause::Storage {
+                kind: error.kind().into(),
+                phase: StoragePhase::BeforeLaunch,
+            },
         )
-    })?;
+    };
+    let mut journal = SecureJournal::initialize(&common.report_path).map_err(before_launch)?;
     let mut sequence = 0;
     append(
         &mut journal,
@@ -210,12 +302,7 @@ fn initialize(
         JournalEntry::Header(Box::new(header)),
         JournalDurability::Sync,
     )
-    .map_err(|error| {
-        RuntimeResult::failure(
-            SupervisorOutcome::PartialArtifactFailure,
-            &error.to_string(),
-        )
-    })?;
+    .map_err(before_launch)?;
     Ok((inventory, journal, sequence))
 }
 
@@ -634,29 +721,7 @@ impl RunRuntime<'_> {
             parent_exited_at_ms: self.parent_watch.exited_at_ms,
         };
         self.record_terminal(terminal);
-        let notice = self.journal.stderr_notice();
-        let Some(mut journal) = self.journal.into_inner() else {
-            return RuntimeResult {
-                outcome: SupervisorOutcome::PartialArtifactFailure,
-                stdout: String::new(),
-                stderr: format!(
-                    "{}\n",
-                    notice.unwrap_or("mlx-guard: artifact persistence failed")
-                ),
-            };
-        };
-        match journal.finalize() {
-            Ok(artifacts) => RuntimeResult {
-                outcome,
-                stdout: artifacts.summary,
-                stderr: diagnostic
-                    .map_or_else(String::new, |message| format!("mlx-guard: {message}\n")),
-            },
-            Err(error) => RuntimeResult::failure(
-                SupervisorOutcome::PartialArtifactFailure,
-                &error.to_string(),
-            ),
-        }
+        finish_journal(self.journal, outcome, diagnostic)
     }
 
     fn sample_until_exit(&mut self) -> RunCompletion {
@@ -1084,29 +1149,7 @@ impl ObserveRuntime {
             &calibration,
             terminal,
         );
-        let notice = self.journal.stderr_notice();
-        let Some(mut journal) = self.journal.into_inner() else {
-            return RuntimeResult {
-                outcome: SupervisorOutcome::PartialArtifactFailure,
-                stdout: String::new(),
-                stderr: format!(
-                    "{}\n",
-                    notice.unwrap_or("mlx-guard: artifact persistence failed")
-                ),
-            };
-        };
-        match journal.finalize() {
-            Ok(artifacts) => RuntimeResult {
-                outcome,
-                stdout: artifacts.summary,
-                stderr: diagnostic
-                    .map_or_else(String::new, |message| format!("mlx-guard: {message}\n")),
-            },
-            Err(error) => RuntimeResult::failure(
-                SupervisorOutcome::PartialArtifactFailure,
-                &error.to_string(),
-            ),
-        }
+        finish_journal(self.journal, outcome, diagnostic)
     }
 
     fn sample_until_exit(&mut self) -> ObserveCompletion {
@@ -1453,32 +1496,64 @@ fn finalize_without_worker(
         outcome,
         SupervisorOutcome::ChildExited(_) | SupervisorOutcome::ChildSignaled(_)
     );
-    if append_terminal(&mut journal, &mut sequence, false, terminal).is_err() {
-        return RuntimeResult::failure(
-            SupervisorOutcome::PartialArtifactFailure,
-            "launch failed and its report could not be finalized",
-        );
+    if let Err(error) = append_terminal(&mut journal, &mut sequence, false, terminal) {
+        return lost_without_worker(outcome, diagnostic, error.kind().into());
     }
-    if is_child_exit {
-        match journal.finalize() {
-            Ok(artifacts) => RuntimeResult {
-                outcome,
-                stdout: artifacts.summary,
-                stderr: String::new(),
-            },
-            Err(_) => RuntimeResult::failure(
-                SupervisorOutcome::PartialArtifactFailure,
-                "child exited but its report could not be finalized",
-            ),
-        }
-    } else {
-        if journal.finalize().is_err() {
-            return RuntimeResult::failure(
-                SupervisorOutcome::PartialArtifactFailure,
-                "launch failed and its report could not be finalized",
-            );
-        }
-        RuntimeResult::failure(outcome, diagnostic)
+    match journal.finalize() {
+        Ok(artifacts) if is_child_exit => finished(outcome, &artifacts, None, true),
+        Ok(artifacts) => finished(outcome, &artifacts, Some(diagnostic.to_owned()), false),
+        Err(error) => lost_without_worker(outcome, diagnostic, error.kind().into()),
+    }
+}
+
+/// The result of a run with no worker whose report could not be finished.
+///
+/// A child that ran is past launch and keeps its own status, so its diagnostic is not repeated.
+/// Only the three launch outcomes say the launch failed. Any other outcome is a run that did not
+/// finish starting: the command may have been launched, so the lines claim neither a failed
+/// launch nor supervision, and the step's own diagnostic is printed first.
+fn lost_without_worker(
+    outcome: SupervisorOutcome,
+    diagnostic: &str,
+    kind: StorageClass,
+) -> RuntimeResult {
+    let (error_line, message, plain) = match outcome {
+        SupervisorOutcome::ChildExited(_) | SupervisorOutcome::ChildSignaled(_) => (
+            None,
+            "child exited but its report could not be finalized",
+            explain_early(EarlyCause::Storage {
+                kind,
+                phase: StoragePhase::AfterLaunch,
+            }),
+        ),
+        SupervisorOutcome::LaunchNotFound
+        | SupervisorOutcome::LaunchNotExecutable
+        | SupervisorOutcome::InvalidConfiguration => (
+            Some(diagnostic),
+            "launch failed and its report could not be finalized",
+            explain_early(EarlyCause::Storage {
+                kind,
+                phase: StoragePhase::LaunchFailed,
+            }),
+        ),
+        _ => (
+            Some(diagnostic),
+            "the run did not finish starting, and its report could not be finalized",
+            explain_early(EarlyCause::Storage {
+                kind,
+                phase: StoragePhase::StartUnfinished,
+            }),
+        ),
+    };
+    let mut stderr = error_line.map_or_else(String::new, |line| format!("mlx-guard: {line}\n"));
+    stderr.push_str("mlx-guard: ");
+    stderr.push_str(message);
+    stderr.push('\n');
+    stderr.push_str(&plain.stderr_lines());
+    RuntimeResult {
+        outcome: SupervisorOutcome::PartialArtifactFailure,
+        stdout: String::new(),
+        stderr,
     }
 }
 
@@ -1676,7 +1751,11 @@ fn launch_banner(policy: &PolicyConfig) -> String {
 /// Claim the caller's readiness descriptor, or fail the command before anything is launched.
 fn client_ready(raw_descriptor: Option<i32>) -> Result<ClientReady, RuntimeResult> {
     ClientReady::take(raw_descriptor).map_err(|error| {
-        RuntimeResult::failure(SupervisorOutcome::InvalidConfiguration, &error.to_string())
+        RuntimeResult::refused(
+            SupervisorOutcome::InvalidConfiguration,
+            &error.to_string(),
+            EarlyCause::ClientReadyDescriptor,
+        )
     })
 }
 
@@ -1689,7 +1768,11 @@ fn sampling_config(common: &CommonOptions) -> Result<SamplingConfig, RuntimeResu
         MAX_SAMPLE_HISTORY_CAPACITY,
     )
     .map_err(|error| {
-        RuntimeResult::failure(SupervisorOutcome::InvalidConfiguration, &error.to_string())
+        RuntimeResult::refused(
+            SupervisorOutcome::InvalidConfiguration,
+            &error.to_string(),
+            EarlyCause::Configuration,
+        )
     })
 }
 
@@ -1893,27 +1976,24 @@ fn record_resilient(
 
 fn checkpoint_channel() -> Result<(CheckpointChannel, CheckpointWorkerEndpoint, u64), RuntimeResult>
 {
-    let mut random = File::open("/dev/urandom").map_err(|_| {
-        RuntimeResult::failure(
+    let setup = |message: &str| {
+        RuntimeResult::refused(
             SupervisorOutcome::SupervisorFailure,
-            "secure checkpoint nonce generation failed",
+            message,
+            EarlyCause::SupervisorSetup,
         )
-    })?;
+    };
+    let mut random = File::open("/dev/urandom")
+        .map_err(|_| setup("secure checkpoint nonce generation failed"))?;
     let mut nonce_bytes = [0_u8; 32];
-    random.read_exact(&mut nonce_bytes).map_err(|_| {
-        RuntimeResult::failure(
-            SupervisorOutcome::SupervisorFailure,
-            "secure checkpoint nonce generation failed",
-        )
-    })?;
+    random
+        .read_exact(&mut nonce_bytes)
+        .map_err(|_| setup("secure checkpoint nonce generation failed"))?;
     let initial_request_id = loop {
         let mut request_id_bytes = [0_u8; 8];
-        random.read_exact(&mut request_id_bytes).map_err(|_| {
-            RuntimeResult::failure(
-                SupervisorOutcome::SupervisorFailure,
-                "secure checkpoint request-id generation failed",
-            )
-        })?;
+        random
+            .read_exact(&mut request_id_bytes)
+            .map_err(|_| setup("secure checkpoint request-id generation failed"))?;
         let request_id = u64::from_be_bytes(request_id_bytes);
         if request_id != 0 {
             break request_id;
@@ -1922,9 +2002,7 @@ fn checkpoint_channel() -> Result<(CheckpointChannel, CheckpointWorkerEndpoint, 
     let nonce = CheckpointNonce::from_bytes(nonce_bytes);
     CheckpointChannel::pair(nonce)
         .map(|(channel, endpoint)| (channel, endpoint, initial_request_id))
-        .map_err(|error| {
-            RuntimeResult::failure(SupervisorOutcome::SupervisorFailure, &error.to_string())
-        })
+        .map_err(|error| setup(&error.to_string()))
 }
 
 fn retain_recent_sample(
@@ -2742,5 +2820,170 @@ mod tests {
             failure.diagnostic,
             "child exited before checkpoint negotiation"
         );
+    }
+}
+
+#[cfg(test)]
+mod finalize_without_worker_tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use mlx_guard_core::{SecureJournal, SignalNumber, SupervisorOutcome, VERSION};
+
+    use super::finalize_without_worker;
+
+    /// An owner-only scratch directory, removed when the test ends.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "mlx-guard-finalize-without-worker-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir(&path).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            Self(path)
+        }
+
+        fn journal(&self, name: &str) -> SecureJournal {
+            SecureJournal::initialize(&self.0.join(name)).unwrap()
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Which storage step fails. Both fail as an invalid record, so the detail words are the same.
+    #[derive(Clone, Copy, Debug)]
+    enum Lost {
+        /// The next free sequence is 0, so the terminal records numbered from 1 are refused.
+        TerminalRecord,
+        /// The terminal records append, but a journal with no header cannot become a report.
+        Finalize,
+    }
+
+    const BOTH: [Lost; 2] = [Lost::TerminalRecord, Lost::Finalize];
+
+    fn lose(scratch: &Scratch, lost: Lost, outcome: SupervisorOutcome, diagnostic: &str) -> String {
+        let name = format!("{lost:?}-{outcome:?}.json").replace(['(', ')', ' '], "-");
+        let sequence = match lost {
+            Lost::TerminalRecord => 1,
+            Lost::Finalize => 0,
+        };
+        let result = finalize_without_worker(scratch.journal(&name), sequence, outcome, diagnostic);
+        assert_eq!(
+            result.outcome,
+            SupervisorOutcome::PartialArtifactFailure,
+            "{lost:?} {outcome:?}"
+        );
+        assert_eq!(result.stdout, "", "{lost:?} {outcome:?}");
+        result.stderr
+    }
+
+    fn more(anchor: &str) -> String {
+        format!(
+            " More: https://github.com/IonDen/mlx-guard/blob/v{VERSION}/docs/TROUBLESHOOTING.md#{anchor}"
+        )
+    }
+
+    #[test]
+    fn a_lost_launch_failure_keeps_its_diagnostic_and_says_the_launch_failed() {
+        // Bug: the launch error line dropped on the lost path, so the operator never sees why the
+        // launch failed; or a launch outcome left out of the launch-failed phase.
+        let scratch = Scratch::new();
+        for outcome in [
+            SupervisorOutcome::LaunchNotFound,
+            SupervisorOutcome::LaunchNotExecutable,
+            SupervisorOutcome::InvalidConfiguration,
+        ] {
+            for lost in BOTH {
+                let expected = format!(
+                    "mlx-guard: launch error words\n\
+                     mlx-guard: launch failed and its report could not be finalized\n\
+                     mlx-guard: what happened: the command could not be launched, and mlx-guard \
+                     could not finish the report about that, so the cause is not recorded.\n\
+                     mlx-guard: what to do: check free disk space and the report directory, then \
+                     run again with a new --report name to see the launch error.{}\n",
+                    more("74-after-launch")
+                );
+                assert_eq!(
+                    lose(&scratch, lost, outcome, "launch error words"),
+                    expected,
+                    "{lost:?} {outcome:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_lost_supervisor_failure_claims_neither_a_failed_launch_nor_supervision() {
+        // Bug: a supervisor failure after the launch explained as "could not be launched" (ledger
+        // 3), or as a supervised run, or with its error line dropped.
+        let scratch = Scratch::new();
+        for lost in BOTH {
+            let expected = format!(
+                "mlx-guard: identity inspection failed\n\
+                 mlx-guard: the run did not finish starting, and its report could not be finalized\n\
+                 mlx-guard: what happened: mlx-guard could not finish starting the run, and could \
+                 not write its report (a journal record was invalid), so it supervised nothing.\n\
+                 mlx-guard: what to do: check free disk space and the report directory, then run \
+                 again with a new --report name; the error lines above name the step.{}\n",
+                more("74-after-launch")
+            );
+            assert_eq!(
+                lose(
+                    &scratch,
+                    lost,
+                    SupervisorOutcome::SupervisorFailure,
+                    "identity inspection failed"
+                ),
+                expected,
+                "{lost:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_lost_child_exit_says_the_child_exited_on_either_storage_step() {
+        // Bug: a terminal-record failure on a child exit prints "launch failed" above lines that
+        // say the command was supervised (ledger 4).
+        let scratch = Scratch::new();
+        for outcome in [
+            SupervisorOutcome::ChildExited(3),
+            SupervisorOutcome::ChildSignaled(SignalNumber::new(15).unwrap()),
+        ] {
+            for lost in BOTH {
+                let expected = format!(
+                    "mlx-guard: child exited but its report could not be finalized\n\
+                     mlx-guard: what happened: the command was supervised, but mlx-guard could \
+                     not write its complete report (a journal record was invalid); safety \
+                     enforcement was not affected.\n\
+                     mlx-guard: what to do: check free disk space and that nothing else changed \
+                     the report directory during the run; the hidden .<name>.journal beside the \
+                     report path keeps what was saved. Use a new --report name next time.{}\n",
+                    more("74-after-launch")
+                );
+                assert_eq!(
+                    lose(
+                        &scratch,
+                        lost,
+                        outcome,
+                        "child exited before identity inspection"
+                    ),
+                    expected,
+                    "{lost:?} {outcome:?}"
+                );
+            }
+        }
     }
 }

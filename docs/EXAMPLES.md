@@ -63,8 +63,8 @@ the command reads `/dev/null` instead and one stderr line says so. See the
 
 ## Captured smoke run
 
-This output was captured on 2026-10-28 on the M1 Max 32 GB (macOS 27.2) with a 0.3.1
-build, with standard input redirected, so it shows no terminal line. The reference
+This output was captured on 2026-10-30 on the M1 Max 32 GB (macOS 27.2) with a 0.4.0
+build, with a non-terminal standard input, so it shows no terminal line. The reference
 measurements are on macOS 27.0.1. Timing and footprint
 values vary by host, so the stable facts are the typed outcome, sample count, and absence of
 signals.
@@ -80,3 +80,18 @@ $ echo $?
 The resulting schema-v1 report recorded `child_exited`, child code `0`, one sample, zero signals,
 `redacted_before_persistence: true`, file mode `0600`, and upload disabled, plus the observe-only
 `calibration` section with its `safety_certified: false` marker.
+
+A run that hits its wall-time limit, captured the same way:
+
+```console
+$ mlx-guard run --max-footprint 6GiB --wall-time 1s --report reports/sleep.json -- /bin/sleep 5
+mlx-guard: enforcing a 6442450944-byte footprint limit; emergency KILL at 7086696038 bytes, about 10% above the limit
+mlx-guard: policy_intervention at 1091ms; 20 samples, 1 signal
+mlx-guard: what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard sent SIGTERM to the command's process group at 1.0 s.
+mlx-guard: what to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v0.4.0/docs/TROUBLESHOOTING.md#75-the-wall-time-limit
+$ echo $?
+75
+```
+
+The last two lines say what happened and what to do, and the
+[troubleshooting page](TROUBLESHOOTING.md) explains each stop in more detail.

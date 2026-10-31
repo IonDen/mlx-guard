@@ -5,6 +5,37 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-31
+
+### Added
+
+- When `run` or `observe` ends with a non-zero exit, `mlx-guard` now prints two more lines on
+  stderr after everything it printed before: `mlx-guard: what happened: …` and
+  `mlx-guard: what to do: … More: <link>`. They explain the outcome from the report and link to the
+  matching section of the new `docs/TROUBLESHOOTING.md`. They never contain the command, environment
+  values, paths, or command output, and there is no option to turn them off. A command's own exit
+  code that `mlx-guard` does not also use prints nothing. Exit codes, the stdout summary line, and
+  report schema v1 are unchanged. A contract parse error (exit 64) now ends its line with a newline
+  before the new lines. Scripts that compare stderr exactly on a non-zero run need to relax the
+  check or read the exit code or the report.
+- `RunResult.explanation` (`str | None`, keyword-only, default `None`) holds the same text as the
+  two lines without the `mlx-guard: ` prefix. It is `None` when no lines were printed. Outcomes with
+  no report still raise their existing errors.
+
+### Changed
+
+- On a non-zero exit, stderr now ends with two more lines than before, including when the code is
+  `128+n` for a signal or one of the command's own codes that `mlx-guard` also uses. A script that
+  asserts an empty stderr, or an exact one, on a failing run will see them. Read the exit code or the
+  report instead. Exit codes, the stdout summary line, and report schema v1 are unchanged.
+
+### Documentation
+
+- A new troubleshooting page (`docs/TROUBLESHOOTING.md`) explains each outcome and what to do next.
+- The reference measurements stay the 0.3.1 bundle on macOS 27.0.1 (`evidence/v0.3.1/m1-max-32gb/`).
+  This release changes how a finished run is described, after the last sample, and not sampling,
+  policy, identity tracking, or intervention.
+
 ## [0.3.1] - 2026-10-28
 
 ### Fixed
@@ -301,7 +332,8 @@ versions follow Semantic Versioning.
   strict Python report permissions, unpredictable checkpoint request IDs, locked dependencies,
   CycloneDX SBOM, release checksums, and a self-contained Trusted Publishing workflow.
 
-[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/IonDen/mlx-guard/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/IonDen/mlx-guard/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/IonDen/mlx-guard/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/IonDen/mlx-guard/compare/v0.1.0...v0.2.0

@@ -54,6 +54,15 @@ const MARKER_ALL_CHILD_STDERR: &str = "RDCT_E2E_10e_c4n4ry";
 const MARKER_ALL_CONTROL_ARGV: &str = "RDCT_E2E_10c_c4n4ry";
 const MARKER_ALL_NON_UTF8_ARGV: &str = "RDCT_E2E_10u_c4n4ry";
 
+// Canaries for the outcomes that end non-zero, so the plain "what happened" / "what to do" lines
+// are scanned on the paths that print them: a launch the executable lookup refused (127), a
+// launch setting refused before start (64), and a wall-time intervention (75).
+const MARKER_MISSING_EXECUTABLE_DIRECTORY: &str = "RDCT_E2E_11_c4n4ry";
+const MARKER_MISSING_CWD: &str = "RDCT_E2E_12_c4n4ry";
+const MARKER_WALL_ARGV: &str = "RDCT_E2E_13a_c4n4ry";
+const MARKER_WALL_ENV_KEY: &str = "RDCT_E2E_13k_c4n4ry";
+const MARKER_WALL_ENV_VALUE: &str = "RDCT_E2E_13v_c4n4ry";
+
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 /// A private per-case workspace: the owner-only report directory, plus room beside it for the
@@ -271,6 +280,27 @@ fn assert_output(output: &Output, expected: &Expectation) {
             }
         }
     }
+
+    // The plain lines are a supervisor channel too, and the scans above prove nothing about it
+    // when it stays silent: a non-zero exit must carry exactly one "what happened" and one
+    // "what to do" line on stderr, and a zero exit neither. Red if a non-zero path prints no
+    // plain lines, or a successful run prints them.
+    let plain_count = |prefix: &[u8]| {
+        supervisor_lines(&output.stderr)
+            .filter(|line| line.starts_with(prefix))
+            .count()
+    };
+    let expected_count = usize::from(expected.exit_code != 0);
+    assert_eq!(
+        (
+            plain_count(b"mlx-guard: what happened: "),
+            plain_count(b"mlx-guard: what to do: ")
+        ),
+        (expected_count, expected_count),
+        "exit {} must carry {expected_count} pair(s) of plain lines: {}",
+        expected.exit_code,
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     // The narrower supervisor-line scan above only means something while the worker's own bytes
     // really do pass through these inherited streams.
@@ -553,6 +583,86 @@ fn every_channel_stays_redacted_through_a_policy_intervention() {
                 MARKER_ALL_NON_UTF8_ARGV,
             ],
             child_output: ChildOutput::Prints(&[MARKER_ALL_CHILD_STDOUT, MARKER_ALL_CHILD_STDERR]),
+        },
+    );
+}
+
+#[test]
+fn a_missing_executable_in_a_planted_directory_reaches_no_plain_line() {
+    // Catches the 127 plain lines (or its diagnostic) naming the path that was not found, when
+    // only the fixed "the command named after --" wording may appear.
+    let directory = CaseDirectory::new();
+    let missing_worker = directory
+        .marker_directory(MARKER_MISSING_EXECUTABLE_DIRECTORY)
+        .join("runner");
+    let output = guard(&directory)
+        .arg("--")
+        .arg(&missing_worker)
+        .output()
+        .expect("the command must run");
+
+    assert_case(
+        &directory,
+        &output,
+        &Expectation {
+            exit_code: 127,
+            executable_basename: "runner",
+            argument_count: 0,
+            markers: &[MARKER_MISSING_EXECUTABLE_DIRECTORY],
+            child_output: ChildOutput::Silent,
+        },
+    );
+}
+
+#[test]
+fn a_missing_planted_working_directory_reaches_no_plain_line() {
+    // Catches the 64 launch-setting lines quoting the rejected --cwd value instead of naming the
+    // setting.
+    let directory = CaseDirectory::new();
+    let mut missing_cwd = directory.root.join(MARKER_MISSING_CWD).into_os_string();
+    missing_cwd.push("/");
+    let output = guard(&directory)
+        .arg("--cwd")
+        .arg(&missing_cwd)
+        .args(["--", "/bin/sleep", "1"])
+        .output()
+        .expect("the command must run");
+
+    assert_case(
+        &directory,
+        &output,
+        &Expectation {
+            exit_code: 64,
+            executable_basename: "sleep",
+            argument_count: 1,
+            markers: &[MARKER_MISSING_CWD],
+            child_output: ChildOutput::Silent,
+        },
+    );
+}
+
+#[test]
+fn a_wall_time_intervention_keeps_argv_and_environment_out_of_the_plain_lines() {
+    // Catches the 75 wall-time lines echoing the command's argv or its --env assignment, which
+    // the report never holds and the plain lines must not either.
+    let directory = CaseDirectory::new();
+    let output = guard(&directory)
+        .args(["--wall-time", "100ms", "--env"])
+        .arg(format!("{MARKER_WALL_ENV_KEY}={MARKER_WALL_ENV_VALUE}"))
+        .args(["--", "/bin/sh", "-c", SLEEP_SCRIPT, MARKER_WALL_ARGV])
+        .arg(format!("--token={MARKER_WALL_ARGV}"))
+        .output()
+        .expect("the command must run");
+
+    assert_case(
+        &directory,
+        &output,
+        &Expectation {
+            exit_code: 75,
+            executable_basename: "sh",
+            argument_count: 4,
+            markers: &[MARKER_WALL_ARGV, MARKER_WALL_ENV_KEY, MARKER_WALL_ENV_VALUE],
+            child_output: ChildOutput::Silent,
         },
     );
 }

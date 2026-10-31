@@ -131,12 +131,24 @@ class InstalledPackageTests(unittest.TestCase):
             os.kill(client.pid, signal.SIGKILL)
             _, client_stderr = client.communicate(timeout=5)
             self.assertEqual(client.returncode, -signal.SIGKILL)
-            # The supervisor prints the emergency-band banner on the inherited stderr as it
-            # launches the workload. Whether that reaches the pipe before the client is killed is a
-            # race, so tolerate it being present or absent; nothing else should appear on stderr.
-            for line in client_stderr.splitlines():
-                if line:
-                    self.assertIn("emergency KILL", line, client_stderr)
+            # Bug: the closing plain lines missing, reordered, or joined by another line on the
+            # inherited stderr after a parent-exit intervention.
+            # The emergency-band banner is printed only once the workload is launched, which can
+            # come after the client is killed, so it may be absent. The two plain lines are not a
+            # race: the supervisor writes them to the inherited pipe before it exits, and
+            # communicate() reads to EOF, which needs every write end, the supervisor's included,
+            # closed. So they must be present, in order, with the parent-exit anchor.
+            lines = [line for line in client_stderr.splitlines() if line]
+            if (
+                lines
+                and lines[0].startswith("mlx-guard: enforcing ")
+                and "emergency KILL" in lines[0]
+            ):
+                lines = lines[1:]
+            self.assertEqual(len(lines), 2, client_stderr)
+            self.assertTrue(lines[0].startswith("mlx-guard: what happened: "), client_stderr)
+            self.assertTrue(lines[1].startswith("mlx-guard: what to do: "), client_stderr)
+            self.assertTrue(lines[1].endswith("#75-the-launching-process-exited"), client_stderr)
 
             deadline = time.monotonic() + 5
             while not report.exists() and time.monotonic() < deadline:

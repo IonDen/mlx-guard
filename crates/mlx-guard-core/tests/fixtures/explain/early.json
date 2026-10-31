@@ -1,0 +1,146 @@
+[
+  {
+    "cause": "command_line",
+    "text": "what happened: the command line was not accepted, so nothing was launched and no report was written.\nwhat to do: fix the command line as the error above says, then run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-command-line"
+  },
+  {
+    "cause": "command_line --max-footprint",
+    "text": "what happened: the command line was not accepted (--max-footprint), so nothing was launched and no report was written.\nwhat to do: fix --max-footprint as the error above says, then run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-command-line"
+  },
+  {
+    "cause": "command_line <COMMAND>",
+    "text": "what happened: the command line was not accepted (the command after --), so nothing was launched and no report was written.\nwhat to do: fix the command after -- as the error above says, then run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-command-line"
+  },
+  {
+    "cause": "client_ready_descriptor",
+    "text": "what happened: the internal --client-ready-fd descriptor could not be used, so nothing was launched and no report was written.\nwhat to do: leave --client-ready-fd out when you run mlx-guard yourself; it is for the Python client. If the Python client produced this, open an issue. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-command-line"
+  },
+  {
+    "cause": "configuration",
+    "text": "what happened: a setting was rejected before launch (the error above names it), so nothing was launched and no report was written.\nwhat to do: fix that setting and run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-command-line"
+  },
+  {
+    "cause": "unsupported_platform",
+    "text": "what happened: mlx-guard needs macOS to read the OS-accounted footprint, so it launched nothing and wrote no report.\nwhat to do: run it on a Mac with Apple Silicon. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-before-launch"
+  },
+  {
+    "cause": "footprint_unavailable",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint on this Mac, so it launched nothing and wrote no report.\nwhat to do: check the compatibility page for your macOS version, then open an issue with your macOS version and chip. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-before-launch"
+  },
+  {
+    "cause": "run_identity",
+    "text": "what happened: mlx-guard could not set up the run's identity, so it launched nothing and wrote no report.\nwhat to do: make sure the command after -- names a file (an empty string or / does not); if it does, open an issue. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-before-launch"
+  },
+  {
+    "cause": "supervisor_setup",
+    "text": "what happened: mlx-guard could not set up its own supervision, so it launched nothing and wrote no report.\nwhat to do: run it again; if it repeats, open an issue with the error line above. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-before-launch"
+  },
+  {
+    "cause": "storage journal_exists before_launch",
+    "text": "what happened: an earlier run already used this report path, and its report and hidden journal are kept, so nothing was launched.\nwhat to do: pass a new --report name, or move both the report and its hidden .<name>.journal away before reusing the path. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-report-path-already-used"
+  },
+  {
+    "cause": "storage journal_exists launch_failed",
+    "text": "what happened: an earlier run already used this report path, and its report and hidden journal are kept, so nothing was launched.\nwhat to do: pass a new --report name, or move both the report and its hidden .<name>.journal away before reusing the path. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-report-path-already-used"
+  },
+  {
+    "cause": "storage journal_exists after_launch",
+    "text": "what happened: an earlier run already used this report path, and its report and hidden journal are kept, so nothing was launched.\nwhat to do: pass a new --report name, or move both the report and its hidden .<name>.journal away before reusing the path. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-report-path-already-used"
+  },
+  {
+    "cause": "storage invalid_path before_launch",
+    "text": "what happened: the report directory is missing, not yours, or not owner-only (mode 0700), so nothing was launched.\nwhat to do: create the directory with mkdir -m 700, or fix its owner and mode, then run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-report-directory"
+  },
+  {
+    "cause": "storage unsafe_directory before_launch",
+    "text": "what happened: the report directory is missing, not yours, or not owner-only (mode 0700), so nothing was launched.\nwhat to do: create the directory with mkdir -m 700, or fix its owner and mode, then run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-report-directory"
+  },
+  {
+    "cause": "storage create_failed before_launch",
+    "text": "what happened: mlx-guard could not prepare its journal (the journal could not be created), so nothing was launched.\nwhat to do: check free disk space, then pass a new --report name or move the hidden .<name>.journal file away, and run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-before-launch"
+  },
+  {
+    "cause": "storage write_failed before_launch",
+    "text": "what happened: mlx-guard could not prepare its journal (a write failed), so nothing was launched.\nwhat to do: check free disk space, then pass a new --report name or move the hidden .<name>.journal file away, and run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-before-launch"
+  },
+  {
+    "cause": "storage sync_failed before_launch",
+    "text": "what happened: mlx-guard could not prepare its journal (a sync to disk failed), so nothing was launched.\nwhat to do: check free disk space, then pass a new --report name or move the hidden .<name>.journal file away, and run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-before-launch"
+  },
+  {
+    "cause": "storage read_failed before_launch",
+    "text": "what happened: mlx-guard could not prepare its journal (reading the journal back failed), so nothing was launched.\nwhat to do: check free disk space, then pass a new --report name or move the hidden .<name>.journal file away, and run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-before-launch"
+  },
+  {
+    "cause": "storage invalid_record before_launch",
+    "text": "what happened: mlx-guard could not prepare its journal (a journal record was invalid), so nothing was launched.\nwhat to do: check free disk space, then pass a new --report name or move the hidden .<name>.journal file away, and run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-before-launch"
+  },
+  {
+    "cause": "storage unsafe_target before_launch",
+    "text": "what happened: mlx-guard could not prepare its journal (the report path is a link or another kind of file), so nothing was launched.\nwhat to do: check free disk space, then pass a new --report name or move the hidden .<name>.journal file away, and run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-before-launch"
+  },
+  {
+    "cause": "storage finalize_failed before_launch",
+    "text": "what happened: mlx-guard could not prepare its journal (the final report could not be written), so nothing was launched.\nwhat to do: check free disk space, then pass a new --report name or move the hidden .<name>.journal file away, and run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-before-launch"
+  },
+  {
+    "cause": "storage unknown before_launch",
+    "text": "what happened: mlx-guard could not prepare its journal, so nothing was launched.\nwhat to do: check free disk space, then pass a new --report name or move the hidden .<name>.journal file away, and run again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-before-launch"
+  },
+  {
+    "cause": "storage unknown launch_failed",
+    "text": "what happened: the command could not be launched, and mlx-guard could not finish the report about that, so the cause is not recorded.\nwhat to do: check free disk space and the report directory, then run again with a new --report name to see the launch error. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage write_failed launch_failed",
+    "text": "what happened: the command could not be launched, and mlx-guard could not finish the report about that, so the cause is not recorded.\nwhat to do: check free disk space and the report directory, then run again with a new --report name to see the launch error. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage invalid_record start_unfinished",
+    "text": "what happened: mlx-guard could not finish starting the run, and could not write its report (a journal record was invalid), so it supervised nothing.\nwhat to do: check free disk space and the report directory, then run again with a new --report name; the error lines above name the step. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage unknown start_unfinished",
+    "text": "what happened: mlx-guard could not finish starting the run, and could not write its report, so it supervised nothing.\nwhat to do: check free disk space and the report directory, then run again with a new --report name; the error lines above name the step. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage create_failed after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report (the journal could not be created); safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage write_failed after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report (a write failed); safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage sync_failed after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report (a sync to disk failed); safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage read_failed after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report (reading the journal back failed); safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage invalid_record after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report (a journal record was invalid); safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage unsafe_target after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report (the report path is a link or another kind of file); safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage finalize_failed after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report (the final report could not be written); safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage unknown after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report; safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage invalid_path after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report; safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "cause": "storage unsafe_directory after_launch",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report; safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  }
+]
