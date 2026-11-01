@@ -63,6 +63,38 @@ fn wait_until_gone(pid: i32) {
     assert!(!process_exists(pid));
 }
 
+/// The troubleshooting link that ends the "what to do" line, pinned to this build's release tag.
+fn doc_link(anchor: &str) -> String {
+    format!(
+        "https://github.com/IonDen/mlx-guard/blob/v{}/docs/TROUBLESHOOTING.md#{anchor}",
+        mlx_guard_core::VERSION
+    )
+}
+
+/// Assert stderr is exactly the two plain lines: "what happened", then "what to do" ending in
+/// the link to `anchor`. Red if a 75 run prints no lines, extra lines, or the wrong row.
+fn assert_two_plain_lines(stderr: &str, anchor: &str) {
+    let lines: Vec<&str> = stderr.lines().collect();
+    assert_eq!(
+        lines.len(),
+        2,
+        "stderr must be the two plain lines: {stderr:?}"
+    );
+    assert!(
+        lines[0].starts_with("mlx-guard: what happened: "),
+        "{stderr:?}"
+    );
+    assert!(
+        lines[1].starts_with("mlx-guard: what to do: "),
+        "{stderr:?}"
+    );
+    assert!(
+        lines[1].ends_with(&format!(" More: {}", doc_link(anchor))),
+        "the what-to-do line must link #{anchor}: {stderr:?}"
+    );
+    assert!(stderr.ends_with('\n'), "{stderr:?}");
+}
+
 #[test]
 fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
     // Catches runtime wiring that never negotiates the FD or mistakes signal delivery for an ack.
@@ -91,7 +123,7 @@ fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
     let result = execute(parsed);
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
-    assert!(result.stderr.is_empty());
+    assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
     assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
     // Pins the shipped default: a real cooperative worker missed the former 100 ms bound on the
@@ -133,6 +165,33 @@ fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
     );
     // This worker acknowledges without artifact facts, so the report must not invent any.
     assert_eq!(report.checkpoint.artifact, None, "{report:#?}");
+    // The plain lines name the acknowledged request by the id the report holds, in both lines.
+    // Red if the acknowledgement clause or the resume hint is dropped, worded as unacknowledged
+    // or timed out, or carries another id than the report's.
+    let request_id = report.checkpoint.request_id.unwrap_or_default();
+    let lines: Vec<&str> = result.stderr.lines().collect();
+    assert!(
+        lines[0].starts_with(
+            "mlx-guard: what happened: the run reached the 1.0 s wall-time limit you set, so \
+             mlx-guard asked the command to save a checkpoint at "
+        ) && lines[0].ends_with(&format!(
+            " and then sent SIGTERM to its process group. The command acknowledged checkpoint \
+             request {request_id}."
+        )),
+        "{:?}",
+        result.stderr
+    );
+    assert_eq!(
+        lines[1],
+        format!(
+            "mlx-guard: what to do: raise --wall-time if the command needs longer, or find out \
+             why it ran longer than expected; resume from the state saved for checkpoint request \
+             {request_id}. More: {}",
+            doc_link("75-the-wall-time-limit")
+        ),
+        "{:?}",
+        result.stderr
+    );
 }
 
 #[test]
@@ -164,7 +223,7 @@ fn a_worker_reported_artifact_reaches_the_report_verbatim() {
     let result = execute(parsed);
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
-    assert!(result.stderr.is_empty());
+    assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
     assert_eq!(
         report.checkpoint.status,
@@ -320,9 +379,18 @@ fn unavailable_supervisor_signal_control_finalizes_before_worker_launch() {
     let result = execute(parsed);
 
     assert_eq!(result.outcome, SupervisorOutcome::SupervisorFailure);
+    // The diagnostic stays first; the start-failure lines follow it. Red if a zero-sample
+    // supervisor failure is told as lost readings or gets no lines.
     assert_eq!(
         result.stderr,
-        "mlx-guard: a terminal signal monitor is already installed\n"
+        format!(
+            "mlx-guard: a terminal signal monitor is already installed\n\
+             mlx-guard: what happened: mlx-guard could not finish starting the run, so it \
+             supervised nothing; the error line on stderr names the step.\n\
+             mlx-guard: what to do: run it again; if it repeats, open an issue with that error \
+             line and the redacted report. More: {}\n",
+            doc_link("70-while-starting-the-command")
+        )
     );
     assert!(!marker.exists());
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
@@ -361,7 +429,7 @@ fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
     let result = execute(parsed);
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
-    assert!(result.stderr.is_empty());
+    assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
     assert_eq!(report.configuration.checkpoint_timeout_ms, Some(100));
     assert_eq!(report.checkpoint.status, CheckpointStatus::TimedOut);

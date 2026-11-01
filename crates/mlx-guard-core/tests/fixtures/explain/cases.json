@@ -1,0 +1,226 @@
+[
+  {
+    "row": "75-footprint",
+    "report": "evidence/v0.2.0/tutorial/reports/run-limit.json",
+    "text": "what happened: the OS-accounted footprint reached 6.05 GiB, at or above the 6.00 GiB limit you set, on 2 samples in a row, so mlx-guard sent SIGTERM to the command's process group at 40.0 s.\nwhat to do: observe the command to see its peak, then fix the growth or raise --max-footprint. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-footprint-limit"
+  },
+  {
+    "row": "75-footprint-acknowledged",
+    "report": "evidence/v0.2.0/tutorial/reports/resume-1.json",
+    "text": "what happened: the OS-accounted footprint reached 6.05 GiB, at or above the 6.00 GiB limit you set, on 2 samples in a row, so mlx-guard asked the command to save a checkpoint at 40.3 s and then sent SIGTERM to its process group. The command acknowledged checkpoint request 5404420652406863310.\nwhat to do: observe the command to see its peak, then fix the growth or raise --max-footprint; resume from the state saved for checkpoint request 5404420652406863310. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-footprint-limit"
+  },
+  {
+    "row": "75-footprint-no-breach",
+    "report": "crates/mlx-guard-core/tests/fixtures/report-v1-resume.json",
+    "text": "what happened: the OS-accounted footprint was at or above the 100 B limit you set on 2 samples in a row, so mlx-guard sent SIGTERM to the command's process group at 13 ms. The command acknowledged checkpoint request 42.\nwhat to do: observe the command to see its peak, then fix the growth or raise --max-footprint; resume from the state saved for checkpoint request 42. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-footprint-limit"
+  },
+  {
+    "row": "75-footprint-timed-out",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-footprint-timed-out.json",
+    "text": "what happened: the OS-accounted footprint reached 120 B, at or above the 100 B limit you set, on 2 samples in a row, so mlx-guard asked the command to save a checkpoint at 500 ms and then sent SIGTERM to its process group. The command did not acknowledge checkpoint request 11 within 1.0 s; it may still have saved it.\nwhat to do: observe the command to see its peak, then fix the growth or raise --max-footprint; if the command saved state for checkpoint request 11, resume from it. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-footprint-limit"
+  },
+  {
+    "row": "75-footprint-cancelled",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-footprint-cancelled.json",
+    "text": "what happened: the OS-accounted footprint reached 120 B, at or above the 100 B limit you set, on 2 samples in a row, so mlx-guard sent SIGTERM to the command's process group at 500 ms. The checkpoint request could not be delivered.\nwhat to do: observe the command to see its peak, then fix the growth or raise --max-footprint. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-footprint-limit"
+  },
+  {
+    "row": "75-emergency",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-emergency.json",
+    "text": "what happened: one sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency threshold of 6.60 GiB, which is 614.40 MiB more than your 6.00 GiB limit, so mlx-guard sent SIGKILL to the command's process group at once at 12.3 s, with no checkpoint and no grace period.\nwhat to do: find what allocates that much between samples, or raise --max-footprint if that peak is expected; a shorter --sample-interval sees growth sooner. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-emergency-kill"
+  },
+  {
+    "row": "75-wall",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall.json",
+    "text": "what happened: the run reached the 30 ms wall-time limit you set, so mlx-guard sent SIGTERM to the command's process group at 31 ms.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+  },
+  {
+    "row": "75-wall-kill",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-kill.json",
+    "text": "what happened: the run reached the 30 ms wall-time limit you set, so mlx-guard sent SIGTERM to the command's process group at 31 ms, and SIGKILL 1.0 s later because it was still running.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+  },
+  {
+    "row": "75-wall-checkpoint-then-ended",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-checkpoint-then-ended.json",
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to save a checkpoint at 1.0 s; the command ended before the SIGTERM that followed could reach it. The command had not acknowledged checkpoint request 7 when it ended.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+  },
+  {
+    "row": "75-wall-already-ended",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-already-ended.json",
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard found the command already ended when it sent SIGTERM at 1.0 s.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+  },
+  {
+    "row": "75-wall-kill-on-ended",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-kill-on-ended.json",
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard sent SIGTERM to the command's process group at 1.0 s.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+  },
+  {
+    "row": "75-wall-second-signal-kill",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-second-signal-kill.json",
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard sent SIGTERM to the command's process group at 1.0 s, and SIGKILL 206 ms later, after a second terminal signal arrived.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+  },
+  {
+    "row": "75-parent",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-parent.json",
+    "text": "what happened: the process that started mlx-guard exited at 2.1 s, and the default --on-parent-exit=terminate stops the command with it, so mlx-guard sent SIGTERM to the command's process group at 2.1 s.\nwhat to do: keep the launching process running until the run ends, or pass --on-parent-exit=detach to let the command outlive it. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-launching-process-exited"
+  },
+  {
+    "row": "75-ignored-signal",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-ignored-signal.json",
+    "text": "what happened: the command was still running after the SIGINT that mlx-guard passed on to it, so mlx-guard sent SIGKILL to its process group at 1.4 s.\nwhat to do: nothing, if you meant to stop it; otherwise make the command exit when it receives SIGINT or SIGTERM. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-a-signal-the-command-ignored"
+  },
+  {
+    "row": "75-survivors",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-survivors.json",
+    "text": "what happened: the command exited, but processes it started were still running after SIGTERM, so mlx-guard sent SIGKILL to them at 1.2 s; the command's own exit status is in the report under outcome.child_status.\nwhat to do: make the command wait for, or stop, the processes it starts before it exits. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-processes-left-behind"
+  },
+  {
+    "row": "75-unrecorded",
+    "report": "crates/mlx-guard-core/tests/fixtures/report-v1.json",
+    "text": "what happened: mlx-guard sent SIGTERM to the command's process group at 13 ms, and this report does not record which limit caused it. A checkpoint was requested but not acknowledged.\nwhat to do: read signals and transitions in the report to see which limit was crossed. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-cause-not-recorded"
+  },
+  {
+    "row": "75-unrecorded-kill-on-ended",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-unrecorded-kill-on-ended.json",
+    "note": "Defensive shape, not written by any run today: a forwarded terminal signal opens an uncounted shutdown (opens_an_uncounted_shutdown in crates/mlx-guard-cli/src/runtime.rs), so a 75 whose every record carries reason external_signal cannot occur. It pins the fallback for a report whose records carry a reason that no other rule matched.",
+    "text": "what happened: mlx-guard sent SIGTERM to the command's process group at 400 ms.\nwhat to do: read signals in the report to see what mlx-guard did; no limit was crossed. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-cause-not-recorded"
+  },
+  {
+    "row": "75-unrecorded-forward-missing",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-unrecorded-forward-missing.json",
+    "note": "Defensive shape, not written by any run today: a forwarded terminal signal opens an uncounted shutdown (opens_an_uncounted_shutdown in crates/mlx-guard-cli/src/runtime.rs), so a 75 whose every record carries reason external_signal cannot occur. It pins the fallback for a report whose records carry a reason, and the KILL told as its own clause after a TERM that found the command ended.",
+    "text": "what happened: mlx-guard found the command already ended when it sent SIGTERM at 400 ms; a SIGKILL for a second terminal signal reached its process group 1.0 s later.\nwhat to do: read signals in the report to see what mlx-guard did; no limit was crossed. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-cause-not-recorded"
+  },
+  {
+    "row": "64-launch-setting",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-64-launch-setting.json",
+    "text": "what happened: mlx-guard refused a launch setting before starting the command, so nothing ran; the error line on stderr names the setting.\nwhat to do: --cwd must name an existing directory, and --env must not set MLX_GUARD_CHECKPOINT_FD; fix the one named, and give the retry a new --report name, because this run kept its report. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-a-launch-setting"
+  },
+  {
+    "row": "70-while-starting",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-while-starting.json",
+    "text": "what happened: mlx-guard could not finish starting the run, so it supervised nothing; the error line on stderr names the step.\nwhat to do: run it again; if it repeats, open an issue with that error line and the redacted report. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-while-starting-the-command"
+  },
+  {
+    "row": "70-readings-lost-run",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-run.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: a process disappeared), so it stopped the command rather than let it run unwatched: it sent SIGTERM to the command's process group at 5.2 s.\nwhat to do: run it again on a less loaded machine; if it repeats, open an issue with the redacted report. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  },
+  {
+    "row": "70-readings-lost-observe",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-observe.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: permission denied), so observation ended at 12.4 s. Observe mode does not stop the command, so it may still be running.\nwhat to do: check whether the command is still running and stop it yourself if you need to, then observe again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  },
+  {
+    "row": "70-readings-lost-observe-refused",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-observe-refused.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: permission denied), so observation ended at 12.4 s. Observe mode does not stop the command, so it may still be running.\nwhat to do: check whether the command is still running and stop it yourself if you need to, then observe again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  },
+  {
+    "row": "70-not-delivered",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-not-delivered.json",
+    "text": "what happened: mlx-guard could not deliver SIGKILL to the command's process group, which still had a live member or could not be checked (result: permission denied).\nwhat to do: check whether the command is still running and stop it yourself, then open an issue with the redacted report. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-a-signal-not-delivered"
+  },
+  {
+    "row": "70-not-delivered-failed",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-not-delivered-failed.json",
+    "text": "what happened: mlx-guard could not deliver SIGKILL to the command's process group, which still had a live member or could not be checked (result: failed).\nwhat to do: check whether the command is still running and stop it yourself, then open an issue with the redacted report. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-a-signal-not-delivered"
+  },
+  {
+    "row": "70-internal",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-internal.json",
+    "text": "what happened: mlx-guard hit an internal failure while supervising, and it sent SIGTERM to the command's process group at 120 ms; the error line on stderr names it.\nwhat to do: check whether the command is still running, then run it again; if it repeats, open an issue with that error line and the redacted report. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-an-internal-failure"
+  },
+  {
+    "row": "126",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-126.json",
+    "text": "what happened: the file named after -- exists but could not be run, so nothing was launched.\nwhat to do: make it executable (chmod +x) or put its interpreter first, as in -- python script.py; give the retry a new --report name, because this run kept its report. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#126-not-executable"
+  },
+  {
+    "row": "127",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-127.json",
+    "text": "what happened: no executable was found for the command named after --, so nothing was launched.\nwhat to do: check the spelling, give the full path, or activate the environment that provides it; give the retry a new --report name, because this run kept its report. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#127-not-found"
+  },
+  {
+    "row": "S-passed-on",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-S-passed-on.json",
+    "text": "what happened: the command ended on SIGINT, which mlx-guard received and passed on to it.\nwhat to do: nothing to do if you sent it. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#signal-passed-on-by-mlx-guard"
+  },
+  {
+    "row": "S-passed-on-9",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-S-passed-on-9.json",
+    "text": "what happened: the command ended on SIGKILL, which mlx-guard sent after a second terminal signal arrived.\nwhat to do: nothing to do if you sent it. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#signal-passed-on-by-mlx-guard"
+  },
+  {
+    "row": "S-elsewhere-9",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-S-elsewhere-9.json",
+    "text": "what happened: the command ended on SIGKILL, and it did not come from mlx-guard; something else stopped it, and macOS can do this when memory runs short.\nwhat to do: check the command's own output and the macOS logs; if memory ran short, set --max-footprint (with mlx-guard run) below that point so mlx-guard stops the command first. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#signal-from-somewhere-else"
+  },
+  {
+    "row": "S-elsewhere-11",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-S-elsewhere-11.json",
+    "text": "what happened: the command ended on SIGSEGV, and it did not come from mlx-guard.\nwhat to do: the command's own output or its macOS crash report says why. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#signal-from-somewhere-else"
+  },
+  {
+    "row": "C-collision",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-C-collision.json",
+    "text": "what happened: the command itself exited with code 75, and mlx-guard did not intervene; 75 is also one of mlx-guard's own exit codes.\nwhat to do: read the command's own output; the report's outcome.kind is child_exited. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#a-code-mlx-guard-also-uses"
+  },
+  {
+    "row": "75-emergency-kill-missing",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-emergency-kill-missing.json",
+    "text": "what happened: one sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency threshold of 6.60 GiB, which is 614.40 MiB more than your 6.00 GiB limit, so mlx-guard found the command already ended when it sent SIGKILL at 12.3 s.\nwhat to do: find what allocates that much between samples, or raise --max-footprint if that peak is expected; a shorter --sample-interval sees growth sooner. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-emergency-kill"
+  },
+  {
+    "row": "75-survivors-kill-missing",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-survivors-kill-missing.json",
+    "text": "what happened: the command exited, but processes it started were still running after SIGTERM, so mlx-guard found them already ended when it sent SIGKILL at 1.2 s; the command's own exit status is in the report under outcome.child_status.\nwhat to do: make the command wait for, or stop, the processes it starts before it exits. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-processes-left-behind"
+  },
+  {
+    "row": "75-wall-checkpoint-ended-second-signal",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-checkpoint-ended-second-signal.json",
+    "note": "Defensive shape: a TERM that found the group ended followed by a delivered KILL is not a shape a run writes today. It pins the KILL told as its own clause after a checkpoint request and a TERM that found the command ended.",
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to save a checkpoint at 1.0 s; the command ended before the SIGTERM that followed could reach it; a SIGKILL for a second terminal signal reached its process group 1.0 s later. The command had not acknowledged checkpoint request 7 when it ended.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+  },
+  {
+    "row": "75-footprint-equal-render",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-footprint-equal-render.json",
+    "text": "what happened: the OS-accounted footprint reached 6442450945 bytes, at or above the 6442450944 bytes limit you set, on 2 samples in a row, so mlx-guard sent SIGTERM to the command's process group at 20.5 s.\nwhat to do: observe the command to see its peak, then fix the growth or raise --max-footprint. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-footprint-limit"
+  },
+  {
+    "row": "74-kind-fallback",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-74-kind-fallback.json",
+    "note": "Defensive shape: no run writes a partial_artifact_failure report today. It pins the kind fallback, which names no storage detail.",
+    "text": "what happened: the command was supervised, but mlx-guard could not write its complete report; safety enforcement was not affected.\nwhat to do: check free disk space and that nothing else changed the report directory during the run; the hidden .<name>.journal beside the report path keeps what was saved. Use a new --report name next time. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#74-after-launch"
+  },
+  {
+    "row": "70-readings-lost-observe-malformed",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-observe-malformed.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: the kernel returned malformed data), so observation ended at 12.4 s. Observe mode does not stop the command, so it may still be running.\nwhat to do: check whether the command is still running and stop it yourself if you need to, then observe again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  },
+  {
+    "row": "70-readings-lost-observe-clock",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-observe-clock.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: the clock went backwards), so observation ended at 12.4 s. Observe mode does not stop the command, so it may still be running.\nwhat to do: check whether the command is still running and stop it yourself if you need to, then observe again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  },
+  {
+    "row": "70-readings-lost-observe-internal",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-observe-internal.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: an internal error), so observation ended at 12.4 s. Observe mode does not stop the command, so it may still be running.\nwhat to do: check whether the command is still running and stop it yourself if you need to, then observe again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  },
+  {
+    "row": "70-readings-lost-observe-stale",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-observe-stale.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: the reading was too old), so observation ended at 12.4 s. Observe mode does not stop the command, so it may still be running.\nwhat to do: check whether the command is still running and stop it yourself if you need to, then observe again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  },
+  {
+    "row": "70-readings-lost-observe-unavailable",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-observe-unavailable.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: no reading), so observation ended at 12.4 s. Observe mode does not stop the command, so it may still be running.\nwhat to do: check whether the command is still running and stop it yourself if you need to, then observe again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  },
+  {
+    "row": "70-readings-lost-observe-unknown",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-70-readings-lost-observe-unknown.json",
+    "text": "what happened: mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last reading: no reading), so observation ended at 12.4 s. Observe mode does not stop the command, so it may still be running.\nwhat to do: check whether the command is still running and stop it yourself if you need to, then observe again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-footprint-readings-lost"
+  }
+]

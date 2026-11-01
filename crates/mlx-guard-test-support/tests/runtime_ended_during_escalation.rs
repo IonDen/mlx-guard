@@ -140,6 +140,40 @@ fn signals(report: &ReportV1) -> Vec<(u8, Option<SignalReason>, SignalResult)> {
         .collect()
 }
 
+/// The two plain lines exactly as `RuntimeResult.stderr` carries them, linking this build's tag.
+fn plain_lines(happened: &str, to_do: &str, anchor: &str) -> String {
+    format!(
+        "mlx-guard: what happened: {happened}\nmlx-guard: what to do: {to_do} More: \
+         https://github.com/IonDen/mlx-guard/blob/v{}/docs/TROUBLESHOOTING.md#{anchor}\n",
+        mlx_guard_core::VERSION
+    )
+}
+
+/// A duration as the plain lines speak it, for the sub-minute range these runs produce: whole
+/// milliseconds below one second, otherwise tenths of a second rounded half up.
+fn spoken_ms(ms: u64) -> String {
+    assert!(ms < 59_950, "{ms} ms is outside the sub-minute range");
+    if ms < 1000 {
+        format!("{ms} ms")
+    } else {
+        let tenths = (ms + 50) / 100;
+        format!("{}.{} s", tenths / 10, tenths % 10)
+    }
+}
+
+/// The record time of the first signal with this number.
+fn first_at_ms(report: &ReportV1, signal: u8) -> u64 {
+    report
+        .signals
+        .iter()
+        .find(|record| record.signal == signal)
+        .unwrap_or_else(|| panic!("no record of signal {signal}: {report:#?}"))
+        .at_ms
+}
+
+const WALL_TO_DO: &str =
+    "raise --wall-time if the command needs longer, or find out why it ran longer than expected.";
+
 fn never_failed_closed(report: &ReportV1) -> bool {
     report
         .transitions
@@ -163,17 +197,8 @@ fn a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention() {
         "the group stopped holding its exited member before the TERM was recorded, so this run \
          cannot tell an ended group from a vanished one: {report:#?}"
     );
-    assert_eq!(
-        (result.outcome, result.stderr.as_str()),
-        (SupervisorOutcome::PolicyIntervention, ""),
-        "{report:#?}"
-    );
-    assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
-    assert_eq!(
-        report.outcome.child_status,
-        Some(ChildStatus::Exited { code: 1 })
-    );
-    assert!(never_failed_closed(&report), "{report:#?}");
+    // The record shape comes before the text, so a run that took another path (the known
+    // `RootExitCleanup` race) fails on the signal record that names it, not on a sentence diff.
     // The request reached the worker; its failed acknowledgement claims no saved state.
     assert_eq!(
         report.checkpoint.status,
@@ -196,6 +221,37 @@ fn a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention() {
         ],
         "{report:#?}"
     );
+    // The plain lines may not claim the TERM stopped the command: it met an ended group. Red if
+    // a `process_missing` TERM is told as "sent SIGTERM to its process group".
+    let request_id = report
+        .checkpoint
+        .request_id
+        .unwrap_or_else(|| panic!("a delivered request carries its id: {report:#?}"));
+    let expected_stderr = plain_lines(
+        &format!(
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to \
+             save a checkpoint at {}; the command ended before the SIGTERM that followed could \
+             reach it. The command had not acknowledged checkpoint request {request_id} when it \
+             ended.",
+            spoken_ms(first_at_ms(&report, checkpoint_signal_usr1().get()))
+        ),
+        WALL_TO_DO,
+        "75-the-wall-time-limit",
+    );
+    assert_eq!(
+        (result.outcome, result.stderr.as_str()),
+        (
+            SupervisorOutcome::PolicyIntervention,
+            expected_stderr.as_str()
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
+    assert_eq!(
+        report.outcome.child_status,
+        Some(ChildStatus::Exited { code: 1 })
+    );
+    assert!(never_failed_closed(&report), "{report:#?}");
 }
 
 #[test]
@@ -214,17 +270,14 @@ fn a_terminal_signal_while_the_group_dies_does_not_fail_the_supervisor() {
         "the group stopped holding its exited member before the KILL was recorded, so this run \
          cannot tell an ended group from a vanished one: {report:#?}"
     );
+    // The KILL a second terminal signal asked for met an ended group, so it adds nothing to the
+    // sentence. Red if it is told as ", and SIGKILL … later because it was still running".
     assert_eq!(
-        (result.outcome, result.stderr.as_str()),
-        (SupervisorOutcome::PolicyIntervention, ""),
-        "{report:#?}"
+        report.checkpoint.status,
+        CheckpointStatus::NotNegotiated,
+        "the expected text below assumes no checkpoint clause: {report:#?}"
     );
-    assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
-    assert_eq!(
-        report.outcome.child_status,
-        Some(ChildStatus::Signaled { signal: 15 })
-    );
-    assert!(never_failed_closed(&report), "{report:#?}");
+    // The signal record before the text, so a run that took another path fails on the record.
     assert_eq!(
         signals(&report),
         [
@@ -237,6 +290,29 @@ fn a_terminal_signal_while_the_group_dies_does_not_fail_the_supervisor() {
         ],
         "{report:#?}"
     );
+    let expected_stderr = plain_lines(
+        &format!(
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard sent SIGTERM to the \
+             command's process group at {}.",
+            spoken_ms(first_at_ms(&report, 15))
+        ),
+        WALL_TO_DO,
+        "75-the-wall-time-limit",
+    );
+    assert_eq!(
+        (result.outcome, result.stderr.as_str()),
+        (
+            SupervisorOutcome::PolicyIntervention,
+            expected_stderr.as_str()
+        ),
+        "{report:#?}"
+    );
+    assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
+    assert_eq!(
+        report.outcome.child_status,
+        Some(ChildStatus::Signaled { signal: 15 })
+    );
+    assert!(never_failed_closed(&report), "{report:#?}");
 }
 
 #[test]

@@ -161,6 +161,7 @@ where
         } => {
             if max_footprint_bytes < 2 {
                 return Err(CliParseError::contract(
+                    "--max-footprint",
                     "--max-footprint must be at least 2B",
                 ));
             }
@@ -169,6 +170,7 @@ where
                 .is_none()
             {
                 return Err(CliParseError::contract(
+                    "--max-footprint",
                     "--max-footprint is too large for the emergency policy band",
                 ));
             }
@@ -245,6 +247,7 @@ fn parse_positive_integer(value: &str, name: &str) -> Result<u64, String> {
 fn normalize(raw: RawCommon) -> Result<CommonOptions, CliParseError> {
     if !(MIN_SAMPLE_INTERVAL..=MAX_SAMPLE_INTERVAL).contains(&raw.sample_interval) {
         return Err(CliParseError::contract(
+            "--sample-interval",
             "--sample-interval must be within 10ms..=10s",
         ));
     }
@@ -252,14 +255,18 @@ fn normalize(raw: RawCommon) -> Result<CommonOptions, CliParseError> {
     for assignment in raw.env {
         let (key, value) = assignment
             .split_once('=')
-            .ok_or_else(|| CliParseError::contract("--env requires KEY=VALUE"))?;
+            .ok_or_else(|| CliParseError::contract("--env", "--env requires KEY=VALUE"))?;
         if key.is_empty() {
-            return Err(CliParseError::contract("--env key must not be empty"));
+            return Err(CliParseError::contract(
+                "--env",
+                "--env key must not be empty",
+            ));
         }
         if env.insert(key.to_owned(), value.to_owned()).is_some() {
-            return Err(CliParseError::contract(format!(
-                "duplicate --env key {key:?}"
-            )));
+            return Err(CliParseError::contract(
+                "--env",
+                format!("duplicate --env key {key:?}"),
+            ));
         }
     }
     Ok(CommonOptions {
@@ -279,7 +286,23 @@ fn normalize(raw: RawCommon) -> Result<CommonOptions, CliParseError> {
 pub struct CliParseError {
     message: String,
     display_only: bool,
+    flag: Option<&'static str>,
 }
+
+/// The only flag names a parse error may report, plus clap's token for the command after `--`.
+const REPORTABLE_FLAGS: [&str; 11] = [
+    "--max-footprint",
+    "--wall-time",
+    "--checkpoint-timeout",
+    "--sample-interval",
+    "--report",
+    "--cwd",
+    "--clear-env",
+    "--env",
+    "--on-parent-exit",
+    "--client-ready-fd",
+    "<COMMAND>",
+];
 
 impl CliParseError {
     fn from_clap(error: &clap::Error) -> Self {
@@ -289,13 +312,15 @@ impl CliParseError {
                 error.kind(),
                 ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
             ),
+            flag: clap_flag(error),
         }
     }
 
-    fn contract(message: impl Into<String>) -> Self {
+    fn contract(flag: &'static str, message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
             display_only: false,
+            flag: Some(flag),
         }
     }
 
@@ -304,6 +329,33 @@ impl CliParseError {
     pub const fn is_display_only(&self) -> bool {
         self.display_only
     }
+
+    /// Return the whitelisted flag this error is about, if it names exactly one.
+    ///
+    /// An unknown argument never yields a flag, because its text is what the user typed.
+    #[must_use]
+    pub const fn flag(&self) -> Option<&'static str> {
+        self.flag
+    }
+}
+
+/// The whitelisted flag clap names for a rejected or missing value of one known argument.
+fn clap_flag(error: &clap::Error) -> Option<&'static str> {
+    use clap::error::{ContextKind, ContextValue};
+    if !matches!(
+        error.kind(),
+        ErrorKind::InvalidValue | ErrorKind::ValueValidation | ErrorKind::MissingRequiredArgument
+    ) {
+        return None;
+    }
+    let text = match error.get(ContextKind::InvalidArg)? {
+        ContextValue::String(text) => text,
+        ContextValue::Strings(texts) if texts.len() == 1 => &texts[0],
+        _ => return None,
+    };
+    let token = text.split_whitespace().next()?;
+    let token = token.strip_suffix("...").unwrap_or(token);
+    REPORTABLE_FLAGS.into_iter().find(|flag| *flag == token)
 }
 
 impl fmt::Display for CliParseError {
