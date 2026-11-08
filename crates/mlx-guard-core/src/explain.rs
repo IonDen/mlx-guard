@@ -319,7 +319,7 @@ pub fn doc_url(version: &str, anchor: &str) -> String {
 // ---- Shared rendering helpers ----
 
 /// Render values a sentence compares; if two differ but render alike, print all as bytes.
-fn compared_bytes<const N: usize>(values: [u64; N]) -> [String; N] {
+pub(crate) fn compared_bytes<const N: usize>(values: [u64; N]) -> [String; N] {
     let rendered = values.map(format_bytes);
     let ambiguous = (0..N).any(|left| {
         (left + 1..N)
@@ -336,11 +336,12 @@ fn is_group_signal(record: &SignalRecord, signal: u8) -> bool {
     record.target == SignalTarget::OwnedProcessGroup && record.signal == signal
 }
 
-fn first_group_signal(report: &ReportV1, signal: u8) -> Option<&SignalRecord> {
+fn first_group_signal(report: &ReportV1, signal: u8) -> Option<(usize, &SignalRecord)> {
     report
         .signals
         .iter()
-        .find(|record| is_group_signal(record, signal))
+        .enumerate()
+        .find(|(_, record)| is_group_signal(record, signal))
 }
 
 fn sent_to_group(signal: u8, at_ms: u64) -> String {
@@ -351,8 +352,50 @@ fn sent_to_group(signal: u8, at_ms: u64) -> String {
     )
 }
 
-/// What mlx-guard did, from `signals[]` in order; a record counts as sent only when delivered.
+/// What a group signal that found no process shows: only that the group was empty.
+fn found_no_process(record: &SignalRecord) -> String {
+    format!(
+        "found no process left in the command's process group when it sent {} at {}",
+        signal_name(record.signal),
+        format_duration_ms(record.at_ms)
+    )
+}
+
+/// Whether the root's own exit is on record at or before `signals[index]`. Only a root-exit
+/// cleanup record is written after the root was reaped; a group signal that found no process is
+/// also what a live root that left its group gives.
+fn root_exit_recorded_by(signals: &[SignalRecord], index: usize) -> bool {
+    signals[..=index]
+        .iter()
+        .any(|record| record.reason == Some(SignalReason::RootExitCleanup))
+}
+
+/// A group signal that found no process: "already ended" only with the root's exit on record.
+fn found_missing(signals: &[SignalRecord], index: usize) -> String {
+    let record = &signals[index];
+    if root_exit_recorded_by(signals, index) {
+        format!(
+            "found the command already ended when it sent {} at {}",
+            signal_name(record.signal),
+            format_duration_ms(record.at_ms)
+        )
+    } else {
+        found_no_process(record)
+    }
+}
+
+/// The action clause, and whether a TERM or KILL it tells reached the command's process group.
+struct Action {
+    text: String,
+    delivered: bool,
+}
+
 fn action_clause(report: &ReportV1) -> String {
+    action(report).text
+}
+
+/// What mlx-guard did, from `signals[]` in order; a record counts as sent only when delivered.
+fn action(report: &ReportV1) -> Action {
     let signals = &report.signals;
     let term = signals
         .iter()
@@ -367,32 +410,59 @@ fn action_clause(report: &ReportV1) -> String {
             "asked the command to save a checkpoint at {}",
             format_duration_ms(request.at_ms)
         );
-        return match term {
-            Some((index, record)) if record.result == SignalResult::Delivered => format!(
-                "{asked} and then sent SIGTERM to its process group{}",
-                kill_suffix(signals, index)
+        let (text, delivered) = match term {
+            Some((index, record)) if record.result == SignalResult::Delivered => (
+                format!(
+                    "{asked} and then sent SIGTERM to its process group{}",
+                    kill_suffix(signals, index)
+                ),
+                true,
             ),
-            Some((index, record)) if record.result == SignalResult::ProcessMissing => format!(
-                "{asked}; the command ended before the SIGTERM that followed could reach it{}",
-                kill_suffix(signals, index)
+            Some((index, record))
+                if record.result == SignalResult::ProcessMissing
+                    && root_exit_recorded_by(signals, index) =>
+            {
+                (
+                    format!(
+                        "{asked}; the command ended before the SIGTERM that followed could reach \
+                         it{}",
+                        kill_suffix(signals, index)
+                    ),
+                    false,
+                )
+            }
+            Some((index, record)) if record.result == SignalResult::ProcessMissing => (
+                format!(
+                    "{asked} and then {}{}",
+                    found_no_process(record),
+                    kill_suffix(signals, index)
+                ),
+                false,
             ),
-            _ => asked,
+            _ => (asked, false),
         };
+        return Action { text, delivered };
     }
     match term {
         Some((index, record)) if record.result == SignalResult::Delivered => {
-            return format!(
-                "{}{}",
-                sent_to_group(SIGTERM, record.at_ms),
-                kill_suffix(signals, index)
-            );
+            return Action {
+                text: format!(
+                    "{}{}",
+                    sent_to_group(SIGTERM, record.at_ms),
+                    kill_suffix(signals, index)
+                ),
+                delivered: true,
+            };
         }
         Some((index, record)) if record.result == SignalResult::ProcessMissing => {
-            return format!(
-                "found the command already ended when it sent SIGTERM at {}{}",
-                format_duration_ms(record.at_ms),
-                kill_suffix(signals, index)
-            );
+            return Action {
+                text: format!(
+                    "{}{}",
+                    found_missing(signals, index),
+                    kill_suffix(signals, index)
+                ),
+                delivered: false,
+            };
         }
         _ => {}
     }
@@ -400,17 +470,30 @@ fn action_clause(report: &ReportV1) -> String {
         .iter()
         .find(|record| is_group_signal(record, SIGKILL) && record.result == SignalResult::Delivered)
     {
-        return sent_to_group(SIGKILL, kill.at_ms);
+        return Action {
+            text: sent_to_group(SIGKILL, kill.at_ms),
+            delivered: true,
+        };
     }
-    format!(
-        "stopped the command at {}",
-        format_duration_ms(report.outcome.at_ms)
-    )
+    let text = match first_group_signal(report, SIGKILL) {
+        Some((index, kill)) if kill.result == SignalResult::ProcessMissing => {
+            found_missing(signals, index)
+        }
+        _ => format!(
+            "delivered neither SIGTERM nor SIGKILL to the command's process group before the run \
+             ended at {}",
+            format_duration_ms(report.outcome.at_ms)
+        ),
+    };
+    Action {
+        text,
+        delivered: false,
+    }
 }
 
 /// The escalation suffix after the first TERM: only a delivered group KILL that follows it. A
 /// KILL for a forwarded signal is the second terminal signal, even when the TERM was forwarded too;
-/// after a TERM that found the command ended, that KILL is told as a clause of its own.
+/// after a TERM that found no process, that KILL is told as a clause of its own.
 fn kill_suffix(signals: &[SignalRecord], term_index: usize) -> String {
     let term = &signals[term_index];
     let Some(kill) = signals[term_index + 1..].iter().find(|record| {
@@ -448,7 +531,9 @@ fn checkpoint_clause(report: &ReportV1) -> String {
                 )
             }),
         (CheckpointStatus::RequestedUnverified, Some(id)) => {
-            format!(" The command had not acknowledged checkpoint request {id} when it ended.")
+            format!(
+                " The command had not acknowledged checkpoint request {id} by the end of the run."
+            )
         }
         (CheckpointStatus::RequestedUnverified, None) => {
             " A checkpoint was requested but not acknowledged.".to_owned()
@@ -632,10 +717,18 @@ fn readings_lost_row(report: &ReportV1) -> Lines {
     );
     match report.configuration.mode {
         ReportMode::Enforce => Lines::new(
-            format!(
-                "{lost}, so it stopped the command rather than let it run unwatched: it {}.",
-                action_clause(report)
-            ),
+            {
+                let action = action(report);
+                let stopped = if action.delivered {
+                    "stopped"
+                } else {
+                    "tried to stop"
+                };
+                format!(
+                    "{lost}, so it {stopped} the command rather than let it run unwatched: it {}.",
+                    action.text
+                )
+            },
             "run it again on a less loaded machine; if it repeats, open an issue with the \
              redacted report.",
             ANCHOR_READINGS_LOST,
@@ -687,16 +780,14 @@ fn emergency(report: &ReportV1) -> Option<Lines> {
     let value = transition.aggregate_footprint_bytes?;
     let threshold = report.configuration.emergency_footprint_bytes?;
     let limit = report.configuration.max_footprint_bytes?;
-    let kill = first_group_signal(report, SIGKILL)?;
-    let at = format_duration_ms(kill.at_ms);
+    let (index, kill) = first_group_signal(report, SIGKILL)?;
     let action = match kill.result {
         SignalResult::Delivered => format!(
-            "sent SIGKILL to the command's process group at once at {at}, with no checkpoint and \
-             no grace period"
+            "sent SIGKILL to the command's process group at once at {}, with no checkpoint and \
+             no grace period",
+            format_duration_ms(kill.at_ms)
         ),
-        SignalResult::ProcessMissing => {
-            format!("found the command already ended when it sent SIGKILL at {at}")
-        }
+        SignalResult::ProcessMissing => found_missing(&report.signals, index),
         SignalResult::PermissionDenied | SignalResult::Failed => return None,
     };
     let [value, threshold_text, limit_text] = compared_bytes([value, threshold, limit]);
@@ -839,13 +930,14 @@ fn survivors(report: &ReportV1) -> Option<Lines> {
     if !cleanup {
         return None;
     }
-    let kill = first_group_signal(report, SIGKILL)?;
-    let at = format_duration_ms(kill.at_ms);
+    // The root's own exit says nothing about the processes it started: a KILL that found no
+    // process shows only that the group was empty.
+    let (_, kill) = first_group_signal(report, SIGKILL)?;
     let action = match kill.result {
-        SignalResult::Delivered => format!("sent SIGKILL to them at {at}"),
-        SignalResult::ProcessMissing => {
-            format!("found them already ended when it sent SIGKILL at {at}")
+        SignalResult::Delivered => {
+            format!("sent SIGKILL to them at {}", format_duration_ms(kill.at_ms))
         }
+        SignalResult::ProcessMissing => found_no_process(kill),
         SignalResult::PermissionDenied | SignalResult::Failed => return None,
     };
     Some(Lines::new(
@@ -1222,10 +1314,10 @@ mod tests {
         let outcome = explain_report(&report).expect("a policy intervention is explained");
         assert_eq!(
             outcome.what_happened,
-            "mlx-guard asked the command to save a checkpoint at 10 ms; the command ended before \
-             the SIGTERM that followed could reach it; a SIGKILL for a second terminal signal \
-             reached its process group 1.0 s later. A checkpoint was requested but not \
-             acknowledged."
+            "mlx-guard asked the command to save a checkpoint at 10 ms and then found no process \
+             left in the command's process group when it sent SIGTERM at 13 ms; a SIGKILL for a \
+             second terminal signal reached its process group 1.0 s later. A checkpoint was \
+             requested but not acknowledged."
         );
         assert_eq!(
             outcome.what_to_do,
@@ -1800,5 +1892,174 @@ mod tests {
         for (kind, class) in pairs {
             assert_eq!(StorageClass::from(kind), class, "{kind:?}");
         }
+    }
+
+    // ---- A group signal that found no process (the root's exit on record, or not) ----
+
+    fn corpus_report(json: &str) -> ReportV1 {
+        ReportV1::from_json(json).expect("the corpus report is valid")
+    }
+
+    fn group_signal(
+        at_ms: u64,
+        signal: u8,
+        result: crate::SignalResult,
+        reason: crate::SignalReason,
+    ) -> crate::SignalRecord {
+        crate::SignalRecord {
+            at_ms,
+            signal,
+            target: crate::SignalTarget::OwnedProcessGroup,
+            result,
+            reason: Some(reason),
+        }
+    }
+
+    fn happened(report: &ReportV1) -> String {
+        explain_report(report)
+            .expect("a policy intervention is explained")
+            .what_happened
+    }
+
+    #[test]
+    fn cleanup_term_that_found_no_process_says_the_command_had_ended() {
+        // Bug: every TERM that found no process loses "already ended", even the cleanup TERM sent
+        // after the root's own exit was reaped (the rule must count the record itself).
+        use crate::{SignalReason, SignalResult};
+        let mut report = corpus_report(include_str!(
+            "../tests/fixtures/explain/report-75-survivors-kill-missing.json"
+        ));
+        report.signals = vec![group_signal(
+            200,
+            15,
+            SignalResult::ProcessMissing,
+            SignalReason::RootExitCleanup,
+        )];
+        assert_eq!(
+            happened(&report),
+            "mlx-guard found the command already ended when it sent SIGTERM at 200 ms."
+        );
+    }
+
+    #[test]
+    fn cleanup_record_after_the_term_does_not_say_the_command_had_ended() {
+        // Bug: the root's exit counted from any cleanup record in the report, not only from one at
+        // or before the TERM, so a later record turns "found no process" into "already ended".
+        use crate::{SignalReason, SignalResult};
+        let mut report = corpus_report(include_str!(
+            "../tests/fixtures/explain/report-75-wall-already-ended.json"
+        ));
+        report.signals.push(group_signal(
+            1008,
+            9,
+            SignalResult::Delivered,
+            SignalReason::RootExitCleanup,
+        ));
+        assert_eq!(
+            happened(&report),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard found no process left \
+             in the command's process group when it sent SIGTERM at 1.0 s."
+        );
+    }
+
+    #[test]
+    fn checkpoint_then_cleanup_term_that_found_no_process_keeps_its_wording() {
+        // Bug: the checkpoint branch ignores the root's recorded exit and always says what the
+        // TERM found, dropping the true "the command ended before the SIGTERM" line.
+        use crate::SignalReason;
+        let mut report = corpus_report(include_str!(
+            "../tests/fixtures/explain/report-75-wall-checkpoint-then-ended.json"
+        ));
+        report.signals[1].reason = Some(SignalReason::RootExitCleanup);
+        assert_eq!(
+            happened(&report),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to \
+             save a checkpoint at 1.0 s; the command ended before the SIGTERM that followed could \
+             reach it. The command had not acknowledged checkpoint request 7 by the end of the \
+             run."
+        );
+    }
+
+    #[test]
+    fn emergency_kill_after_a_recorded_root_exit_says_the_command_had_ended() {
+        // Bug: the emergency row ignores the root's recorded exit and always says what the KILL
+        // found.
+        use crate::{SignalReason, SignalResult};
+        let mut report = corpus_report(include_str!(
+            "../tests/fixtures/explain/report-75-emergency-kill-missing.json"
+        ));
+        report.signals.insert(
+            0,
+            group_signal(
+                12_000,
+                15,
+                SignalResult::Delivered,
+                SignalReason::RootExitCleanup,
+            ),
+        );
+        assert_eq!(
+            happened(&report),
+            "one sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency \
+             threshold of 6.60 GiB, which is 614.40 MiB more than your 6.00 GiB limit, so \
+             mlx-guard found the command already ended when it sent SIGKILL at 12.3 s."
+        );
+    }
+
+    #[test]
+    fn fallback_without_a_delivered_signal_claims_no_stop() {
+        // Bug: the fallback says "stopped the command" when no TERM or KILL reached the group.
+        let mut report = corpus_report(include_str!(
+            "../tests/fixtures/explain/report-75-wall-already-ended.json"
+        ));
+        report.signals.clear();
+        assert_eq!(
+            happened(&report),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard delivered neither \
+             SIGTERM nor SIGKILL to the command's process group before the run ended at 1.0 s."
+        );
+    }
+
+    #[test]
+    fn fallback_tells_a_kill_that_found_no_process() {
+        // Bug: a KILL that found no process (with no TERM before it) is dropped, or told as the
+        // command having ended with no recorded exit.
+        use crate::{SignalReason, SignalResult};
+        let mut report = corpus_report(include_str!(
+            "../tests/fixtures/explain/report-75-wall-already-ended.json"
+        ));
+        report.signals = vec![group_signal(
+            1004,
+            9,
+            SignalResult::ProcessMissing,
+            SignalReason::WallTime,
+        )];
+        assert_eq!(
+            happened(&report),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard found no process left \
+             in the command's process group when it sent SIGKILL at 1.0 s."
+        );
+        report.signals[0].reason = Some(SignalReason::RootExitCleanup);
+        assert_eq!(
+            happened(&report),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard found the command \
+             already ended when it sent SIGKILL at 1.0 s."
+        );
+    }
+
+    #[test]
+    fn readings_lost_with_no_delivered_signal_says_it_tried_to_stop() {
+        // Bug: the readings-lost row says it stopped the command when its TERM found no process.
+        use crate::SignalResult;
+        let mut report = corpus_report(include_str!(
+            "../tests/fixtures/explain/report-70-readings-lost-run.json"
+        ));
+        report.signals[0].result = SignalResult::ProcessMissing;
+        assert_eq!(
+            happened(&report),
+            "mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last \
+             reading: a process disappeared), so it tried to stop the command rather than let it \
+             run unwatched: it found no process left in the command's process group when it sent \
+             SIGTERM at 5.2 s."
+        );
     }
 }

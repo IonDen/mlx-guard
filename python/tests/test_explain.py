@@ -368,6 +368,125 @@ class ShapeTests(unittest.TestCase):
         self.assertIn(f"{LINK_PREFIX}v0.1.0/docs/TROUBLESHOOTING.md#75-", text)
 
 
+def group_signal(at_ms: int, signal: int, result: str, reason: str) -> dict[str, object]:
+    return {
+        "at_ms": at_ms,
+        "signal": signal,
+        "target": "owned_process_group",
+        "result": result,
+        "reason": reason,
+    }
+
+
+def happened(decoded: Mapping[str, object]) -> str:
+    """Return the what-happened line, without its prefix."""
+    text = explain(freeze(decoded))
+    assert text is not None
+    first = text.split("\n", 1)[0]
+    assert first.startswith("what happened: "), first
+    return first.removeprefix("what happened: ")
+
+
+class MissingProcessTests(unittest.TestCase):
+    """A group signal that found no process, with the root's own exit on record or not.
+
+    The same cases and literal lines as the native unit tests in ``explain.rs``.
+    """
+
+    def test_cleanup_term_that_found_no_process_says_the_command_had_ended(self) -> None:
+        # Bug: every TERM that found no process loses "already ended", even the cleanup TERM sent
+        # after the root's own exit was reaped (the rule must count the record itself).
+        decoded = corpus_report("75-survivors-kill-missing")
+        decoded["signals"] = [group_signal(200, 15, "process_missing", "root_exit_cleanup")]
+        self.assertEqual(
+            happened(decoded),
+            "mlx-guard found the command already ended when it sent SIGTERM at 200 ms.",
+        )
+
+    def test_cleanup_record_after_the_term_does_not_say_the_command_had_ended(self) -> None:
+        # Bug: the root's exit counted from any cleanup record in the report, not only from one at
+        # or before the TERM, so a later record turns "found no process" into "already ended".
+        decoded = corpus_report("75-wall-already-ended")
+        as_list(decoded["signals"]).append(group_signal(1008, 9, "delivered", "root_exit_cleanup"))
+        self.assertEqual(
+            happened(decoded),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard found no process "
+            "left in the command's process group when it sent SIGTERM at 1.0 s.",
+        )
+
+    def test_checkpoint_then_cleanup_term_that_found_no_process_keeps_its_wording(self) -> None:
+        # Bug: the checkpoint branch ignores the root's recorded exit and always says what the
+        # TERM found, dropping the true "the command ended before the SIGTERM" line.
+        decoded = corpus_report("75-wall-checkpoint-then-ended")
+        as_dict(as_list(decoded["signals"])[1])["reason"] = "root_exit_cleanup"
+        self.assertEqual(
+            happened(decoded),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command "
+            "to save a checkpoint at 1.0 s; the command ended before the SIGTERM that followed "
+            "could reach it. The command had not acknowledged checkpoint request 7 by the end of "
+            "the run.",
+        )
+
+    def test_emergency_kill_after_a_recorded_root_exit_says_the_command_had_ended(self) -> None:
+        # Bug: the emergency row ignores the root's recorded exit and always says what the KILL
+        # found.
+        decoded = corpus_report("75-emergency-kill-missing")
+        as_list(decoded["signals"]).insert(
+            0, group_signal(12_000, 15, "delivered", "root_exit_cleanup")
+        )
+        self.assertEqual(
+            happened(decoded),
+            "one sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency "
+            "threshold of 6.60 GiB, which is 614.40 MiB more than your 6.00 GiB limit, so "
+            "mlx-guard found the command already ended when it sent SIGKILL at 12.3 s.",
+        )
+
+    def test_fallback_without_a_delivered_signal_claims_no_stop(self) -> None:
+        # Bug: the fallback says "stopped the command" when no TERM or KILL reached the group.
+        decoded = corpus_report("75-wall-already-ended")
+        decoded["signals"] = []
+        self.assertEqual(
+            happened(decoded),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard delivered neither "
+            "SIGTERM nor SIGKILL to the command's process group before the run ended at 1.0 s.",
+        )
+        as_dict(decoded["outcome"])["at_ms"] = None
+        self.assertEqual(
+            happened(decoded),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard delivered neither "
+            "SIGTERM nor SIGKILL to the command's process group.",
+        )
+
+    def test_fallback_tells_a_kill_that_found_no_process(self) -> None:
+        # Bug: a KILL that found no process (with no TERM before it) is dropped, or told as the
+        # command having ended with no recorded exit.
+        decoded = corpus_report("75-wall-already-ended")
+        decoded["signals"] = [group_signal(1004, 9, "process_missing", "wall_time")]
+        self.assertEqual(
+            happened(decoded),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard found no process "
+            "left in the command's process group when it sent SIGKILL at 1.0 s.",
+        )
+        decoded["signals"] = [group_signal(1004, 9, "process_missing", "root_exit_cleanup")]
+        self.assertEqual(
+            happened(decoded),
+            "the run reached the 1.0 s wall-time limit you set, so mlx-guard found the command "
+            "already ended when it sent SIGKILL at 1.0 s.",
+        )
+
+    def test_readings_lost_with_no_delivered_signal_says_it_tried_to_stop(self) -> None:
+        # Bug: the readings-lost row says it stopped the command when its TERM found no process.
+        decoded = corpus_report("70-readings-lost-run")
+        as_dict(as_list(decoded["signals"])[0])["result"] = "process_missing"
+        self.assertEqual(
+            happened(decoded),
+            "mlx-guard could not read the OS-accounted footprint for 3 samples in a row (last "
+            "reading: a process disappeared), so it tried to stop the command rather than let it "
+            "run unwatched: it found no process left in the command's process group when it sent "
+            "SIGTERM at 5.2 s.",
+        )
+
+
 class RunResultFieldTests(unittest.TestCase):
     def test_run_result_positional_construction_still_works(self) -> None:
         # Bug: the field added without a default or before the existing four, which breaks the

@@ -256,8 +256,16 @@ def _is_group_signal(record: _Signal, signal: int) -> bool:
     return record.target == _GROUP and record.signal == signal
 
 
+def _first_group_signal_index(view: _View, signal: int) -> int | None:
+    return next(
+        (index for index, record in enumerate(view.signals) if _is_group_signal(record, signal)),
+        None,
+    )
+
+
 def _first_group_signal(view: _View, signal: int) -> _Signal | None:
-    return next((record for record in view.signals if _is_group_signal(record, signal)), None)
+    index = _first_group_signal_index(view, signal)
+    return None if index is None else view.signals[index]
 
 
 def _sent_to_group(signal: int, at_ms: int) -> str:
@@ -266,8 +274,43 @@ def _sent_to_group(signal: int, at_ms: int) -> str:
     )
 
 
+def _found_no_process(record: _Signal) -> str:
+    """Say what a group signal that found no process shows: only that the group was empty."""
+    return (
+        "found no process left in the command's process group when it sent "
+        f"{_signal_name(record.signal)} at {_format_duration(record.at_ms)}"
+    )
+
+
+def _root_exit_recorded_by(signals: tuple[_Signal, ...], index: int) -> bool:
+    """Whether the root's own exit is on record at or before ``signals[index]``.
+
+    Only a root-exit cleanup record is written after the root was reaped; a group signal that
+    found no process is also what a live root that left its group gives.
+    """
+    return any(record.reason == "root_exit_cleanup" for record in signals[: index + 1])
+
+
+def _found_missing(signals: tuple[_Signal, ...], index: int) -> str:
+    """Tell a group signal that found no process; "already ended" needs the root's recorded exit."""
+    record = signals[index]
+    if _root_exit_recorded_by(signals, index):
+        return (
+            f"found the command already ended when it sent {_signal_name(record.signal)} at "
+            f"{_format_duration(record.at_ms)}"
+        )
+    return _found_no_process(record)
+
+
 def _action_clause(view: _View) -> str:
-    """Describe what mlx-guard did from the signal records; only a delivered one was sent."""
+    return _action(view)[0]
+
+
+def _action(view: _View) -> tuple[str, bool]:
+    """Describe what mlx-guard did from the signal records; only a delivered one was sent.
+
+    The flag says whether a TERM or KILL the clause tells reached the command's process group.
+    """
     signals = view.signals
     term_index = next(
         (index for index, record in enumerate(signals) if _is_group_signal(record, _SIGTERM)),
@@ -287,22 +330,23 @@ def _action_clause(view: _View) -> str:
         if term_index is not None and term is not None:
             if term.result == _DELIVERED:
                 suffix = _kill_suffix(signals, term_index)
-                return f"{asked} and then sent SIGTERM to its process group{suffix}"
+                return f"{asked} and then sent SIGTERM to its process group{suffix}", True
             if term.result == "process_missing":
                 suffix = _kill_suffix(signals, term_index)
-                return (
-                    f"{asked}; the command ended before the SIGTERM that followed could reach "
-                    f"it{suffix}"
-                )
-        return asked
+                if _root_exit_recorded_by(signals, term_index):
+                    return (
+                        f"{asked}; the command ended before the SIGTERM that followed could "
+                        f"reach it{suffix}"
+                    ), False
+                return f"{asked} and then {_found_no_process(term)}{suffix}", False
+        return asked, False
     if term_index is not None and term is not None:
         if term.result == _DELIVERED:
-            return f"{_sent_to_group(_SIGTERM, term.at_ms)}{_kill_suffix(signals, term_index)}"
+            sent = _sent_to_group(_SIGTERM, term.at_ms)
+            return f"{sent}{_kill_suffix(signals, term_index)}", True
         if term.result == "process_missing":
-            return (
-                "found the command already ended when it sent SIGTERM at "
-                f"{_format_duration(term.at_ms)}{_kill_suffix(signals, term_index)}"
-            )
+            found = _found_missing(signals, term_index)
+            return f"{found}{_kill_suffix(signals, term_index)}", False
     kill = next(
         (
             record
@@ -312,16 +356,20 @@ def _action_clause(view: _View) -> str:
         None,
     )
     if kill is not None:
-        return _sent_to_group(_SIGKILL, kill.at_ms)
+        return _sent_to_group(_SIGKILL, kill.at_ms), True
+    kill_index = _first_group_signal_index(view, _SIGKILL)
+    if kill_index is not None and signals[kill_index].result == "process_missing":
+        return _found_missing(signals, kill_index), False
+    neither = "delivered neither SIGTERM nor SIGKILL to the command's process group"
     if view.at_ms is None:
-        return "stopped the command"
-    return f"stopped the command at {_format_duration(view.at_ms)}"
+        return neither, False
+    return f"{neither} before the run ended at {_format_duration(view.at_ms)}", False
 
 
 def _kill_suffix(signals: tuple[_Signal, ...], term_index: int) -> str:
     """Only a delivered group KILL after the first TERM; a forwarded one is a second signal.
 
-    After a TERM that found the command ended, that second-signal KILL is its own clause.
+    After a TERM that found no process, that second-signal KILL is its own clause.
     """
     term = signals[term_index]
     kill = next(
@@ -359,7 +407,8 @@ def _checkpoint_clause(view: _View) -> str:
     if status == "requested_unverified":
         if request_id is not None:
             return (
-                f" The command had not acknowledged checkpoint request {request_id} when it ended."
+                f" The command had not acknowledged checkpoint request {request_id} by the end of "
+                "the run."
             )
         return " A checkpoint was requested but not acknowledged."
     if status == "cancelled":
@@ -537,9 +586,10 @@ def _readings_lost(view: _View) -> _Lines | None:
         f"row{_last_reading(view)}"
     )
     if view.mode == "enforce":
+        action, delivered = _action(view)
+        stopped = "stopped" if delivered else "tried to stop"
         return _Lines(
-            f"{lost}, so it stopped the command rather than let it run unwatched: it "
-            f"{_action_clause(view)}.",
+            f"{lost}, so it {stopped} the command rather than let it run unwatched: it {action}.",
             "run it again on a less loaded machine; if it repeats, open an issue with the "
             "redacted report.",
             "70-footprint-readings-lost",
@@ -609,17 +659,17 @@ def _emergency(view: _View) -> _Lines | None:
     value = transition.footprint
     threshold = view.config("emergency_footprint_bytes")
     limit = view.config("max_footprint_bytes")
-    kill = _first_group_signal(view, _SIGKILL)
-    if value is None or threshold is None or limit is None or kill is None:
+    kill_index = _first_group_signal_index(view, _SIGKILL)
+    if value is None or threshold is None or limit is None or kill_index is None:
         return None
-    at = _format_duration(kill.at_ms)
+    kill = view.signals[kill_index]
     if kill.result == _DELIVERED:
         action = (
-            f"sent SIGKILL to the command's process group at once at {at}, with no checkpoint "
-            "and no grace period"
+            f"sent SIGKILL to the command's process group at once at "
+            f"{_format_duration(kill.at_ms)}, with no checkpoint and no grace period"
         )
     elif kill.result == "process_missing":
-        action = f"found the command already ended when it sent SIGKILL at {at}"
+        action = _found_missing(view.signals, kill_index)
     else:
         return None
     value_text, threshold_text, limit_text = _compared_bytes(value, threshold, limit)
@@ -747,14 +797,15 @@ def _ignored_signal(view: _View) -> _Lines | None:
 def _survivors(view: _View) -> _Lines | None:
     if not any(record.reason == "root_exit_cleanup" for record in view.signals):
         return None
+    # The root's own exit says nothing about the processes it started: a KILL that found no
+    # process shows only that the group was empty.
     kill = _first_group_signal(view, _SIGKILL)
     if kill is None:
         return None
-    at = _format_duration(kill.at_ms)
     if kill.result == _DELIVERED:
-        action = f"sent SIGKILL to them at {at}"
+        action = f"sent SIGKILL to them at {_format_duration(kill.at_ms)}"
     elif kill.result == "process_missing":
-        action = f"found them already ended when it sent SIGKILL at {at}"
+        action = _found_no_process(kill)
     else:
         return None
     return _Lines(
