@@ -37,12 +37,16 @@ the parent's death does not change what that workload is doing. A suppressed `Pa
 no transition and no signal; the evidence that it happened is `outcome.parent_exited_at_ms`.
 
 The delivery-failure rows mean a live member the supervisor could not signal. When a TERM, KILL, or
-forwarded signal meets an owned group that has no live member left, the command has already ended,
+forwarded signal meets an owned group that has no live member left, the command has usually ended,
 and that is not a failure: the intervention stands (exit 75) and `child_status` records the
-command's own exit. Exit codes and their meanings are unchanged. Exit 70 for a signal delivery
-failure still means the group had a live member (or could not be scanned) and the signal was
-refused. A second terminal event or an escalation step that arrives while the group is going away
-does not produce it.
+command's own exit when mlx-guard collects it. Exit codes and their meanings are unchanged. Exit 70
+for a signal delivery failure still means the group had a live member (or could not be scanned) and
+the signal was refused. A second terminal event or an escalation step that arrives while the group
+is going away does not produce it.
+
+Since 0.5.0 `run` also prints a line on stderr when the warning threshold is reached and when the
+recovery threshold is reached again (see [warnings during a run](CLI.md#warnings-during-a-run)),
+and printing a line never changes state.
 
 Values between recovery and warning retain the previous normal or warning state. A sample at or
 above the ordinary limit contributes to the consecutive-breach count. A sample below that limit

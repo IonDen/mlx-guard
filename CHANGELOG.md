@@ -5,6 +5,48 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-08
+
+### Added
+
+- Warnings during a run. `mlx-guard run` now prints a line on stderr when the footprint first reaches
+  the warning threshold (10 % below the limit), repeats it at most every 5 minutes while the
+  footprint has not fallen to the recovery threshold (20 % below the limit), and prints a line when it
+  falls back. The prefixes are `mlx-guard: warning:` and `mlx-guard: warning cleared:`. A warning changes
+  nothing about when the command is stopped, `observe` prints none, and there is no option for them.
+  They contain only numbers `mlx-guard` measured and fixed text, never argv, environment values,
+  paths, or command output. Delivery is best effort: a line can be lost when nothing reads stderr.
+  See `docs/TROUBLESHOOTING.md#warnings-during-a-run`.
+- A launch check on `mlx-guard run`. Just before it starts the command, it adds up the memory macOS has
+  not locked as wired (free, speculative included, plus active, inactive, and held by the
+  compressor). If the limit is more than that number, it prints one `mlx-guard: warning:` line right
+  after the start-of-run notice and runs the command with the limit as given. It never refuses to
+  run, prints nothing if macOS gives no number, and `observe` prints nothing new. No line does not
+  mean the run fits. See `docs/TROUBLESHOOTING.md#the-launch-line`.
+- An optional `prelaunch` field on `run` reports: `memory_estimate`, `memory_categories`, and
+  `warnings` (which holds `limit_may_not_fit` whenever the limit is more than the estimate). It is absent from `observe`
+  reports and from reports written before this release. Report schema v1 is unchanged.
+
+### Changed
+
+- On a `run`, stderr can now carry extra lines: warnings when the footprint climbs close to the limit,
+  and one line at launch when the limit is more than the memory macOS has not locked as wired. The run
+  itself is unchanged. A script that compares stderr exactly will see them. Read the exit code or the
+  report instead. Exit codes and report schema v1 are unchanged.
+
+### Fixed
+
+- A stderr reader that has gone away (a closed pipe, for example) no longer ends the run with exit
+  code 101 or loses the report. `mlx-guard` keeps the right exit code and writes the report.
+- A full stderr pipe that nobody is reading no longer freezes `mlx-guard` before it starts watching
+  memory, with the command already running.
+- Cleanup no longer waits forever for a command that its kill did not reach. It waits at most 2
+  seconds; the command may still be running when `mlx-guard` exits, as it already was while it waited.
+- The outcome lines no longer say the command had ended when the only evidence is an empty process
+  group. They say the TERM or KILL found no process left in the command's process group, and name the
+  command's exit only when the report records it. A checkpoint request the command never acknowledged
+  is now described as not acknowledged by the end of the run. Exit codes and report schema v1 are unchanged.
+
 ## [0.4.0] - 2026-11-01
 
 ### Added
@@ -332,7 +374,8 @@ versions follow Semantic Versioning.
   strict Python report permissions, unpredictable checkpoint request IDs, locked dependencies,
   CycloneDX SBOM, release checksums, and a self-contained Trusted Publishing workflow.
 
-[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/IonDen/mlx-guard/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/IonDen/mlx-guard/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/IonDen/mlx-guard/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/IonDen/mlx-guard/compare/v0.2.0...v0.3.0

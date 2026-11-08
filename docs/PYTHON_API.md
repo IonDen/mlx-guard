@@ -33,6 +33,22 @@ through a shell. The supervisor inherits the caller's standard input. If that is
 supervised command reads `/dev/null` instead and the supervisor prints one line on stderr (captured
 in `RunResult.stderr` under `capture_output=True`); a file or a pipe on the script's standard input
 reaches the command unchanged. Give the script `< /dev/null` yourself if you want that line gone.
+A `run` also prints a warning line on stderr when the footprint climbs close to the limit, and
+another when it falls back (see [warnings during a run](CLI.md#warnings-during-a-run)). Just after
+the start-of-run notice it can also print a launch line, when your limit is more than the memory
+macOS has not locked as wired (see [the launch line](CLI.md#the-launch-line)); the run still starts
+with your limit as given. Under `capture_output=True` these lines appear in `RunResult.stderr` and
+in `iter_output()`. Code that reads a result should use `returncode` and `report`, not stderr. The
+launch check's number is in `report.payload["prelaunch"]` when the report has one (it is absent from
+`observe` reports and from reports written before 0.5.0). `memory_estimate` is a tagged object,
+for example `{"status": "available", "value": 30327881728}`; any other status carries no `value`.
+Read `["value"]` only when `["status"] == "available"`:
+
+```python
+estimate = report.payload["prelaunch"]["memory_estimate"]
+if estimate["status"] == "available":
+    not_wired_bytes = estimate["value"]
+```
 
 `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()` methods return
 the same typed `RunResult` as `run()`. `cancel()` sends SIGINT to the supervisor; calling it again

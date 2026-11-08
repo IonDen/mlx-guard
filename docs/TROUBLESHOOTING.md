@@ -11,7 +11,8 @@ start with `mlx-guard: what happened:` and `mlx-guard: what to do:`, and the sec
 link to a section of this page. The wording of those lines may change between releases. The two
 prefixes, where the lines appear, and the rule that they never contain your command, environment
 values, paths, or command output are stable (see [STABILITY](STABILITY.md)). Scripts should read the
-exit code or the [report](REPORTS.md), never these lines.
+exit code or the [report](REPORTS.md), never these lines. A different kind of line, printed while
+a `run` is still going, is described under [warnings during a run](#warnings-during-a-run).
 
 Below, each section quotes the sentences mlx-guard prints. Text in braces, such as `{limit}`, is
 filled in from the run. A sentence that says "the error above" points at the one-line diagnostic
@@ -48,6 +49,108 @@ was 6.00 GiB and you set it. Two samples in a row were at or above it, which is 
 (`configuration.required_breach_samples`). So mlx-guard sent SIGTERM, 40.0 seconds into the run.
 The report holds each of those facts: the `transitions` entry that crossed the limit, the `signals`
 record for the TERM, and `checkpoint.status`.
+
+## Warnings during a run
+
+Since 0.5.0, `mlx-guard run` can print a line on stderr while the command is still going, when the
+footprint comes close to your limit. Nothing has been stopped yet. A check at launch can also print
+one line before the command starts working; it has its own part, [the launch line](#the-launch-line).
+These lines are not tied to an exit code, and a run that never gets near its limit prints none of
+the three below. `observe` prints none, because it has no limit. Each line starts with `mlx-guard: `
+and then one of the forms below; the first one ends with `More:` and a link to this section, as the
+launch line does.
+
+**What happened.** There are three lines.
+
+The footprint reached the warning threshold, which is 10 % of the limit below the limit. It prints:
+`warning: the OS-accounted footprint reached {value} at {t}, at or above the {value} warning
+threshold for your {limit} limit; {n} samples in a row at or above the limit stop the command, and 1
+sample at or above the {value} emergency threshold kills it at once, with no checkpoint.`
+
+The footprint has not fallen to the recovery threshold, which is 20 % of the limit below the limit.
+It repeats every 5 minutes: `warning: the OS-accounted footprint is {value} at {t} and has not fallen to
+the {value} recovery threshold since {t}; your limit is {limit}.` The "since" time is when the climb
+began, which can be earlier than any line you saw about it.
+
+The footprint fell back to the recovery threshold: `warning cleared: the OS-accounted footprint fell
+to {value} at {t}, at or below the {value} recovery threshold for your {limit} limit.` It appears only
+if an earlier line told you about the climb.
+
+**Why.** mlx-guard watches the OS-accounted footprint against two thresholds below your limit. A
+warning is a sampled reading, not a prediction, and it changes nothing about when the command is
+stopped. The command is stopped when enough samples in a row are at or above the limit (two by
+default), or at once when one sample is at or above the emergency threshold. A jump straight past the
+warning threshold to the emergency threshold prints no warning at all, and no checkpoint is requested.
+Once mlx-guard starts stopping the command, the warnings end and the plain lines in the sections
+below take over.
+
+**What to do.** If you expected the climb, nothing: the line is information. If you did not, observe
+the command to see its peak, then fix the growth, close other work that holds memory, or raise
+`--max-footprint` for the next run. You cannot change the limit of a run that is already going. The
+repeat line means the footprint has stayed high since the climb, and the command can still be
+stopped at any sample. Choose a new limit from a measured peak with headroom (see
+[wrap a command](integrations/WRAP_A_COMMAND.md#choosing-the-limit)).
+
+**Good to know.** A line is written in one piece, but if the command has just printed part of a line,
+such as a progress bar, the warning starts right after it on the same line. And a line can be lost: if
+nothing is reading stderr, mlx-guard keeps up to 8 lines waiting, drops any more, and goes on watching
+memory. If the run ends normally, waiting lines that nobody has read can be lost too. The report keeps
+the facts, so read it rather than counting on these lines.
+
+**Report fields.** `configuration.max_footprint_bytes`, `configuration.warning_footprint_bytes`,
+`configuration.recovery_footprint_bytes` and `configuration.emergency_footprint_bytes`; the
+`transitions` entries that go from normal to warning and back, each with its time and
+`aggregate_footprint_bytes`.
+
+### The launch line
+
+**What happened.** Just before it starts your command, `mlx-guard run` asks macOS for its page counts
+and adds up the memory that is not locked as wired: free (speculative included), active, inactive,
+and held by the compressor. Wired memory cannot be paged out, so it is left out of the sum. If your
+limit is more than that number, `mlx-guard` prints one line right after the start-of-run notice and
+then runs the command with your limit as given. It never refuses to run. The line reads:
+`warning: your limit of {limit} is more than the {estimate} macOS reported as not wired just before
+launch, so a run that reaches it may not fit in memory on this Mac. That number is one estimate at one
+moment and counts every other program's memory as room. mlx-guard runs with your limit as given.`
+It ends with `More:` and a link to the start of [Warnings during a run](#warnings-during-a-run), the
+section this part sits in. Sizes print in binary units up to GiB, so a limit of 1 TiB shows as
+1024.00 GiB.
+
+**Why.** The line catches one mistake: a limit too large for this Mac, such as one copied from a
+bigger machine. A run that heads for such a limit may be compressing or swapping its own memory
+before `mlx-guard` can stop it at the limit. The number is rough on purpose. It is one reading at one
+moment, and it counts the memory of every other program as room, as if all of them could be pushed
+out. The number moves with what else is running, and it differs from Mac to Mac. A run that never
+gets near its limit is not affected by this. The line says "may not fit" because it cannot promise
+either way.
+
+**When there is no line, that says nothing about whether your run fits.** The check fires only when
+the limit is more than the number. A 24 GiB limit on a 32 GB Mac with a lot of other work open
+prints nothing, and that run can still page heavily. If macOS gives no number, nothing is printed
+either. To learn what a command needs, observe it.
+
+**What to do.** Compare your limit with a peak you have observed (see
+[observe and calibration](OBSERVE_AND_CALIBRATION.md#calibration-section)). Then pick one: close
+other work that holds memory and run again, lower the limit to a value your observed peak supports,
+or go on, knowing the run may page. The command has already started by the time you read the line;
+to change the limit, stop it and start a new run.
+
+**The limit is yours.** The limit you pass is the limit `mlx-guard` enforces. It does not raise or
+lower it, whatever the launch check says. A limit well below the number, for example to leave room
+for other jobs on a big Mac, is obeyed as given and prints nothing. `mlx-guard` has no automatic
+limit: choose one by observing the command first (see
+[choosing the limit](integrations/WRAP_A_COMMAND.md#choosing-the-limit)).
+
+**Good to know.** The line prints only after a successful launch. If the command fails to launch, no
+line is printed, but the report still holds the number and `limit_may_not_fit`. `observe` measures nothing new and prints nothing new. The line follows the same rules as
+the other warnings: only numbers `mlx-guard` measured, fixed text, no command or paths, and best-effort
+delivery.
+
+**Report fields.** `prelaunch.memory_estimate` is the number; `prelaunch.memory_categories` holds the
+macOS page counts behind it; `prelaunch.warnings` holds `limit_may_not_fit` whenever the limit is
+more than the estimate; `configuration.max_footprint_bytes` is your limit. Do not recompute the comparison from a
+report: what the number adds up and when the line fires belong to the release in `package_version`.
+See [reports](REPORTS.md).
 
 ## 64: the command line
 
@@ -241,8 +344,9 @@ the `transitions` entry that went from warning to checkpoint requested or termin
 **What happened.** A single sample reached the emergency band: `one
 sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency threshold of 6.60 GiB,
 which is 614.40 MiB more than your 6.00 GiB limit, so mlx-guard sent SIGKILL to the command's
-process group at once at 12.3 s, with no checkpoint and no grace period.` If the command had already
-ended, the end reads `so mlx-guard found the command already ended when it sent SIGKILL at 12.3 s.`
+process group at once at 12.3 s, with no checkpoint and no grace period.` If the KILL found no
+process in the group, the end reads `so mlx-guard found no process left in the command's process
+group when it sent SIGKILL at 12.3 s.`
 
 **Why.** The emergency threshold is a sampled intervention threshold that sits 10 % of the limit
 past the limit by default. At or above it, mlx-guard skips the checkpoint request and the TERM grace
@@ -259,10 +363,16 @@ the `transitions` entry that went to `emergency`; the KILL record in `signals`.
 **What happened.** `the run reached the {wall} wall-time limit you set, so mlx-guard sent SIGTERM to
 the command's process group at {t}.` If the command was still running afterwards, it adds `, and
 SIGKILL 1.0 s later because it was still running`; if a second terminal signal arrived, `, and
-SIGKILL 206 ms later, after a second terminal signal arrived`. When the command had already ended,
-the wording changes to match, for example `mlx-guard found the command already ended when it sent
-SIGTERM at 1.0 s` or `mlx-guard asked the command to save a checkpoint at 1.0 s; the command ended
-before the SIGTERM that followed could reach it`.
+SIGKILL 206 ms later, after a second terminal signal arrived`. When the TERM found no process in the
+group, the wording changes to match: `mlx-guard found no process left in the command's process group
+when it sent SIGTERM at 1.0 s`, or after a checkpoint request, `mlx-guard asked the command to save
+a checkpoint at 1.0 s and then found no process left in the command's process group when it sent
+SIGTERM at 1.1 s`. This usually means the command had just ended, but the report cannot prove it: a
+command that moved itself into another process group leaves the same records, so mlx-guard says what
+the signal found and not more. Only when the report also holds the cleanup record written after
+mlx-guard collected the command's own exit does it say the command had already ended. A checkpoint
+nobody acknowledged ends with `The command had not acknowledged checkpoint request 7 by the end of
+the run.`
 
 **What to do.** `raise --wall-time if the command needs longer, or find out why it ran longer than
 expected.` With an acknowledged or timed-out checkpoint it adds the same resume advice as above.
@@ -300,8 +410,8 @@ SIGINT or SIGTERM.`
 
 **What happened.** `the command exited, but processes it started were still running after SIGTERM, so
 mlx-guard sent SIGKILL to them at 1.2 s; the command's own exit status is in the report under
-outcome.child_status.` If they had ended by the time of the KILL, it reads `so mlx-guard found them
-already ended when it sent SIGKILL at 1.2 s`.
+outcome.child_status.` If the KILL found no process left, it reads `so mlx-guard found no process
+left in the command's process group when it sent SIGKILL at 1.2 s`.
 
 **What to do.** `make the command wait for, or stop, the processes it starts before it exits.`
 

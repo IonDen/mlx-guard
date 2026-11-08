@@ -21,6 +21,12 @@ const ENDURANCE_MEMBER_COUNT: usize = 16;
 const ENDURANCE_HISTORY_CAPACITY: usize = 256;
 const MAX_RSS_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_FOOTPRINT_GROWTH_BYTES: u64 = 2 * 1024 * 1024;
+// Sampler CPU over the 30-minute run, in % of one core; it catches our own regressions.
+// Measured 2.58-2.83 % on macOS 27.2 (26B123), M1 Max 32 GB, 16 idle members, 50 ms, debug
+// build, four runs on 2026-11-09 (one of them a build of the v0.3.1 tag). The old 2.0 bound
+// dates from v0.1.0 and last read 1.90-1.93 % on macOS 27.0.1. 3.5 is about 24 % above the
+// highest 27.2 reading.
+const ENDURANCE_MAX_CPU_PERCENT: f64 = 3.5;
 
 fn fixture(mode: &str, bytes: u64, wall_ms: u64) -> LaunchOptions {
     LaunchOptions {
@@ -401,6 +407,8 @@ struct EnduranceResult {
     final_history_length: usize,
     raw_observations: Vec<EnduranceObservation>,
     full_bounds_applied: bool,
+    asserted_max_cpu_percent_of_one_core: f64,
+    build_profile: &'static str,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -434,6 +442,12 @@ fn write_endurance_output(
         final_history_length: history_length,
         raw_observations: observations,
         full_bounds_applied: run_seconds == 1_800,
+        asserted_max_cpu_percent_of_one_core: ENDURANCE_MAX_CPU_PERCENT,
+        build_profile: if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
     };
     let path = std::path::PathBuf::from(path);
     if let Some(parent) = path.parent() {
@@ -455,7 +469,10 @@ fn assert_full_endurance_bounds(
         return;
     }
     assert_eq!(history_length, ENDURANCE_HISTORY_CAPACITY);
-    assert!(cpu_percent <= 2.0, "cpu_percent={cpu_percent:.4}");
+    assert!(
+        cpu_percent <= ENDURANCE_MAX_CPU_PERCENT,
+        "cpu_percent={cpu_percent:.4} bound={ENDURANCE_MAX_CPU_PERCENT}"
+    );
     assert!(max_resident <= MAX_RSS_BYTES, "max_resident={max_resident}");
     assert!(
         final_footprint <= footprint_started.saturating_add(MAX_FOOTPRINT_GROWTH_BYTES),
