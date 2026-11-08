@@ -10,8 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use mlx_guard_core::{
     ArtifactKind, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationGuidance,
     CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus, JournalEntry, JournalHeader,
-    JournalRecord, JournalRecovery, JournalRecoveryStatus, Observed, ReportMode, ReportV1,
-    RunIdentity, SecureJournal, SignalReason, StorageErrorKind,
+    JournalRecord, JournalRecovery, JournalRecoveryStatus, MemoryCategories, Observed,
+    PrelaunchRecord, ReportMode, ReportV1, RunIdentity, SecureJournal, SignalReason,
+    StorageErrorKind,
 };
 
 struct TestDirectory(PathBuf);
@@ -59,6 +60,7 @@ fn terminal_sample_history_reset_projects_the_recent_window() {
         capabilities: original.capabilities.clone(),
         configuration: original.configuration.clone(),
         privacy: original.privacy.clone(),
+        prelaunch: None,
     };
     let entries = vec![
         JournalEntry::Header(Box::new(header)),
@@ -309,4 +311,75 @@ fn raw_command_canary_never_reaches_any_persisted_or_displayed_artifact() {
     assert!(!String::from_utf8_lossy(&journal_bytes).contains(CANARY));
     journal.finalize().unwrap();
     assert!(!fs::read_to_string(report_path).unwrap().contains(CANARY));
+}
+
+fn worked_example_prelaunch() -> PrelaunchRecord {
+    PrelaunchRecord::for_limit(
+        32 * 1024 * 1024 * 1024,
+        Observed::Available {
+            value: MemoryCategories {
+                free_bytes: 310_263_808,
+                active_bytes: 11_716_935_680,
+                inactive_bytes: 11_692_703_744,
+                wired_bytes: 3_135_979_520,
+                compressor_bytes: 6_607_978_496,
+            },
+        },
+    )
+}
+
+#[test]
+fn the_journal_header_carries_prelaunch_into_the_report() {
+    // Catches `to_report` dropping the header's pre-launch record: the runtime writes the header
+    // itself, so replay is the only way the record reaches the final report.
+    let original = report();
+    let header = JournalHeader {
+        schema_version: original.schema_version,
+        package_version: original.package_version.clone(),
+        run: original.run.clone(),
+        capabilities: original.capabilities.clone(),
+        configuration: original.configuration.clone(),
+        privacy: original.privacy.clone(),
+        prelaunch: Some(worked_example_prelaunch()),
+    };
+    let entries = vec![
+        JournalEntry::Header(Box::new(header)),
+        JournalEntry::Sample(Box::new(original.samples[0].clone())),
+        JournalEntry::Transition(original.transitions[0].clone()),
+        JournalEntry::Signal(original.signals[0].clone()),
+        JournalEntry::Checkpoint(original.checkpoint.clone()),
+        JournalEntry::Escape(original.escape.clone()),
+        JournalEntry::Outcome(original.outcome.clone()),
+    ];
+    let recovery = JournalRecovery {
+        records: entries
+            .into_iter()
+            .enumerate()
+            .map(|(sequence, entry)| JournalRecord::new(sequence as u64, entry))
+            .collect(),
+        status: JournalRecoveryStatus::Complete,
+    };
+
+    assert_eq!(
+        recovery.to_report().unwrap().prelaunch,
+        Some(worked_example_prelaunch())
+    );
+}
+
+#[test]
+fn a_prelaunch_record_survives_the_journal_round_trip() {
+    // Catches `append_report` leaving the pre-launch record out of the header it writes, so a
+    // recovered report loses the number and the warning the run printed.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let mut enforcing = report();
+    enforcing.prelaunch = Some(worked_example_prelaunch());
+    let journal_path = {
+        let mut journal = SecureJournal::initialize(&report_path).unwrap();
+        journal.append_report(&enforcing).unwrap();
+        journal.journal_path().to_path_buf()
+    };
+
+    let recovered = JournalRecovery::read(&journal_path).unwrap();
+    assert_eq!(recovered.to_report().unwrap(), enforcing);
 }

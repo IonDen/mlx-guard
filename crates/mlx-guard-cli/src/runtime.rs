@@ -5,32 +5,34 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use mlx_guard_core::{
-    Actuation, ActuationFailure, ActuationOutcome, CalibrationArtifact, Capabilities,
-    CheckpointArtifactRecord, CheckpointBinding, CheckpointChannel, CheckpointDisposition,
-    CheckpointNonce, CheckpointRecord, CheckpointStatus, CheckpointWorkerEndpoint, ChildStatus,
-    ClientReady, EscapeEvidence, Event, FootprintSampler, IdentityTracker, InterventionEngine,
-    InterventionRecord, JournalDurability, JournalEntry, JournalHeader, JournalRecord,
-    MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver, NativeProcessInventory,
-    ObserveCalibration, Observed, OnParentExit, OwnedProcess, ParentWatch, PersistenceAttempt,
-    PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults, ProcessIdentity,
-    ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode,
-    ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal, SignalReason,
-    SignalRecord, SignalResult, SignalTarget, StdinDisposition, StdioMode, SupervisorOutcome,
-    TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason,
-    VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
+    Actuation, ActuationFailure, ActuationOutcome, BandEvent, BandWatch, CalibrationArtifact,
+    Capabilities, CheckpointArtifactRecord, CheckpointBinding, CheckpointChannel,
+    CheckpointDisposition, CheckpointNonce, CheckpointRecord, CheckpointStatus,
+    CheckpointWorkerEndpoint, ChildStatus, ClientReady, EscapeEvidence, Event, FootprintSampler,
+    IdentityTracker, InterventionEngine, InterventionRecord, JournalDurability, JournalEntry,
+    JournalHeader, JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver,
+    NativeProcessInventory, ObserveCalibration, Observed, OnParentExit, OwnedProcess, ParentWatch,
+    PersistenceAttempt, PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults,
+    ProcessIdentity, ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration,
+    ReportMode, ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal,
+    SignalReason, SignalRecord, SignalResult, SignalTarget, StdinDisposition, StdioMode,
+    SupervisorOutcome, TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord,
+    UnavailableReason, VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
 };
 use mlx_guard_core::{
-    FinalizedArtifacts,
+    FinalizedArtifacts, PrelaunchRecord, PrelaunchWarning,
     explain::{
         EarlyCause, StorageClass, StoragePhase, explain_early, explain_report, generic_early_cause,
     },
+    memory_categories,
+    warnings::{band_cleared_line, band_entered_line, band_still_line, fit_line},
 };
 
 use crate::completion::{
     Completion, CompletionInputs, complete, supervisor_outcome, terminal_kind,
 };
 use crate::{
-    CommandMode, CommonOptions, ObserveOptions, OnParentExitOption, ParsedCli, RunOptions,
+    CommandMode, CommonOptions, Notices, ObserveOptions, OnParentExitOption, ParsedCli, RunOptions,
     policy_band_step,
 };
 
@@ -160,7 +162,7 @@ fn finish_journal(
 
 /// Execute one validated CLI command through the native supervisor.
 #[must_use]
-pub fn execute(parsed: ParsedCli) -> RuntimeResult {
+pub fn execute(parsed: ParsedCli, notices: &mut Notices) -> RuntimeResult {
     if platform_support() != PlatformSupport::Darwin {
         return RuntimeResult::refused(
             SupervisorOutcome::SupervisorFailure,
@@ -169,12 +171,12 @@ pub fn execute(parsed: ParsedCli) -> RuntimeResult {
         );
     }
     match parsed.mode {
-        CommandMode::Observe(options) => execute_observe(&options),
-        CommandMode::Run(options) => execute_run(&options),
+        CommandMode::Observe(options) => execute_observe(&options, notices),
+        CommandMode::Run(options) => execute_run(&options, notices),
     }
 }
 
-fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
+fn execute_observe(options: &ObserveOptions, notices: &mut Notices) -> RuntimeResult {
     let ready = match client_ready(options.common.client_ready_fd) {
         Ok(ready) => ready,
         Err(result) => return result,
@@ -202,7 +204,8 @@ fn execute_observe(options: &ObserveOptions) -> RuntimeResult {
         }
     };
 
-    let prepared = match prepare_observe_worker(&options.common, inventory, sample_config) {
+    let prepared = match prepare_observe_worker(&options.common, inventory, sample_config, notices)
+    {
         Ok(prepared) => prepared,
         Err(failure) => {
             return finalize_without_worker(
@@ -243,13 +246,19 @@ fn initialize_observe(
     common: &CommonOptions,
     parent_watch: &ParentWatchState,
 ) -> Result<(NativeProcessInventory, SecureJournal, u64), RuntimeResult> {
-    initialize(common, observe_configuration(common, parent_watch), false)
+    initialize(
+        common,
+        observe_configuration(common, parent_watch),
+        false,
+        None,
+    )
 }
 
 fn initialize(
     common: &CommonOptions,
     configuration: ReportConfiguration,
     checkpoint_available: bool,
+    prelaunch: Option<PrelaunchRecord>,
 ) -> Result<(NativeProcessInventory, SecureJournal, u64), RuntimeResult> {
     let inventory = NativeProcessInventory::new();
     if inventory.probe_footprint().is_err() {
@@ -283,6 +292,7 @@ fn initialize(
         },
         configuration,
         privacy: PrivacyDefaults::default(),
+        prelaunch,
     };
     let before_launch = |error: mlx_guard_core::StorageError| {
         RuntimeResult::refused(
@@ -306,44 +316,105 @@ fn initialize(
     Ok((inventory, journal, sequence))
 }
 
-fn execute_run(options: &RunOptions) -> RuntimeResult {
-    let ready = match client_ready(options.common.client_ready_fd) {
-        Ok(ready) => ready,
-        Err(result) => return result,
-    };
-    let (mut checkpoint_channel, checkpoint_endpoint, initial_request_id) =
-        match checkpoint_channel() {
-            Ok(values) => values,
-            Err(result) => return result,
-        };
+/// What a run holds once its journal header is written, before anything is launched.
+struct RunSetup {
+    ready: ClientReady,
+    checkpoint_channel: CheckpointChannel,
+    checkpoint_endpoint: CheckpointWorkerEndpoint,
+    banner: String,
+    /// The launch fit line, when the limit is more than the estimate taken before the header.
+    fit_notice: Option<String>,
+    band_limits: BandLimits,
+    policy: PolicyMachine,
+    sample_config: SamplingConfig,
+    parent_watch: ParentWatchState,
+    inventory: NativeProcessInventory,
+    journal: SecureJournal,
+    sequence: u64,
+}
+
+fn prepare_run_setup(options: &RunOptions) -> Result<RunSetup, RuntimeResult> {
+    let ready = client_ready(options.common.client_ready_fd)?;
+    let (mut checkpoint_channel, checkpoint_endpoint, initial_request_id) = checkpoint_channel()?;
     let policy_config = run_policy_config(options);
     let banner = launch_banner(&policy_config);
+    let limit_bytes = policy_config.limit_bytes;
+    let band_limits = BandLimits::of(&policy_config);
     let policy =
         match PolicyMachine::enforce_with_initial_request_id(policy_config, initial_request_id) {
             Ok(policy) => policy,
             Err(error) => {
-                return RuntimeResult::failure(
+                return Err(RuntimeResult::failure(
                     SupervisorOutcome::InvalidConfiguration,
                     &error.to_string(),
-                );
+                ));
             }
         };
     if let Err(error) = checkpoint_channel.begin_negotiation() {
-        return RuntimeResult::failure(SupervisorOutcome::SupervisorFailure, &error.to_string());
+        return Err(RuntimeResult::failure(
+            SupervisorOutcome::SupervisorFailure,
+            &error.to_string(),
+        ));
     }
-    let sample_config = match sampling_config(&options.common) {
-        Ok(config) => config,
-        Err(result) => return result,
-    };
+    let sample_config = sampling_config(&options.common)?;
     // The journal header carries the parent watch, so the watch is decided before the header is
     // written and never revised afterwards.
     let parent_watch = parent_watch_state(options.common.on_parent_exit);
-    let (inventory, journal, sequence) = match initialize(
+    // Measured before the header, so even a launch that fails keeps the number in its report.
+    let prelaunch = PrelaunchRecord::for_limit(limit_bytes, memory_categories());
+    let fit_notice = fit_notice(limit_bytes, &prelaunch);
+    let (inventory, journal, sequence) = initialize(
         &options.common,
         run_configuration(options, &parent_watch),
         true,
-    ) {
-        Ok(values) => values,
+        Some(prelaunch),
+    )?;
+    Ok(RunSetup {
+        ready,
+        checkpoint_channel,
+        checkpoint_endpoint,
+        banner,
+        fit_notice,
+        band_limits,
+        policy,
+        sample_config,
+        parent_watch,
+        inventory,
+        journal,
+        sequence,
+    })
+}
+
+/// The fit line for a recorded `LimitMayNotFit` warning; the comparison lives in `for_limit`.
+fn fit_notice(limit_bytes: u64, prelaunch: &PrelaunchRecord) -> Option<String> {
+    match prelaunch.memory_estimate {
+        Observed::Available { value }
+            if prelaunch
+                .warnings
+                .contains(&PrelaunchWarning::LimitMayNotFit) =>
+        {
+            Some(fit_line(limit_bytes, value, VERSION))
+        }
+        _ => None,
+    }
+}
+
+fn execute_run(options: &RunOptions, notices: &mut Notices) -> RuntimeResult {
+    let RunSetup {
+        ready,
+        mut checkpoint_channel,
+        checkpoint_endpoint,
+        banner,
+        fit_notice,
+        band_limits,
+        policy,
+        sample_config,
+        parent_watch,
+        inventory,
+        journal,
+        sequence,
+    } = match prepare_run_setup(options) {
+        Ok(setup) => setup,
         Err(result) => return result,
     };
     let terminal_signals = match TerminalSignalMonitor::install() {
@@ -357,8 +428,13 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
             );
         }
     };
-    let prepared = match prepare_run_worker(options, inventory, checkpoint_endpoint, sample_config)
-    {
+    let prepared = match prepare_run_worker(
+        options,
+        inventory,
+        checkpoint_endpoint,
+        sample_config,
+        notices,
+    ) {
         Ok(prepared) => prepared,
         Err(failure) => {
             return finalize_without_worker(
@@ -371,7 +447,10 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
     };
     // The workload is now launched; announce the ceiling this run authorises. Printed only on a
     // successful launch, so a configuration or launch failure never emits a spurious banner.
-    eprintln!("{banner}");
+    notices.send(format!("{banner}\n"));
+    if let Some(line) = fit_notice {
+        notices.send(line);
+    }
     let checkpoint_signal = checkpoint_signal_usr1();
     let binding = CheckpointBinding::new(
         &mut checkpoint_channel,
@@ -408,6 +487,9 @@ fn execute_run(options: &RunOptions) -> RuntimeResult {
         supervisor_error: None,
         intervention_cause: None,
         shutdown_reason: None,
+        notices,
+        band: BandWatch::new(),
+        band_limits,
     };
     ready.notify();
     runtime.run()
@@ -545,13 +627,14 @@ fn prepare_observe_worker(
     common: &CommonOptions,
     inventory: NativeProcessInventory,
     sample_config: SamplingConfig,
+    notices: &mut Notices,
 ) -> Result<PreparedObserve, RunLaunchFailure> {
     let mut process =
         OwnedProcess::launch(&launch_options(common)).map_err(|error| RunLaunchFailure {
             outcome: launch_outcome(error.kind()),
             diagnostic: error.to_string(),
         })?;
-    announce_stdin_disposition(&process);
+    announce_stdin_disposition(&process, notices);
     let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
@@ -585,6 +668,7 @@ fn prepare_run_worker(
     inventory: NativeProcessInventory,
     inherited_checkpoint: CheckpointWorkerEndpoint,
     sample_config: SamplingConfig,
+    notices: &mut Notices,
 ) -> Result<PreparedRun, RunLaunchFailure> {
     let mut process = OwnedProcess::launch_with_checkpoint(
         &launch_options(&options.common),
@@ -594,7 +678,7 @@ fn prepare_run_worker(
         outcome: launch_outcome(error.kind()),
         diagnostic: error.to_string(),
     })?;
-    announce_stdin_disposition(&process);
+    announce_stdin_disposition(&process, notices);
     let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
@@ -685,14 +769,18 @@ struct RunRuntime<'a> {
     intervention_cause: Option<SignalReason>,
     /// Why the shutdown sequence in flight was started.
     shutdown_reason: Option<SignalReason>,
+    /// The writer `execute_and_report` owns; mid-run lines go only through its queue.
+    notices: &'a mut Notices,
+    band: BandWatch,
+    band_limits: BandLimits,
 }
 
 impl RunRuntime<'_> {
     fn run(mut self) -> RuntimeResult {
-        let completion = self.sample_until_exit();
+        let ended = self.sample_until_exit();
         let at = self.started.elapsed();
-        let supervisor_failure = match completion {
-            RunCompletion::Root(_) => {
+        let supervisor_failure = match ended {
+            RunCompletion::Root => {
                 self.apply_event(Event::ProcessExited {
                     at,
                     final_footprint_bytes: observed_value(&self.final_footprint),
@@ -736,10 +824,8 @@ impl RunRuntime<'_> {
                 Ok(exists) => exists,
                 Err(error) => return self.fail_supervisor(error.to_string()),
             };
-            if let Some(outcome) = self.root_outcome
-                && !group_exists
-            {
-                return RunCompletion::Root(outcome);
+            if self.root_outcome.is_some() && !group_exists {
+                return RunCompletion::Root;
             }
             // Deliberately after the completion check above: a run whose work has already finished
             // must not manufacture a termination for a parent that died alongside it.
@@ -873,6 +959,15 @@ impl RunRuntime<'_> {
             );
         }
         self.apply_event(Event::Sample(policy_event));
+        // The same time and value the transition record above carries. The line is rendered only
+        // when one is due and is handed to the writer's queue, which never blocks this loop.
+        if let Some(event) = self.band.observe(
+            self.engine.policy().state(),
+            observed_value(&self.final_footprint),
+            processed_at,
+        ) {
+            self.notices.send(self.band_limits.line(event));
+        }
     }
 
     fn apply_event(&mut self, event: Event) {
@@ -1041,7 +1136,8 @@ impl RunRuntime<'_> {
 
 #[derive(Debug, Eq, PartialEq)]
 enum RunCompletion {
-    Root(RootOutcome),
+    /// The root has exited and the owned group is empty; the outcome is in `root_outcome`.
+    Root,
     SupervisorFailure(String),
 }
 
@@ -1581,10 +1677,11 @@ fn early_exit_or_failure(
 /// supervisor itself was started with. Printed as soon as the launch succeeded, before identity
 /// inspection, so a command that exits at once still gets the line. Silent for every other
 /// standard input, and never printed for a failed launch.
-fn announce_stdin_disposition(process: &OwnedProcess) {
+fn announce_stdin_disposition(process: &OwnedProcess, notices: &mut Notices) {
     if process.stdin_disposition() == StdinDisposition::TerminalReplacedWithNull {
-        eprintln!(
-            "mlx-guard: standard input is a terminal, so the command reads from /dev/null instead"
+        notices.send(
+            "mlx-guard: standard input is a terminal, so the command reads from /dev/null instead\n"
+                .to_owned(),
         );
     }
 }
@@ -1734,6 +1831,57 @@ fn run_policy_config(options: &RunOptions) -> PolicyConfig {
         ),
         term_grace: TERM_GRACE,
         wall_time: options.wall_time,
+    }
+}
+
+/// The thresholds the warning-band lines name, taken from the run's policy configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BandLimits {
+    warning: u64,
+    recovery: u64,
+    limit: u64,
+    emergency: u64,
+    required_samples: u32,
+}
+
+impl BandLimits {
+    const fn of(policy: &PolicyConfig) -> Self {
+        Self {
+            warning: policy.warning_bytes,
+            recovery: policy.recovery_bytes,
+            limit: policy.limit_bytes,
+            emergency: policy.emergency_bytes,
+            required_samples: policy.required_breach_samples,
+        }
+    }
+
+    /// Render a band event; times are whole milliseconds, as in the transition records.
+    fn line(self, event: BandEvent) -> String {
+        match event {
+            BandEvent::Entered { footprint, at } => band_entered_line(
+                footprint,
+                duration_ms(at),
+                self.warning,
+                self.limit,
+                self.emergency,
+                self.required_samples,
+                VERSION,
+            ),
+            BandEvent::Still {
+                footprint,
+                at,
+                since,
+            } => band_still_line(
+                footprint,
+                duration_ms(at),
+                duration_ms(since),
+                self.recovery,
+                self.limit,
+            ),
+            BandEvent::Cleared { footprint, at } => {
+                band_cleared_line(footprint, duration_ms(at), self.recovery, self.limit)
+            }
+        }
     }
 }
 
@@ -2059,12 +2207,14 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        CommonOptions, DEFAULT_CHECKPOINT_TIMEOUT, MAX_MISSING_SAMPLES, MIN_SAMPLE_AGE,
+        BandLimits, CommonOptions, DEFAULT_CHECKPOINT_TIMEOUT, MAX_MISSING_SAMPLES, MIN_SAMPLE_AGE,
         MIN_SAMPLE_WINDOW, REQUIRED_BREACH_SAMPLES, RunOptions, TERM_GRACE, launch_banner,
         observe_policy_machine, run_policy_config, sample_quality_bounds, sampling_config,
     };
+    use mlx_guard_core::warnings::{band_cleared_line, band_entered_line, band_still_line};
     use mlx_guard_core::{
-        Action, MAX_SAMPLE_HISTORY_CAPACITY, PolicyConfig, PolicyMachine, SamplingConfig,
+        Action, BandEvent, MAX_SAMPLE_HISTORY_CAPACITY, PolicyConfig, PolicyMachine,
+        SamplingConfig, VERSION,
     };
 
     fn sample() -> Event {
@@ -2217,6 +2367,74 @@ mod tests {
         );
         assert!(banner.contains("emergency KILL"), "{banner}");
         assert!(banner.contains("10%"), "{banner}");
+    }
+
+    #[test]
+    fn band_limits_take_each_threshold_from_the_run_policy() {
+        // Catches a band line naming the wrong threshold: warning and recovery swapped, the limit
+        // where the emergency threshold belongs, or the missing-sample count (3) given as the
+        // number of samples that stop the command (2). A 1_000_000-byte limit has a 100_000 step.
+        let limits = BandLimits::of(&run_policy_config(&run_options(Duration::from_millis(50))));
+        assert_eq!(
+            limits,
+            BandLimits {
+                warning: 900_000,
+                recovery: 800_000,
+                limit: 1_000_000,
+                emergency: 1_100_000,
+                required_samples: 2,
+            }
+        );
+    }
+
+    fn band_limits() -> BandLimits {
+        BandLimits {
+            warning: 900_000,
+            recovery: 800_000,
+            limit: 1_000_000,
+            emergency: 1_100_000,
+            required_samples: 2,
+        }
+    }
+
+    #[test]
+    fn the_entered_line_names_the_warning_limit_emergency_and_sample_count() {
+        // Catches the Entered line rendered with the recovery threshold, the limit and emergency
+        // threshold swapped, or the Still renderer.
+        let line = band_limits().line(BandEvent::Entered {
+            footprint: 950_000,
+            at: Duration::from_millis(1_250),
+        });
+        assert_eq!(
+            line,
+            band_entered_line(950_000, 1_250, 900_000, 1_000_000, 1_100_000, 2, VERSION)
+        );
+        assert!(line.starts_with("mlx-guard: warning: "), "{line}");
+    }
+
+    #[test]
+    fn the_still_line_says_since_the_crossing_and_names_the_recovery_threshold() {
+        // Catches `since` and `at` swapped, or the warning threshold where recovery belongs.
+        let line = band_limits().line(BandEvent::Still {
+            footprint: 850_000,
+            at: Duration::from_millis(400_500),
+            since: Duration::from_millis(12_250),
+        });
+        assert_eq!(
+            line,
+            band_still_line(850_000, 400_500, 12_250, 800_000, 1_000_000)
+        );
+    }
+
+    #[test]
+    fn the_cleared_line_names_the_recovery_threshold() {
+        // Catches the Cleared event rendered as a warning, or with the warning threshold.
+        let line = band_limits().line(BandEvent::Cleared {
+            footprint: 790_000,
+            at: Duration::from_millis(9_000),
+        });
+        assert_eq!(line, band_cleared_line(790_000, 9_000, 800_000, 1_000_000));
+        assert!(line.starts_with("mlx-guard: warning cleared: "), "{line}");
     }
 
     #[test]
@@ -2963,8 +3181,8 @@ mod finalize_without_worker_tests {
 
     #[test]
     fn a_lost_supervisor_failure_claims_neither_a_failed_launch_nor_supervision() {
-        // Bug: a supervisor failure after the launch explained as "could not be launched" (ledger
-        // 3), or as a supervised run, or with its error line dropped.
+        // Bug: a supervisor failure after the launch explained as "could not be launched", or as a
+        // supervised run, or with its error line dropped.
         let scratch = Scratch::new();
         for lost in BOTH {
             let expected = format!(
@@ -2991,9 +3209,9 @@ mod finalize_without_worker_tests {
 
     #[test]
     fn a_lost_child_exit_says_the_child_exited_on_either_storage_step() {
-        // Bug: a terminal-record failure on a child exit prints "launch failed" (ledger 4); or a
-        // command that ended before the supervision loop began is called supervised, with
-        // "safety enforcement was not affected" (ledger 37).
+        // Bug: a terminal-record failure on a child exit prints "launch failed"; or a command that
+        // ended before the supervision loop began is called supervised, with "safety enforcement
+        // was not affected".
         let scratch = Scratch::new();
         for outcome in [
             SupervisorOutcome::ChildExited(3),

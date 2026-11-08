@@ -1,0 +1,63 @@
+[
+  {
+    "row": "entered",
+    "kind": "entered",
+    "note": "A 6.00 GiB limit: step 644245094, so warning 5798205850, emergency 7086696038.",
+    "args": {
+      "footprint": 5819652998,
+      "at_ms": 12300,
+      "warning": 5798205850,
+      "limit": 6442450944,
+      "emergency": 7086696038,
+      "required_samples": 2
+    },
+    "text": "warning: the OS-accounted footprint reached 5.42 GiB at 12.3 s, at or above the 5.40 GiB warning threshold for your 6.00 GiB limit; 2 samples in a row at or above the limit stop the command, and 1 sample at or above the 6.60 GiB emergency threshold kills it at once, with no checkpoint. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#warnings-during-a-run"
+  },
+  {
+    "row": "still",
+    "kind": "still",
+    "note": "The same 6.00 GiB limit: recovery 5153960756.",
+    "args": {
+      "footprint": 5916289106,
+      "at_ms": 312000,
+      "since_ms": 12300,
+      "recovery": 5153960756,
+      "limit": 6442450944
+    },
+    "text": "warning: the OS-accounted footprint is 5.51 GiB at 5 min 12 s and has not fallen to the 4.80 GiB recovery threshold since 12.3 s; your limit is 6.00 GiB."
+  },
+  {
+    "row": "still-past-an-hour",
+    "kind": "still",
+    "note": "A run that has sat in the band for two hours: 7 380 000 ms reads as 2 h 3 min.",
+    "args": {
+      "footprint": 5916289106,
+      "at_ms": 7380000,
+      "since_ms": 12300,
+      "recovery": 5153960756,
+      "limit": 6442450944
+    },
+    "text": "warning: the OS-accounted footprint is 5.51 GiB at 2 h 3 min and has not fallen to the 4.80 GiB recovery threshold since 12.3 s; your limit is 6.00 GiB."
+  },
+  {
+    "row": "cleared",
+    "kind": "cleared",
+    "args": {
+      "footprint": 5143223337,
+      "at_ms": 50100,
+      "recovery": 5153960756,
+      "limit": 6442450944
+    },
+    "text": "warning cleared: the OS-accounted footprint fell to 4.79 GiB at 50.1 s, at or below the 4.80 GiB recovery threshold for your 6.00 GiB limit."
+  },
+  {
+    "row": "fit",
+    "kind": "fit",
+    "note": "A 30.00 GiB limit against a launch estimate of 28.31 GiB.",
+    "args": {
+      "limit": 32212254720,
+      "estimate": 30397925540
+    },
+    "text": "warning: your limit of 30.00 GiB is more than the 28.31 GiB macOS reported as not wired just before launch, so a run that reaches it may not fit in memory on this Mac. That number is one estimate at one moment and counts every other program's memory as room. mlx-guard runs with your limit as given. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#warnings-during-a-run"
+  }
+]

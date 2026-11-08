@@ -10,7 +10,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mlx_guard_cli::{RuntimeResult, execute, parse_cli};
+use mlx_guard_cli::{Notices, RuntimeResult, execute, parse_cli};
 use mlx_guard_core::{
     Observed, PolicyState, ReportV1, SignalReason, SignalResult, SignalTarget, SupervisorOutcome,
     TerminalKind,
@@ -151,7 +151,7 @@ fn run_escape_scenario(
     arguments.extend_from_slice(command);
     let parsed = parse_cli(arguments).unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     let report = ReportV1::from_json(&fs::read_to_string(&report_path).unwrap()).unwrap();
     let escapees = published_pids(&pid_path);

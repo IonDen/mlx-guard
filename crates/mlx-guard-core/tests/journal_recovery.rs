@@ -195,6 +195,7 @@ fn oversized_record_is_rejected_before_any_bytes_are_appended() {
             parent_watch: None,
         },
         privacy: PrivacyDefaults::default(),
+        prelaunch: None,
     };
 
     let error = journal

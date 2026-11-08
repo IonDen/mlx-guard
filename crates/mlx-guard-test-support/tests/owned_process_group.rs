@@ -1,3 +1,4 @@
+#![cfg(unix)]
 #![allow(unsafe_code)]
 
 use std::collections::BTreeMap;
@@ -6,6 +7,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader, IsTerminal, Read, Write};
 use std::os::fd::FromRawFd;
 use std::os::unix::fs::PermissionsExt;
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -68,6 +70,17 @@ const fn process_is_zombie(_pid: i32) -> bool {
 
 fn signal_number(value: i32) -> SignalNumber {
     SignalNumber::new(u8::try_from(value).unwrap()).unwrap()
+}
+
+/// Whether SIGINT is at `SIG_DFL` in this process, read without changing it.
+fn sigint_is_at_default() -> bool {
+    // SAFETY: `sigaction` is plain old data, so the all-zero value is a valid one.
+    let mut current: libc::sigaction = unsafe { std::mem::zeroed() };
+    // SAFETY: a null new action only queries the disposition, and `current` is a valid, writable
+    // `sigaction` for the call to fill in.
+    let queried = unsafe { libc::sigaction(libc::SIGINT, std::ptr::null(), &raw mut current) };
+    assert_eq!(queried, 0, "sigaction(SIGINT) query failed");
+    current.sa_sigaction == libc::SIG_DFL
 }
 
 fn enforcement_policy() -> PolicyMachine {
@@ -286,6 +299,65 @@ fn root_status_is_preserved_while_drop_cleans_a_remaining_group() {
     wait_until_gone(child_pid);
 }
 
+/// Kills and reaps, by pid, a root whose `OwnedProcess` is gone, so a test leaves no stray even
+/// when it fails. It signals only while the pid is still an unreaped child of this process, so the
+/// number cannot have been reused.
+struct RootReaper(i32);
+
+impl Drop for RootReaper {
+    fn drop(&mut self) {
+        let mut status = 0;
+        // SAFETY: waitpid and kill take a pid and a status pointer to a live local. The kill is
+        // sent only while waitpid reports the pid as this process's own unreaped child.
+        unsafe {
+            if libc::waitpid(self.0, &raw mut status, libc::WNOHANG) == 0 {
+                libc::kill(self.0, libc::SIGKILL);
+                libc::waitpid(self.0, &raw mut status, 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn dropping_an_owned_process_does_not_wait_for_a_root_that_left_its_group() {
+    // Catches `child.wait()` with no bound in `Drop`: the group kill misses a root that moved to
+    // another group, so an unbounded wait lasts until the root's own 6 s watchdog ends it.
+    let mut process = OwnedProcess::launch(&fixture("leave-group", 6_000)).unwrap();
+    let root = process.root_pid().cast_signed();
+    let reaper = RootReaper(root);
+    let mut stderr = process.take_stderr().unwrap();
+    let mut output = BufReader::new(process.take_stdout().unwrap());
+    let mut line = String::new();
+    output.read_line(&mut line).unwrap();
+    assert!(
+        line.starts_with("LEFT-GROUP pgid="),
+        "fixture did not leave its group: {line:?} {:?}",
+        read_all(&mut stderr)
+    );
+    let group: i32 = line
+        .trim()
+        .strip_prefix("LEFT-GROUP pgid=")
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert_ne!(group, root, "the root is still the leader of its own group");
+
+    let started = Instant::now();
+    drop(process);
+    let elapsed = started.elapsed();
+    let alive = process_exists(root);
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "drop waited {elapsed:?} for a root out of the group kill's reach (alive after: {alive})"
+    );
+    assert!(
+        alive,
+        "the root was gone after the drop, so the drop outlasted it"
+    );
+    drop(reaper);
+    drop(stderr);
+}
+
 #[test]
 fn relinquishing_ownership_does_not_signal_the_process_group() {
     let process = OwnedProcess::launch(&fixture("cpu-stall", 2_000)).unwrap();
@@ -337,6 +409,15 @@ fn repeated_terminal_signal_routes_through_policy_to_group_kill() {
 #[test]
 fn external_terminal_signal_is_forwarded_but_stop_is_not_supported() {
     // Catches rewriting the first signal to TERM or accidentally enabling unsupported job control.
+    // The fixture inherits this process's SIGINT disposition across `exec`, and a shell running
+    // the suite as a background job sets it to ignored, so the forwarded SIGINT would do nothing.
+    // Bug the precondition catches: that case failing as an unexplained `Exited(0)`.
+    assert!(
+        sigint_is_at_default(),
+        "SIGINT is not at its default disposition in the test process (a non-interactive shell \
+         ignores it for a background job), so the fixture would ignore the forwarded SIGINT; run \
+         the suite in the foreground"
+    );
     let mut process = OwnedProcess::launch(&fixture("cpu-stall", 2_000)).unwrap();
     let interrupt = signal_number(libc::SIGINT);
     assert_eq!(
@@ -386,4 +467,55 @@ fn checkpoint_signal_reaches_only_the_negotiated_endpoint() {
     assert_stays_alive(child_pid);
     drop(process);
     wait_until_gone(child_pid);
+}
+
+/// Wait at most 5 s for a fixture with a 300 ms wall limit; kill it and fail if it outlives that.
+fn exit_within_ceiling(mut child: Child) -> ExitStatus {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if let Some(status) = child.try_wait().unwrap() {
+            return status;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    child.kill().unwrap();
+    child.wait().unwrap();
+    panic!("fixture outlived its 300 ms wall-time ceiling by more than 4.7 s");
+}
+
+fn idle_fixture(stderr: Stdio) -> Child {
+    Command::new(FIXTURE)
+        .args(["idle-stall", "1", "300"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(stderr)
+        .spawn()
+        .unwrap()
+}
+
+#[test]
+fn fixture_watchdog_ends_the_fixture_when_its_stderr_is_closed() {
+    // Catches a watchdog whose notice panics on a closed stderr: the panic ends only the watchdog
+    // thread, and the parked fixture then runs past its wall-time ceiling.
+    let mut child = idle_fixture(Stdio::piped());
+    drop(child.stderr.take());
+    assert_eq!(exit_within_ceiling(child).code(), Some(124));
+}
+
+#[test]
+fn fixture_watchdog_ends_the_fixture_when_its_stderr_is_full() {
+    // Catches a watchdog whose notice blocks on a full stderr pipe before it can exit.
+    let (reader, mut writer) = std::io::pipe().unwrap();
+    let child_stderr = writer.try_clone().unwrap();
+    // Fills the pipe and then blocks, so the fixture's write blocks too. Closing the reader below
+    // ends this write with an error.
+    let filler = thread::spawn(move || writer.write_all(&vec![0_u8; 1 << 20]).is_err());
+    let child = idle_fixture(Stdio::from(child_stderr));
+    let status = exit_within_ceiling(child);
+    drop(reader);
+    assert!(
+        filler.join().unwrap(),
+        "the filler wrote 1 MiB into an unread pipe"
+    );
+    assert_eq!(status.code(), Some(124));
 }

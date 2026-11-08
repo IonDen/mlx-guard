@@ -137,13 +137,16 @@ class InstalledPackageTests(unittest.TestCase):
             # come after the client is killed, so it may be absent. The two plain lines are not a
             # race: the supervisor writes them to the inherited pipe before it exits, and
             # communicate() reads to EOF, which needs every write end, the supervisor's included,
-            # closed. So they must be present, in order, with the parent-exit anchor.
+            # closed. So they must be present, in order, with the parent-exit anchor. A 1 TiB
+            # limit is more than any Mac's launch estimate, so the fit line follows the banner.
             lines = [line for line in client_stderr.splitlines() if line]
             if (
                 lines
                 and lines[0].startswith("mlx-guard: enforcing ")
                 and "emergency KILL" in lines[0]
             ):
+                lines = lines[1:]
+            if lines and lines[0].startswith("mlx-guard: warning: your limit of "):
                 lines = lines[1:]
             self.assertEqual(len(lines), 2, client_stderr)
             self.assertTrue(lines[0].startswith("mlx-guard: what happened: "), client_stderr)

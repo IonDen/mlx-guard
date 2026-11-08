@@ -172,13 +172,18 @@ fn run_with_a_terminal_on_stdin_gives_the_command_dev_null_and_says_so() {
     );
     let text = String::from_utf8_lossy(&stderr);
     let lines: Vec<&str> = text.lines().collect();
+    // A 1 TiB limit is more than any Mac's launch estimate, so the fit line follows the banner.
     assert_eq!(
         lines.len(),
-        2,
-        "one terminal line plus the launch banner: {text:?}"
+        3,
+        "one terminal line, the launch banner, then the fit line: {text:?}"
     );
     assert_eq!(lines[0], TERMINAL_LINE);
     assert!(lines[1].starts_with("mlx-guard: enforcing a "), "{text:?}");
+    assert!(
+        lines[2].starts_with("mlx-guard: warning: your limit of 1024.00 GiB is more than the "),
+        "{text:?}"
+    );
     assert_eq!(
         report_kind(&report_path),
         mlx_guard_core::TerminalKind::ChildExited { code: 0 }

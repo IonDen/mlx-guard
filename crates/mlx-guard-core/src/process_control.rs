@@ -9,6 +9,8 @@ use std::num::NonZeroI32;
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicI32, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
@@ -17,6 +19,12 @@ use crate::identity::{IdentityUnavailable, NativeProcessInventory, ProcessIdenti
 use crate::{CHECKPOINT_FD_ENV, CheckpointWorkerEndpoint, SignalNumber, SignalResult};
 
 const CHECKPOINT_CHILD_FD: libc::c_int = 198;
+
+/// How long cleanup waits to reap a root after signalling it. A root the signal could not reach
+/// (it left its group, it is setuid, or it is stuck in the kernel) may still be running when the
+/// bound passes; the wait then ends and the root is left to be reparented.
+const CLEANUP_REAP_BOUND: Duration = Duration::from_secs(2);
+const CLEANUP_REAP_POLL: Duration = Duration::from_millis(10);
 static TERMINAL_SIGNAL_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
 
 /// Owned integration descriptor closed once the native runtime can accept client signals.
@@ -825,6 +833,9 @@ impl OwnedProcess {
         }
 
         let mut child = command.spawn().map_err(map_spawn_error)?;
+        // Neither error below can leave a spawned root running, because neither can fire: a
+        // successful spawn returns the child's `pid_t`, which is positive, so it fits `i32` and is
+        // nonzero. `Child::id` only widened it to `u32`.
         let raw_pid = i32::try_from(child.id())
             .map_err(|_| LaunchError::new(LaunchErrorKind::ProcessGroupValidationFailed))?;
         let root_pid = NonZeroI32::new(raw_pid)
@@ -834,6 +845,14 @@ impl OwnedProcess {
         // SAFETY: `raw_pid` is positive and came from the child returned by `Command::spawn`.
         let observed_group = unsafe { libc::getpgid(raw_pid) };
         if observed_group != raw_pid {
+            // `getpgid` fails with `ESRCH` only for a root that has already exited: on Darwin it
+            // does so for an exited child that is not yet reaped (checked on macOS 27.2, 26B123).
+            // So both early returns in this branch leave no root running. A `try_wait` error here
+            // means `ECHILD`, a root already reaped (as when the parent ignores `SIGCHLD`); its
+            // pid may have been reused, so nothing may be signalled by that number. A status that
+            // `root_outcome_from_status` cannot represent is still the status of an exited root.
+            // Not covered: a member the root forked before it exited, which outlives it. These
+            // returns give up the group with the root, and that member is left unwatched.
             let launch_race_finished = if observed_group == -1
                 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
             {
@@ -850,7 +869,7 @@ impl OwnedProcess {
             };
             if launch_race_finished.is_none() {
                 child.kill().ok();
-                child.wait().ok();
+                reap_within(&mut child, CLEANUP_REAP_BOUND);
                 return Err(LaunchError::new(
                     LaunchErrorKind::ProcessGroupValidationFailed,
                 ));
@@ -1049,7 +1068,16 @@ impl Drop for OwnedProcess {
             return;
         }
         self.kill_group().ok();
-        self.child.wait().ok();
+        reap_within(&mut self.child, CLEANUP_REAP_BOUND);
+    }
+}
+
+/// Reap `child` if it exits within `bound`, polling without blocking. Returns once it is reaped,
+/// once `try_wait` fails, or once the bound passes with the child still running.
+fn reap_within(child: &mut Child, bound: Duration) {
+    let deadline = Instant::now() + bound;
+    while matches!(child.try_wait(), Ok(None)) && Instant::now() < deadline {
+        thread::sleep(CLEANUP_REAP_POLL);
     }
 }
 

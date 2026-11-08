@@ -2,13 +2,12 @@
 
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
-
 use crate::{
     AdvisoryFreshness, AdvisoryMetadata, AdvisoryMetricMetadata, AdvisoryMetrics, AdvisoryScope,
     AdvisorySource, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationGuidance,
-    FootprintSample, MemoryPressureLevel, ObservationError, ObservationFailureKind, Observed,
-    SampleOutcome, SampleWindow, UnavailableReason,
+    FootprintSample, MemoryCategories, MemoryPressureLevel, ObservationError,
+    ObservationFailureKind, Observed, PrelaunchWarning, SampleOutcome, SampleWindow,
+    UnavailableReason,
 };
 
 /// One system-wide advisory snapshot captured independently from the worker footprint.
@@ -352,17 +351,6 @@ fn snapshot_failure(kind: ObservationFailureKind) -> Observed<u64> {
     }
 }
 
-/// Non-fatal warning emitted before launch; no variant is an automatic rejection threshold.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PrelaunchWarning {
-    FootprintObservationUnavailable,
-    PressureStateUnknown,
-    MemoryPressureWarning,
-    MemoryPressureCritical,
-    AdvisorySystemMetricsPartial,
-}
-
 /// Capability and current-state evidence captured before the worker starts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PrelaunchSummary {
@@ -432,9 +420,19 @@ impl NativeAdvisoryObserver {
     }
 }
 
+/// System-wide page-queue sizes from one kernel call, so all five counts share one instant.
+#[must_use]
+pub fn memory_categories() -> Observed<MemoryCategories> {
+    native::memory_categories()
+}
+
 #[cfg(not(target_os = "macos"))]
 mod native {
-    use super::{AdvisorySnapshot, Duration, Observed, UnavailableReason};
+    use super::{AdvisorySnapshot, Duration, MemoryCategories, Observed, UnavailableReason};
+
+    pub(super) fn memory_categories() -> Observed<MemoryCategories> {
+        unavailable(UnavailableReason::NotSupported)
+    }
 
     #[derive(Debug)]
     pub(super) struct Observer {
@@ -479,8 +477,8 @@ mod native {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
     use super::{
-        AdvisorySnapshot, Duration, MemoryPressureLevel, ObservationError, Observed,
-        UnavailableReason,
+        AdvisorySnapshot, Duration, MemoryCategories, MemoryPressureLevel, ObservationError,
+        Observed, UnavailableReason,
     };
 
     const HOST_VM_INFO64: c_int = 4;
@@ -792,21 +790,44 @@ mod native {
         Observed::Available { value: usage.used }
     }
 
+    pub(super) fn memory_categories() -> Observed<MemoryCategories> {
+        read_vm_statistics().map_or(
+            Observed::Error {
+                code: ObservationError::Internal,
+            },
+            |value| Observed::Available { value },
+        )
+    }
+
     fn read_vm_bytes() -> (Observed<u64>, Observed<u64>) {
+        read_vm_statistics().map_or_else(system_error_pair, |categories| {
+            (
+                Observed::Available {
+                    value: categories.compressor_bytes,
+                },
+                Observed::Available {
+                    value: categories.wired_bytes,
+                },
+            )
+        })
+    }
+
+    /// One `host_statistics64` call, so every count comes from the same instant.
+    fn read_vm_statistics() -> Option<MemoryCategories> {
         // SAFETY: mach_host_self returns a send right for the current host.
         let host = HostPort(unsafe { mach_host_self() });
         if host.0 == 0 {
-            return system_error_pair();
+            return None;
         }
         let mut page_size = 0_usize;
         // SAFETY: page_size is writable and host is a live current-host send right.
         if unsafe { host_page_size(host.0, &raw mut page_size) } != KERN_SUCCESS {
-            return system_error_pair();
+            return None;
         }
         let mut statistics = MaybeUninit::<VmStatistics64>::zeroed();
         let Ok(mut count) = c_uint::try_from(size_of::<VmStatistics64>() / size_of::<c_int>())
         else {
-            return system_error_pair();
+            return None;
         };
         // SAFETY: count describes the integer-sized writable VM statistics buffer.
         if unsafe {
@@ -818,28 +839,28 @@ mod native {
             )
         } != KERN_SUCCESS
         {
-            return system_error_pair();
+            return None;
         }
+        // free_count, active_count and inactive_count sit before compressor_page_count, so this
+        // one bound covers all five counts.
         let required_count = (offset_of!(VmStatistics64, compressor_page_count)
             + size_of::<c_uint>())
             / size_of::<c_int>();
         if usize::try_from(count).map_or(true, |value| value < required_count) {
-            return system_error_pair();
+            return None;
         }
         // SAFETY: host_statistics64 returned at least through compressor_page_count.
         let statistics = unsafe { statistics.assume_init() };
-        let Ok(page_size) = u64::try_from(page_size) else {
-            return system_error_pair();
-        };
-        let compressor = u64::from(statistics.compressor_page_count).checked_mul(page_size);
-        let wired = u64::from(statistics.wire_count).checked_mul(page_size);
-        match (compressor, wired) {
-            (Some(compressor), Some(wired)) => (
-                Observed::Available { value: compressor },
-                Observed::Available { value: wired },
-            ),
-            _ => system_error_pair(),
-        }
+        let page_size = u64::try_from(page_size).ok()?;
+        let bytes = |pages: c_uint| u64::from(pages).checked_mul(page_size);
+        Some(MemoryCategories {
+            // free_count includes speculative pages.
+            free_bytes: bytes(statistics.free_count)?,
+            active_bytes: bytes(statistics.active_count)?,
+            inactive_bytes: bytes(statistics.inactive_count)?,
+            wired_bytes: bytes(statistics.wire_count)?,
+            compressor_bytes: bytes(statistics.compressor_page_count)?,
+        })
     }
 
     struct HostPort(c_uint);
@@ -917,6 +938,9 @@ mod native {
             assert_eq!(size_of::<SwapUsage>(), 32);
             assert_eq!(offset_of!(SwapUsage, used), 16);
             assert_eq!(size_of::<VmStatistics64>(), 192);
+            assert_eq!(offset_of!(VmStatistics64, free_count), 0);
+            assert_eq!(offset_of!(VmStatistics64, active_count), 4);
+            assert_eq!(offset_of!(VmStatistics64, inactive_count), 8);
             assert_eq!(offset_of!(VmStatistics64, wire_count), 12);
             assert_eq!(offset_of!(VmStatistics64, compressor_page_count), 128);
         }

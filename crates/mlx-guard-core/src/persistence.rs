@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ArtifactErrorRecord, CalibrationArtifact, Capabilities, CheckpointRecord, EscapeEvidence,
-    PrivacyDefaults, ReportConfiguration, ReportV1, RunIdentity, SampleWindow, SignalRecord,
-    TerminalKind, TerminalOutcome, TransitionRecord,
+    PrelaunchRecord, PrivacyDefaults, ReportConfiguration, ReportV1, RunIdentity, SampleWindow,
+    SignalRecord, TerminalKind, TerminalOutcome, TransitionRecord,
 };
 
 /// Header for the version-1 binary journal format.
@@ -228,6 +228,8 @@ pub struct JournalHeader {
     pub capabilities: Capabilities,
     pub configuration: ReportConfiguration,
     pub privacy: PrivacyDefaults,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prelaunch: Option<PrelaunchRecord>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -428,6 +430,7 @@ impl SecureJournal {
             capabilities: report.capabilities.clone(),
             configuration: report.configuration.clone(),
             privacy: report.privacy.clone(),
+            prelaunch: report.prelaunch.clone(),
         };
         self.append_next(
             JournalEntry::Header(Box::new(header)),
@@ -717,6 +720,7 @@ impl JournalRecovery {
             artifact_errors,
             outcome: outcome.ok_or_else(|| StorageError::new(StorageErrorKind::InvalidRecord))?,
             calibration,
+            prelaunch: header.prelaunch,
             privacy: header.privacy,
         };
         report
