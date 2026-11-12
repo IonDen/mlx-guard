@@ -33,7 +33,12 @@ jobs:
           test "$(awk -F '"' '/^version = / { print $2; exit }' Cargo.toml)" = "${version}"
           git merge-base --is-ancestor "${GITHUB_SHA}" origin/main
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-      - run: ./scripts/test-full.sh
+      # Real-process tests spawn CPU-stalling and allocating fixtures; run them one at a time so
+      # a hosted 3-vCPU runner does not starve one test's fixture with another test's workers.
+      - name: Run the full test suite
+        run: ./scripts/test-full.sh
+        env:
+          RUST_TEST_THREADS: "1"
       - run: ./scripts/build-release.sh dist
       - run: ./scripts/test-wheel.sh dist
       - run: (cd dist && shasum -a 256 -c SHA256SUMS)
