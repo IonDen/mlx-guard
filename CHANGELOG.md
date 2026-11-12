@@ -5,11 +5,16 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-13
+
 ### Fixed
 
 - A run that crossed the warning threshold and then ended normally could print a false "warning
-  cleared" line and, in its report, a false return to normal at 0 B. It no longer does. No stop,
-  signal or exit code was affected.
+  cleared" line and, in its report, a false return to normal at 0 B. It no longer does. The false
+  line and the false return to normal never caused a stop or a signal. The empty sample at the exit
+  is now neither counted as a missed reading nor allowed to reset the count, so when readings were
+  already being missed as a run ended, the exit code can differ from 0.5.0 in either direction. The
+  report's final footprint can still read 0 B after such a run; this release does not change that.
 
 ## [0.5.0] - 2026-11-12
 
@@ -393,7 +398,8 @@ versions follow Semantic Versioning.
   strict Python report permissions, unpredictable checkpoint request IDs, locked dependencies,
   CycloneDX SBOM, release checksums, and a self-contained Trusted Publishing workflow.
 
-[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/IonDen/mlx-guard/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/IonDen/mlx-guard/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/IonDen/mlx-guard/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/IonDen/mlx-guard/compare/v0.3.0...v0.3.1
