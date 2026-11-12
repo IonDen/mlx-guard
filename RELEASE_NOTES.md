@@ -85,3 +85,11 @@ Start with the [tutorial](https://github.com/IonDen/mlx-guard/blob/main/TUTORIAL
 [examples](https://github.com/IonDen/mlx-guard/blob/main/docs/EXAMPLES.md), then read the
 [changelog](https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md) and the
 [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md).
+
+## Fixed after 0.5.0
+
+This fix stops a false "warning cleared" line, and a false return to normal at 0 B in the report,
+after a run that crossed the warning threshold and then ended normally. The report's final footprint
+can still read 0 B after such a run; this change does not address it. The reference measurements
+were not re-run for this fix, because it changes only how the runtime handles a sample taken after
+every process in the group has exited; the sampling and policy code are unchanged.

@@ -8,16 +8,17 @@ use mlx_guard_core::{
     Actuation, ActuationFailure, ActuationOutcome, BandEvent, BandWatch, CalibrationArtifact,
     Capabilities, CheckpointArtifactRecord, CheckpointBinding, CheckpointChannel,
     CheckpointDisposition, CheckpointNonce, CheckpointRecord, CheckpointStatus,
-    CheckpointWorkerEndpoint, ChildStatus, ClientReady, EscapeEvidence, Event, FootprintSampler,
-    IdentityTracker, InterventionEngine, InterventionRecord, JournalDurability, JournalEntry,
-    JournalHeader, JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY, NativeAdvisoryObserver,
-    NativeProcessInventory, ObserveCalibration, Observed, OnParentExit, OwnedProcess, ParentWatch,
-    PersistenceAttempt, PlatformSupport, PolicyConfig, PolicyMachine, PolicyState, PrivacyDefaults,
-    ProcessIdentity, ProcessInterventionActuator, REPORT_SCHEMA_VERSION, ReportConfiguration,
-    ReportMode, ResilientJournal, RootOutcome, RunIdentity, SamplingConfig, SecureJournal,
-    SignalReason, SignalRecord, SignalResult, SignalTarget, StdinDisposition, StdioMode,
-    SupervisorOutcome, TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord,
-    UnavailableReason, VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
+    CheckpointWorkerEndpoint, ChildStatus, ClientReady, EscapeEvidence, Event, FootprintSample,
+    FootprintSampler, IdentityTracker, InterventionEngine, InterventionRecord, JournalDurability,
+    JournalEntry, JournalHeader, JournalRecord, MAX_SAMPLE_HISTORY_CAPACITY,
+    NativeAdvisoryObserver, NativeProcessInventory, ObserveCalibration, Observed, OnParentExit,
+    OwnedProcess, ParentWatch, PersistenceAttempt, PlatformSupport, PolicyConfig, PolicyMachine,
+    PolicyState, PrivacyDefaults, ProcessIdentity, ProcessInterventionActuator,
+    REPORT_SCHEMA_VERSION, ReportConfiguration, ReportMode, ResilientJournal, RootOutcome,
+    RunIdentity, SampleEvent, SampleOutcome, SamplingConfig, SecureJournal, SignalReason,
+    SignalRecord, SignalResult, SignalTarget, StdinDisposition, StdioMode, SupervisorOutcome,
+    TerminalKind, TerminalOutcome, TerminalSignalMonitor, TransitionRecord, UnavailableReason,
+    VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
 };
 use mlx_guard_core::{
     FinalizedArtifacts, PrelaunchRecord, PrelaunchWarning,
@@ -942,7 +943,7 @@ impl RunRuntime<'_> {
             .sample_native(&self.inventory, self.started)
             .clone();
         let processed_at = self.started.elapsed();
-        let policy_event = self.sampler.policy_event(&sample, processed_at);
+        let policy_event = sample_policy_event(&self.sampler, &sample, processed_at);
         let advisory = self
             .advisory
             .snapshot(processed_at, self.sample_config.max_sample_age());
@@ -958,6 +959,9 @@ impl RunRuntime<'_> {
                 JournalDurability::Buffered,
             );
         }
+        let Some(policy_event) = policy_event else {
+            return;
+        };
         self.apply_event(Event::Sample(policy_event));
         // The same time and value the transition record above carries. The line is rendered only
         // when one is due and is handed to the writer's queue, which never blocks this loop.
@@ -1398,7 +1402,7 @@ impl ObserveRuntime {
             .sample_native(&self.inventory, self.started)
             .clone();
         let processed_at = self.started.elapsed();
-        let policy_event = self.sampler.policy_event(&sample, processed_at);
+        let policy_event = sample_policy_event(&self.sampler, &sample, processed_at);
         let advisory = self
             .advisory
             .snapshot(processed_at, self.sample_config.max_sample_age());
@@ -1416,6 +1420,9 @@ impl ObserveRuntime {
                 JournalDurability::Buffered,
             );
         }
+        let Some(policy_event) = policy_event else {
+            return;
+        };
         let previous_state = self.policy.state();
         let _ = self.policy.apply(Event::Sample(policy_event));
         let current_state = self.policy.state();
@@ -2181,6 +2188,24 @@ fn run_identity(common: &CommonOptions) -> Result<RunIdentity, ()> {
 fn duration_ms(value: Duration) -> u64 {
     u64::try_from(value.as_millis()).unwrap_or(u64::MAX)
 }
+
+/// `None` for a complete sample whose member set is empty; the sampler's own event otherwise.
+fn sample_policy_event(
+    sampler: &FootprintSampler,
+    sample: &FootprintSample,
+    processed_at: Duration,
+) -> Option<SampleEvent> {
+    // Every process in the group has exited and the root is not yet reaped: nobody was measured,
+    // so the sample is neither a reading nor a missing sample. Incomplete samples with no
+    // members (a failed listing, a clock step, a root lost unseen) still reach the policy.
+    let measured_nobody =
+        sample.members.is_empty() && matches!(sample.outcome, SampleOutcome::Complete { .. });
+    (!measured_nobody).then(|| sampler.policy_event(sample, processed_at))
+}
+
+#[cfg(test)]
+#[path = "../tests/runtime_seam/empty_sample.rs"]
+mod empty_sample_tests;
 
 #[cfg(test)]
 mod tests {

@@ -109,7 +109,8 @@ A sample is usable only when it contains an aggregate, was captured no later tha
 is no older than the configured maximum age, and fits inside the configured collection window. A
 usable sample resets the missing-sample count. Missing, stale, reversed, or overly wide samples do
 not count as zero. A child's exit between two samples is not a missing sample: the sample stays
-usable over the members still alive.
+usable over the members still alive. A sample taken after every process in the group has exited,
+before the command's exit status is collected, is neither: it is left out of the policy.
 
 The collection-window and age bounds have an absolute floor — 250 ms and 500 ms — independent of the
 sampling interval. Process-tree enumeration cost scales with the tree and with machine load, so a
