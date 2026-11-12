@@ -5,6 +5,12 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+### Fixed
+
+- A run that crossed the warning threshold and then ended normally could print a false "warning
+  cleared" line and, in its report, a false return to normal at 0 B. It no longer does. No stop,
+  signal or exit code was affected.
+
 ## [0.5.0] - 2026-11-12
 
 ### Added
