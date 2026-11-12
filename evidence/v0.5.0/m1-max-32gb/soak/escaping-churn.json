@@ -1,0 +1,510 @@
+{
+  "schema_version": 1,
+  "requested_duration_seconds": 1800,
+  "actual_duration_nanoseconds": 1800013668375,
+  "sample_interval_milliseconds": 10,
+  "spawners": 6,
+  "total_samples": 126010,
+  "distinct_escapes": 163038,
+  "escaped_evidence_len": 64,
+  "cpu_seconds": 73.573965,
+  "cpu_percent_of_one_core": 4.0874114620707545,
+  "starting_footprint_bytes": 1393048,
+  "final_footprint_bytes": 3981720,
+  "footprint_growth_bytes": 2588672,
+  "maximum_resident_bytes": 5832704,
+  "p95_window_nanoseconds": 1278416,
+  "final_history_length": 256,
+  "raw_observations": [
+    {
+      "elapsed_milliseconds": 0,
+      "distinct_escapes": 0,
+      "escaped_evidence_len": 0,
+      "current_footprint_bytes": 1393048,
+      "maximum_resident_bytes": 3014656,
+      "history_length": 0
+    },
+    {
+      "elapsed_milliseconds": 30011,
+      "distinct_escapes": 2796,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 1982872,
+      "maximum_resident_bytes": 3801088,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 60011,
+      "distinct_escapes": 5499,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2015640,
+      "maximum_resident_bytes": 3866624,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 90009,
+      "distinct_escapes": 8276,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2048408,
+      "maximum_resident_bytes": 3899392,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 120013,
+      "distinct_escapes": 10960,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2081176,
+      "maximum_resident_bytes": 3932160,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 150013,
+      "distinct_escapes": 13629,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2130328,
+      "maximum_resident_bytes": 3981312,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 180006,
+      "distinct_escapes": 16333,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2163096,
+      "maximum_resident_bytes": 4014080,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 210002,
+      "distinct_escapes": 18931,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2195864,
+      "maximum_resident_bytes": 4046848,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 240008,
+      "distinct_escapes": 21683,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2228632,
+      "maximum_resident_bytes": 4079616,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 270000,
+      "distinct_escapes": 24320,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2261400,
+      "maximum_resident_bytes": 4112384,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 300014,
+      "distinct_escapes": 26963,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2294168,
+      "maximum_resident_bytes": 4145152,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 330015,
+      "distinct_escapes": 29638,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2326936,
+      "maximum_resident_bytes": 4177920,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 360008,
+      "distinct_escapes": 32362,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2359704,
+      "maximum_resident_bytes": 4210688,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 390005,
+      "distinct_escapes": 35127,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2392472,
+      "maximum_resident_bytes": 4243456,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 420010,
+      "distinct_escapes": 37835,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2425240,
+      "maximum_resident_bytes": 4276224,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 450001,
+      "distinct_escapes": 40520,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2458008,
+      "maximum_resident_bytes": 4308992,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 480006,
+      "distinct_escapes": 43243,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2490776,
+      "maximum_resident_bytes": 4341760,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 510009,
+      "distinct_escapes": 45956,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2523544,
+      "maximum_resident_bytes": 4374528,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 540006,
+      "distinct_escapes": 48618,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2556312,
+      "maximum_resident_bytes": 4407296,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 570004,
+      "distinct_escapes": 51343,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2589080,
+      "maximum_resident_bytes": 4440064,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 600008,
+      "distinct_escapes": 54016,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2638232,
+      "maximum_resident_bytes": 4489216,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 630005,
+      "distinct_escapes": 56773,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2671000,
+      "maximum_resident_bytes": 4521984,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 660000,
+      "distinct_escapes": 59476,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2703768,
+      "maximum_resident_bytes": 4554752,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 690010,
+      "distinct_escapes": 62224,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2736536,
+      "maximum_resident_bytes": 4587520,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 720001,
+      "distinct_escapes": 65021,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2769304,
+      "maximum_resident_bytes": 4620288,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 750013,
+      "distinct_escapes": 67786,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2802072,
+      "maximum_resident_bytes": 4653056,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 780010,
+      "distinct_escapes": 70410,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2834840,
+      "maximum_resident_bytes": 4685824,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 810012,
+      "distinct_escapes": 73063,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2867608,
+      "maximum_resident_bytes": 4718592,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 840012,
+      "distinct_escapes": 75794,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2900376,
+      "maximum_resident_bytes": 4751360,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 870001,
+      "distinct_escapes": 78567,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2933144,
+      "maximum_resident_bytes": 4784128,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 900009,
+      "distinct_escapes": 81332,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2965912,
+      "maximum_resident_bytes": 4816896,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 930011,
+      "distinct_escapes": 84157,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 2998680,
+      "maximum_resident_bytes": 4849664,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 960000,
+      "distinct_escapes": 86987,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3031448,
+      "maximum_resident_bytes": 4882432,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 990010,
+      "distinct_escapes": 89747,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3064216,
+      "maximum_resident_bytes": 4915200,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1020009,
+      "distinct_escapes": 92519,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3096984,
+      "maximum_resident_bytes": 4947968,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1050013,
+      "distinct_escapes": 95235,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3129752,
+      "maximum_resident_bytes": 4980736,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1080009,
+      "distinct_escapes": 98005,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3162520,
+      "maximum_resident_bytes": 5013504,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1110005,
+      "distinct_escapes": 100697,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3195288,
+      "maximum_resident_bytes": 5046272,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1140010,
+      "distinct_escapes": 103346,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3228056,
+      "maximum_resident_bytes": 5079040,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1170009,
+      "distinct_escapes": 106050,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3277208,
+      "maximum_resident_bytes": 5128192,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1200006,
+      "distinct_escapes": 108785,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3309976,
+      "maximum_resident_bytes": 5160960,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1230004,
+      "distinct_escapes": 111538,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3342744,
+      "maximum_resident_bytes": 5193728,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1260001,
+      "distinct_escapes": 114248,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3375512,
+      "maximum_resident_bytes": 5226496,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1290003,
+      "distinct_escapes": 116888,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3408280,
+      "maximum_resident_bytes": 5259264,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1320006,
+      "distinct_escapes": 119610,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3441048,
+      "maximum_resident_bytes": 5292032,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1350000,
+      "distinct_escapes": 122341,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3473816,
+      "maximum_resident_bytes": 5324800,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1380013,
+      "distinct_escapes": 125132,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3506584,
+      "maximum_resident_bytes": 5357568,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1410011,
+      "distinct_escapes": 127834,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3539352,
+      "maximum_resident_bytes": 5390336,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1440013,
+      "distinct_escapes": 130571,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3572120,
+      "maximum_resident_bytes": 5423104,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1470012,
+      "distinct_escapes": 133309,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3604888,
+      "maximum_resident_bytes": 5455872,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1500000,
+      "distinct_escapes": 135981,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3637656,
+      "maximum_resident_bytes": 5488640,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1530001,
+      "distinct_escapes": 138709,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3670424,
+      "maximum_resident_bytes": 5521408,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1560003,
+      "distinct_escapes": 141414,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3703192,
+      "maximum_resident_bytes": 5554176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1590009,
+      "distinct_escapes": 144133,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3735960,
+      "maximum_resident_bytes": 5586944,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1620013,
+      "distinct_escapes": 146762,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3768728,
+      "maximum_resident_bytes": 5619712,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1650008,
+      "distinct_escapes": 149523,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3801496,
+      "maximum_resident_bytes": 5652480,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1680004,
+      "distinct_escapes": 152236,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3834264,
+      "maximum_resident_bytes": 5685248,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1710001,
+      "distinct_escapes": 154858,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3867032,
+      "maximum_resident_bytes": 5718016,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1740003,
+      "distinct_escapes": 157558,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3899800,
+      "maximum_resident_bytes": 5750784,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1770011,
+      "distinct_escapes": 160269,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3948952,
+      "maximum_resident_bytes": 5799936,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1800013,
+      "distinct_escapes": 163038,
+      "escaped_evidence_len": 64,
+      "current_footprint_bytes": 3981720,
+      "maximum_resident_bytes": 5832704,
+      "history_length": 256
+    }
+  ],
+  "tight_bounds_applied": true,
+  "reference_run": true
+}

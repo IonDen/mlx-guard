@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mlx_guard_cli::{RuntimeResult, execute, parse_cli};
+use mlx_guard_cli::{Notices, RuntimeResult, execute, parse_cli};
 use mlx_guard_core::{
     CheckpointStatus, ChildStatus, PolicyState, ReportV1, SignalReason, SignalResult,
     SupervisorOutcome, TerminalKind, checkpoint_signal_usr1,
@@ -116,7 +116,7 @@ fn run_under_wall_limit(command: &[&str]) -> Run {
     let parsed = parse_cli(arguments).unwrap();
 
     let marker = InterruptMarker::create(marker_path);
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
     drop(marker);
 
     let report = ReportV1::from_json(&fs::read_to_string(&report_path).unwrap()).unwrap();
@@ -221,8 +221,10 @@ fn a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention() {
         ],
         "{report:#?}"
     );
-    // The plain lines may not claim the TERM stopped the command: it met an ended group. Red if
-    // a `process_missing` TERM is told as "sent SIGTERM to its process group".
+    // The plain lines say only what the records show: the TERM found no process in the group,
+    // and no root-exit record orders the worker's exit before it. Red if a `process_missing` TERM
+    // is told as "sent SIGTERM to its process group" or as "the command ended before the
+    // SIGTERM", or if the open request is said to have lasted until the command ended.
     let request_id = report
         .checkpoint
         .request_id
@@ -230,10 +232,11 @@ fn a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention() {
     let expected_stderr = plain_lines(
         &format!(
             "the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to \
-             save a checkpoint at {}; the command ended before the SIGTERM that followed could \
-             reach it. The command had not acknowledged checkpoint request {request_id} when it \
-             ended.",
-            spoken_ms(first_at_ms(&report, checkpoint_signal_usr1().get()))
+             save a checkpoint at {} and then found no process left in the command's process \
+             group when it sent SIGTERM at {}. The command had not acknowledged checkpoint \
+             request {request_id} by the end of the run.",
+            spoken_ms(first_at_ms(&report, checkpoint_signal_usr1().get())),
+            spoken_ms(first_at_ms(&report, 15))
         ),
         WALL_TO_DO,
         "75-the-wall-time-limit",
@@ -257,7 +260,7 @@ fn a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention() {
 #[test]
 fn a_terminal_signal_while_the_group_dies_does_not_fail_the_supervisor() {
     // Catches the KILL a second terminal event asks for being reported as a delivery failure when
-    // the TERM before it already ended every live member of the group.
+    // it finds no process left in the group after the delivered TERM.
     let Run {
         result,
         report,

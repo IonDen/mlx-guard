@@ -2,6 +2,7 @@
 
 #[cfg(unix)]
 mod advisory;
+mod band;
 #[cfg(unix)]
 mod checkpoint;
 pub mod explain;
@@ -18,7 +19,9 @@ mod process_control;
 mod report;
 #[cfg(unix)]
 mod sampling;
+pub mod warnings;
 
+pub use band::{BAND_LINE_INTERVAL, BandEvent, BandWatch};
 #[cfg(unix)]
 pub use checkpoint::{
     CHECKPOINT_FD_ENV, CHECKPOINT_PROTOCOL_VERSION, CheckpointAcknowledgement,
@@ -64,11 +67,11 @@ pub use report::{
     AdvisorySource, ArtifactErrorCode, ArtifactErrorRecord, ArtifactKind,
     CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationError, CalibrationGuidance,
     Capabilities, CapturePolicy, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus,
-    ChildStatus, EscapeEvidence, MemoryPressureLevel, ObservationError, Observed, OnParentExit,
-    ParentWatch, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError,
-    ReportMode, ReportV1, RetentionPolicy, RunIdentity, SampleWindow, SignalReason, SignalRecord,
-    SignalResult, SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
-    UploadPolicy,
+    ChildStatus, EscapeEvidence, MemoryCategories, MemoryPressureLevel, ObservationError, Observed,
+    OnParentExit, ParentWatch, PrelaunchRecord, PrelaunchWarning, PrivacyDefaults,
+    REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1, RetentionPolicy,
+    RunIdentity, SampleWindow, SignalReason, SignalRecord, SignalResult, SignalTarget,
+    TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason, UploadPolicy,
 };
 #[cfg(unix)]
 pub use sampling::{
@@ -82,5 +85,5 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 #[cfg(unix)]
 pub use advisory::{
     AdvisorySnapshot, NativeAdvisoryObserver, ObserveCalibration, PrelaunchSummary,
-    PrelaunchWarning,
+    memory_categories,
 };

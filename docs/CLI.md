@@ -127,6 +127,66 @@ executable name, or command output. The [troubleshooting page](TROUBLESHOOTING.m
 case. The wording may change between releases; the prefixes, the placement, and the privacy rule are
 stable (see [STABILITY](STABILITY.md)).
 
+## Warnings during a run
+
+Since 0.5.0, `run` prints a line on stderr when the footprint climbs close to the limit, before
+`mlx-guard` has stopped anything. `observe` prints none of them, because it has no limit. There are
+three lines, shown here with example values (the first ends with `More:` and a link to
+[the troubleshooting page](TROUBLESHOOTING.md#warnings-during-a-run)):
+
+```text
+mlx-guard: warning: the OS-accounted footprint reached 5.42 GiB at 12.3 s, at or above the 5.40 GiB warning threshold for your 6.00 GiB limit; 2 samples in a row at or above the limit stop the command, and 1 sample at or above the 6.60 GiB emergency threshold kills it at once, with no checkpoint.
+mlx-guard: warning: the OS-accounted footprint is 5.51 GiB at 5 min 12 s and has not fallen to the 4.80 GiB recovery threshold since 12.3 s; your limit is 6.00 GiB.
+mlx-guard: warning cleared: the OS-accounted footprint fell to 4.79 GiB at 50.1 s, at or below the 4.80 GiB recovery threshold for your 6.00 GiB limit.
+```
+
+The first line appears when a sample first reaches the warning threshold, 10 % of the limit below the
+limit (see the [policy contract](POLICY.md#runtime-defaults)). The second repeats while the footprint
+has not come back down to the recovery threshold, 20 % below the limit, and it prints at most once
+every 5 minutes. The third appears when the footprint does come back down, but only if an earlier
+line already told you about that climb. There is no option to change the 5 minutes or to turn the
+lines off.
+
+A footprint that rises and falls often still produces at most two of these lines in any 5 minutes.
+A climb that starts inside that quiet time prints nothing at first; the second line then reports it
+once the time is up, and its "since" time is when the climb began. A sample at or above the emergency
+threshold from a normal state kills the command at once and prints no warning.
+
+A warning changes nothing about when the command is stopped. Once `mlx-guard` starts stopping the
+command (limit, wall time, parent exit, or a signal), the warnings end and the plain outcome lines
+above describe the stop. Everything the warnings say is also in the report: the `transitions` list
+holds each crossing with its time and footprint.
+
+The lines hold only numbers `mlx-guard` measured and fixed text. They never contain the command or its
+arguments, environment values, paths, or command output. The bytes are the same on a terminal, in a
+pipe, and in a file. Each line is written in one piece, but if the command has just printed part of a
+line (a progress bar, say), the warning follows it on the same line.
+
+Delivery is best effort. If whatever reads stderr has stopped reading, up to 8 lines wait and any
+further ones are dropped, because watching memory matters more than printing about it. If the reader
+starts again, it gets the waiting lines first and the two plain outcome lines after them. When the
+command ends normally and no plain lines follow, `mlx-guard` waits at most a quarter of a second for
+waiting lines and then exits, so they can be lost. Never rely on a warning line being delivered; read
+the report. The wording may change between releases (see [STABILITY](STABILITY.md)).
+
+### The launch line
+
+`run` can print one more line, right after the start-of-run notice and before the command does
+any work. Just before launch it reads how much memory macOS has not locked as wired (free,
+speculative included, plus active, inactive, and held by the compressor). If your limit is more than
+that number, it prints this and then runs the command with the limit as given:
+
+```text
+mlx-guard: warning: your limit of 30.00 GiB is more than the 28.31 GiB macOS reported as not wired just before launch, so a run that reaches it may not fit in memory on this Mac. That number is one estimate at one moment and counts every other program's memory as room. mlx-guard runs with your limit as given. More: https://github.com/IonDen/mlx-guard/blob/v0.5.0/docs/TROUBLESHOOTING.md#warnings-during-a-run
+```
+
+It never refuses to run and changes no limit. If macOS gives no number, nothing is printed. A launch
+that fails prints no line, but its report still holds the number. `observe` prints nothing new.
+No line does not mean the run fits. The report records the number under `prelaunch`, and records
+`limit_may_not_fit` whenever the limit is more than that number, including when the launch failed
+and no line was printed (see [REPORTS](REPORTS.md)). The line follows the same privacy and delivery
+rules as the other warnings, and the wording may change between releases.
+
 ## Signals, terminal, and stdio
 
 The native parent handles SIGHUP, SIGINT, and SIGTERM. The first terminal signal is forwarded
@@ -154,6 +214,12 @@ command that must read the terminal cannot run under `mlx-guard`, because the co
 own process group and a read from the terminal would stop it. Any other stdin (a file, a pipe, or
 an explicit `< /dev/null`) is passed on unchanged and silently. Foreground transfer, Ctrl-Z, SIGTSTP,
 SIGCONT, and shell-style job control are not supported.
+
+The start-of-run notice, the stdin notice, and the [warnings](#warnings-during-a-run) are written by
+a separate thread, so a slow or stuck stderr reader cannot delay sampling. That reader delays only
+the final lines: the stdout summary line is written first, and the plain outcome lines wait for any
+line already being written. If the reader has gone away, `mlx-guard` ignores the failed writes. It
+keeps the exit code and writes the report.
 
 ## Examples
 

@@ -9,7 +9,7 @@ use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mlx_guard_cli::{execute, parse_cli};
+use mlx_guard_cli::{Notices, execute, parse_cli};
 use mlx_guard_core::{
     ArtifactKind, CheckpointArtifactRecord, CheckpointStatus, ChildStatus, PolicyState, ReportV1,
     SignalReason, SignalResult, SignalTarget, SupervisorOutcome, TerminalKind,
@@ -120,7 +120,7 @@ fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
     ])
     .unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
@@ -220,7 +220,7 @@ fn a_worker_reported_artifact_reaches_the_report_verbatim() {
     ])
     .unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
@@ -272,7 +272,7 @@ fn a_worker_that_never_negotiates_records_the_cause_without_a_request_id() {
     ])
     .unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
@@ -316,7 +316,7 @@ fn observe_ends_at_root_exit_leaves_survivors_running_and_reports_it() {
     ])
     .unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     assert_eq!(result.outcome, SupervisorOutcome::ChildExited(23));
     assert_eq!(
@@ -376,7 +376,7 @@ fn unavailable_supervisor_signal_control_finalizes_before_worker_launch() {
     ])
     .unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     assert_eq!(result.outcome, SupervisorOutcome::SupervisorFailure);
     // The diagnostic stays first; the start-failure lines follow it. Red if a zero-sample
@@ -426,7 +426,7 @@ fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
     ])
     .unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
@@ -495,7 +495,7 @@ fn escaped_descendant_is_reported_as_containment_uncertainty() {
     ])
     .unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();

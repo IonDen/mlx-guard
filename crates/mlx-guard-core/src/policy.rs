@@ -556,6 +556,10 @@ impl PolicyMachine {
     }
 
     fn apply_external_signal(&mut self, at: Duration, signal: SignalNumber) -> Vec<Action> {
+        // A terminal signal during a shutdown escalates to KILL, and every further one sends KILL
+        // again, from `Emergency` too. This is deliberate: KILL is idempotent on the owned group,
+        // and each executed action leaves its own signal record, so returning nothing once KILL
+        // was sent would drop the record of the signals that came after it.
         if matches!(
             self.state,
             PolicyState::Terminating | PolicyState::SupervisorError | PolicyState::Emergency
@@ -564,12 +568,17 @@ impl PolicyMachine {
             self.intervention_started = true;
             return vec![Action::SendKill];
         }
+        self.enter_terminating(at);
+        vec![Action::ForwardSignal(signal)]
+    }
+
+    /// Start the TERM grace at `at`, dropping any checkpoint request in flight.
+    fn enter_terminating(&mut self, at: Duration) {
         self.active_request_id = None;
         self.checkpoint_deadline = None;
         self.state = PolicyState::Terminating;
         self.intervention_started = true;
         self.term_deadline = Some(at.saturating_add(self.config.term_grace));
-        vec![Action::ForwardSignal(signal)]
     }
 
     /// Clean up owned-group survivors after the root command has already exited.
@@ -584,11 +593,7 @@ impl PolicyMachine {
         ) {
             return Vec::new();
         }
-        self.active_request_id = None;
-        self.checkpoint_deadline = None;
-        self.state = PolicyState::Terminating;
-        self.intervention_started = true;
-        self.term_deadline = Some(at.saturating_add(self.config.term_grace));
+        self.enter_terminating(at);
         vec![Action::SendTerm {
             checkpoint: CheckpointDisposition::SkippedRootExited,
         }]
@@ -604,11 +609,7 @@ impl PolicyMachine {
         if !matches!(self.state, PolicyState::Normal | PolicyState::Warning) {
             return Vec::new();
         }
-        self.active_request_id = None;
-        self.checkpoint_deadline = None;
-        self.state = PolicyState::Terminating;
-        self.intervention_started = true;
-        self.term_deadline = Some(at.saturating_add(self.config.term_grace));
+        self.enter_terminating(at);
         vec![Action::SendTerm {
             checkpoint: CheckpointDisposition::SkippedParentExited,
         }]

@@ -573,12 +573,15 @@ with worker:
 
         checkpoint = result.report.payload["checkpoint"]
         # `run` prints the emergency-band banner on stderr as it launches; whether it reaches the
-        # captured buffer is timing-dependent, so tolerate it being present or absent. After it,
-        # the only lines are the two plain-outcome lines, and the Python field carries the same
-        # text (a second parity check on a real run). Catches an extra or reordered native line,
-        # or the field disagreeing with the CLI on an acknowledged checkpoint.
+        # captured buffer is timing-dependent, so tolerate it being present or absent. A 1 TiB
+        # limit is more than any Mac's launch estimate, so the fit line follows the banner. After
+        # them, the only lines are the two plain-outcome lines, and the Python field carries the
+        # same text (a second parity check on a real run). Catches an extra or reordered native
+        # line, or the field disagreeing with the CLI on an acknowledged checkpoint.
         lines = [line for line in (result.stderr or b"").decode("utf-8").splitlines() if line]
         if lines and "emergency KILL" in lines[0]:
+            lines = lines[1:]
+        if lines and lines[0].startswith("mlx-guard: warning: your limit of "):
             lines = lines[1:]
         self.assertEqual(len(lines), 2, result.stderr)
         self.assertTrue(lines[0].startswith("mlx-guard: what happened: "), result.stderr)
@@ -910,6 +913,8 @@ with worker:
         )
         decoded = json.loads(fixture.read_text(encoding="utf-8"))
         self.assertEqual(decoded["checkpoint"]["request_id"], 42)
+        self.assertEqual(decoded["checkpoint"]["reason"], "footprint")
+        self.assertEqual(decoded["checkpoint"]["artifact"], {"kind": "file", "size_bytes": 1048576})
         # The loader also cross-checks package_version against the installed binary, so pin it to
         # what is installed and keep this test about resume metadata, not the release version bump.
         decoded["package_version"] = mlx_guard.binary_version()
@@ -926,6 +931,13 @@ with worker:
         self.assertIsInstance(checkpoint, Mapping)
         assert isinstance(checkpoint, Mapping)
         self.assertEqual(checkpoint["request_id"], 42)
+        # A reader that keeps request_id but drops the reason or the artifact sub-object leaves a
+        # consumer unable to tell why the checkpoint ran or what it saved.
+        self.assertEqual(checkpoint["reason"], "footprint")
+        artifact = checkpoint["artifact"]
+        self.assertIsInstance(artifact, Mapping)
+        assert isinstance(artifact, Mapping)
+        self.assertEqual(dict(artifact), {"kind": "file", "size_bytes": 1048576})
 
 
 def _native_plain_lines(stderr: bytes | None) -> str | None:

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use mlx_guard_cli::{RuntimeResult, execute, parse_cli};
+use mlx_guard_cli::{Notices, RuntimeResult, execute, parse_cli};
 use mlx_guard_core::{
     CheckpointStatus, ChildStatus, PolicyState, ReportV1, SignalReason, SupervisorOutcome,
     TerminalKind, checkpoint_signal_usr1,
@@ -65,7 +65,7 @@ fn run_report_under_limit(max_footprint: &str, extra: &[&str]) -> (RuntimeResult
     arguments.extend_from_slice(extra);
     let parsed = parse_cli(arguments).unwrap();
 
-    let result = execute(parsed);
+    let result = execute(parsed, &mut Notices::default());
 
     let report = ReportV1::from_json(&fs::read_to_string(&report_path).unwrap()).unwrap();
     (result, report)

@@ -12,6 +12,7 @@ use std::process::ExitCode;
 use std::process::{Command, Stdio};
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -27,6 +28,9 @@ const PROTOCOL_EXIT: u8 = 65;
 const FIXTURE_EXIT: u8 = 70;
 const ARTIFACT_EXIT: u8 = 74;
 const TIMEOUT_EXIT: i32 = 124;
+
+/// How long the wall-time watchdog lets its stderr notice take before it exits anyway.
+const WATCHDOG_NOTICE_GRACE: Duration = Duration::from_millis(100);
 
 /// Wall time each `escape-flood` member gets after it announces its own escape.
 ///
@@ -115,6 +119,7 @@ fn run() -> Result<(), RunError> {
         "fanout-ignore-term" => run_fanout_ignore_term(limits),
         "fanout-ignore-term-member" => run_fanout_ignore_term_member(),
         "idle-stall" => run_idle_stall(),
+        "leave-group" => run_leave_group(),
         "spawn-churn" => run_spawn_churn(),
         "double-fork" => run_double_fork(limits),
         "double-fork-intermediate" => run_double_fork_intermediate(limits),
@@ -125,6 +130,7 @@ fn run() -> Result<(), RunError> {
         "setsid-stall" => run_setsid_stall(),
         "setsid-churn" => run_setsid_churn(limits),
         "fast-root-exit" => run_fast_root_exit(limits),
+        // The "bytes" argument is reused here as the delay in milliseconds from TERM to exit.
         "term-then-exit" => run_term_then_exit(limits),
         "checkpoint-parent" => run_checkpoint_parent(limits),
         "checkpoint-success" => run_checkpoint_worker("success", limits),
@@ -158,7 +164,20 @@ fn parse_u64(value: Option<String>, name: &str) -> Result<u64, RunError> {
 fn start_watchdog(wall_time: Duration) {
     thread::spawn(move || {
         thread::sleep(wall_time);
-        eprintln!("fixture wall-time ceiling reached");
+        // The bug this replaces: `eprintln!("fixture wall-time ceiling reached");` ahead of the
+        // exit. It blocked on a full stderr pipe and panicked on a closed one, ending only this
+        // thread, so a parked fixture outlived its ceiling. The notice is now best effort, written
+        // from its own thread, and the exit does not wait for it longer than the grace below.
+        let (written, notice_done) = mpsc::channel();
+        let notice = thread::Builder::new().spawn(move || {
+            io::stderr()
+                .write_all(b"fixture wall-time ceiling reached\n")
+                .ok();
+            written.send(()).ok();
+        });
+        if notice.is_ok() {
+            notice_done.recv_timeout(WATCHDOG_NOTICE_GRACE).ok();
+        }
         std::process::exit(TIMEOUT_EXIT);
     });
 }
@@ -386,6 +405,33 @@ fn run_fanout_ignore_term_member() -> Result<(), RunError> {
 }
 
 fn run_idle_stall() -> Result<(), RunError> {
+    loop {
+        thread::park();
+    }
+}
+
+// Move this process, the leader of the group it was launched into, to its parent's group in the
+// same session, then stay alive until the wall-time watchdog ends it. A signal sent to the
+// launched group then no longer reaches this process.
+fn run_leave_group() -> Result<(), RunError> {
+    // SAFETY: getppid and getpgid take no pointers; failure is checked before use.
+    let parent_group = unsafe { libc::getpgid(libc::getppid()) };
+    if parent_group == -1 {
+        return Err(RunError::fixture(format!(
+            "getpgid of parent failed: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    // SAFETY: as above; joins an existing group of this session.
+    if unsafe { libc::setpgid(0, parent_group) } == -1 {
+        return Err(RunError::fixture(format!(
+            "setpgid refused: {}",
+            io::Error::last_os_error()
+        )));
+    }
+    // SAFETY: getpgrp has no preconditions.
+    let group = unsafe { libc::getpgrp() };
+    write_phase(&format!("LEFT-GROUP pgid={group}"))?;
     loop {
         thread::park();
     }

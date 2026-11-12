@@ -51,6 +51,12 @@ Their presence follows the checkpoint status:
 | `acknowledged_unverified_durability` | present | present | present when the worker's acknowledgement supplied one |
 | `cancelled` | absent (delivery failed; the worker was never signalled) | present | absent |
 
+`not_negotiated` means no checkpoint request was sent to a worker. Usually the command never
+connected one, so there was no endpoint to send to; it is also the status of a run that ended before
+any checkpoint was attempted, including a launch that failed. `cancelled` means a worker had been negotiated, but mlx-guard could
+not deliver the checkpoint request, so the worker was never signalled and the run went on to TERM
+without it.
+
 Validation only constrains fields that are present, never their absence, so every report written
 before these fields existed keeps parsing: a present `request_id` must be nonzero and its status
 must be one where a frame was actually delivered (`requested_unverified`,
@@ -73,8 +79,12 @@ they existed.
 
 A signal attempt's `result` is `process_missing` when the target was already gone. In `run`, that
 includes a group signal refused only because the group had ended: every member exited and none was
-reaped yet. In `run`, `permission_denied` is recorded only when a live member remained. `observe`
-records a group signal as delivered or refused, without that liveness check. Schema v1 is unchanged.
+reaped yet. The plain outcome lines say the command had already ended only when the report also
+holds a `root_exit_cleanup` signal record at or before that signal; otherwise they say the signal
+found no process left in the group, because a command that moved into another process group leaves
+the same records. In `run`, `permission_denied` is recorded only when a live member remained.
+`observe` records a group signal as delivered or refused, without that liveness check. Schema v1 is
+unchanged.
 
 `configuration.on_parent_exit` records the requested behavior when the process that launched
 `mlx-guard` exits: `terminate` or `detach`. `configuration.parent_watch` records whether, and how,
@@ -113,6 +123,21 @@ chosen from. The section is present only on observe reports; it is absent from e
 from reports written before this release, and validation accepts a report without it. When present,
 it must be an observe report and the artifact's own invariants must hold.
 
+A `run` report can carry an optional `prelaunch` field, added in 0.5.0. It holds
+`memory_estimate`, the memory macOS had not locked as wired just before the launch (an observed
+value); `memory_categories`, the page counts behind it (`free_bytes`, `active_bytes`,
+`inactive_bytes`, `wired_bytes`, and `compressor_bytes`); and `warnings`, which holds
+`limit_may_not_fit` whenever the limit is more than the estimate. The line itself prints only after
+a successful launch, so a failed launch records the entry without a line, and a line that could not
+be written is still recorded (see [the launch line](TROUBLESHOOTING.md#the-launch-line)). The field
+is absent from `observe` reports and from reports written before 0.5.0, and validation accepts a
+report without it. When present, it must be on a `run` report, and `limit_may_not_fit` is accepted
+only when the estimate is available. Validation does not compare the estimate with the limit. What
+the number adds up and when the line fires belong to the release that wrote the report, named by
+`package_version`, so do not recompute the comparison from the fields. The field records one
+estimate at one moment. It does not certify that a run fits in memory, and its absence or an empty
+`warnings` list does not mean the run fit. Schema version 1 is unchanged.
+
 Advisory values retain their original schema-v1 fields. New writers may also add `pressure_level`
 and per-field `metadata` with the metric scope, public API source, observation timestamp, and
 freshness. Readers remain compatible with earlier schema-v1 reports where those additive fields are
@@ -133,11 +158,19 @@ journal for survival.
 
 The two plain outcome lines on stderr (see the [CLI contract](CLI.md#plain-outcome-lines)) print only
 the report fields named in this paragraph, plus fixed text (choosing which sentence to print also
-reads the run mode, each transition's from and to states, and `checkpoint.reason`): `outcome` (kind, code, time, child
-status, parent exit time), the numeric `configuration` values, the footprint value and time of each
-`transitions` entry, each `signals` record's signal number, target, result, reason and time, the
-`checkpoint` status and request id, and the status of the last sample. They never contain argv,
-environment values, paths (including the `--report` path), the executable name, or command output.
+reads the run mode, each transition's from and to states, and `checkpoint.reason`): `outcome` (kind,
+code, time, child status, parent exit time), the numeric `configuration` values, the footprint value
+and time of each `transitions` entry, each `signals` record's signal number, target, result, reason
+and time, the `checkpoint` status and request id, and the status of the last sample. They never
+contain argv, environment values, paths (including the `--report` path), the executable name, or
+command output.
+
+The warning lines that `run` prints during a run (see
+[warnings during a run](CLI.md#warnings-during-a-run)) follow the same rule. They hold only
+footprint values, thresholds, the limit, sample counts, and times that mlx-guard measured or was
+configured with, plus fixed text. The same values are in the report under `configuration` and
+`transitions`. The launch line follows the rule too: it holds the limit and the memory estimate,
+which is in the report under `prelaunch`.
 
 Raw sensitive capture is not available, even as an opt-in. The only explicit capture
 option is a correlation hash with the form `sha256:` followed by 64 lowercase hexadecimal digits.

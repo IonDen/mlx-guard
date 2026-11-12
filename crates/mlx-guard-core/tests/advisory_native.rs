@@ -8,7 +8,7 @@ use std::time::Instant;
 use mlx_guard_core::UnavailableReason;
 #[cfg(target_os = "macos")]
 use mlx_guard_core::{AdvisoryFreshness, AdvisorySource, ObservationError};
-use mlx_guard_core::{NativeAdvisoryObserver, Observed};
+use mlx_guard_core::{NativeAdvisoryObserver, Observed, memory_categories};
 
 #[test]
 #[cfg(target_os = "macos")]
@@ -89,6 +89,67 @@ fn unsupported_platform_returns_typed_unavailability() {
     );
     assert_eq!(
         metrics.pressure_events,
+        Observed::Unavailable {
+            reason: UnavailableReason::NotSupported,
+        }
+    );
+}
+
+#[cfg(target_os = "macos")]
+fn hw_memsize() -> u64 {
+    let output = std::process::Command::new("/usr/sbin/sysctl")
+        .args(["-n", "hw.memsize"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "sysctl hw.memsize failed");
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn memory_categories_read_a_plausible_number_on_this_host() {
+    // Catches counts multiplied by the wrong page size, read at the wrong offset from a stale
+    // struct, or an available reading of 0: the five counts are disjoint page queues, so their sum
+    // stays below physical memory, and a live Mac always has pages on them.
+    let Observed::Available { value: categories } = memory_categories() else {
+        panic!("memory categories unavailable: {:?}", memory_categories());
+    };
+    let memsize = hw_memsize();
+    let estimate = categories.estimate();
+    eprintln!(
+        "free_bytes={} active_bytes={} inactive_bytes={} wired_bytes={} compressor_bytes={} \
+         estimate={estimate} hw.memsize={memsize}",
+        categories.free_bytes,
+        categories.active_bytes,
+        categories.inactive_bytes,
+        categories.wired_bytes,
+        categories.compressor_bytes,
+    );
+    assert!(estimate > 0);
+    assert!(categories.wired_bytes > 0);
+    let sum = [
+        categories.free_bytes,
+        categories.active_bytes,
+        categories.inactive_bytes,
+        categories.wired_bytes,
+        categories.compressor_bytes,
+    ]
+    .iter()
+    .try_fold(0_u64, |total, value| total.checked_add(*value))
+    .unwrap();
+    assert!(sum < memsize, "sum {sum} is not below hw.memsize {memsize}");
+}
+
+#[test]
+#[cfg(not(target_os = "macos"))]
+fn memory_categories_are_typed_unavailable_off_macos() {
+    // Catches a non-macOS arm that reports zeros, which would read as no room at all.
+    assert_eq!(
+        memory_categories(),
         Observed::Unavailable {
             reason: UnavailableReason::NotSupported,
         }

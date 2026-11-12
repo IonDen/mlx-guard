@@ -21,7 +21,9 @@ failure (exit 70).
 The root and group have separate lifecycles. `wait_root` preserves the root's normal exit code or
 terminating signal even when descendants remain. The supervisor retains the validated PGID after a
 fast root exit so cleanup can still target the remaining group. Dropping an `OwnedProcess` sends
-SIGKILL to that group and reaps the root as a final best-effort cleanup path.
+SIGKILL to that group and waits at most 2 seconds to reap the root, as a final best-effort cleanup
+path. A root that the signal cannot reach (it moved to another process group, it is a setuid program,
+or it is stuck in the kernel) may still be running when mlx-guard exits.
 
 This is an owned-group boundary, not arbitrary daemon containment. A descendant can call `setsid`
 and escape. PID reuse and descendant identity evidence require the additional identity tracker.
@@ -105,8 +107,11 @@ The CLI inherits stdin, stdout, and stderr. If inherited stdin is a terminal, th
 does not implement foreground process-group transfer and restoration: a root in its own process
 group that read the terminal would be stopped by SIGTTIN. A piped or null stdin, and an inherited
 stdin that is not a terminal, are passed on unchanged. `OwnedProcess::stdin_disposition` reports
-which case applied. Piped and null streams are available to integrations and tests. Child stdout and stderr remain
-application data and are never interpreted as checkpoint or supervisor control messages.
+which case applied. During a `run`, the supervisor may also print warning lines on stderr (see
+[warnings during a run](CLI.md#warnings-during-a-run)); they come from a separate writer thread and
+never block sampling. Piped and null streams are available to integrations and tests. Child stdout
+and stderr remain application data and are never interpreted as checkpoint or supervisor control
+messages.
 
 ## Launch and wait results
 

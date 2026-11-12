@@ -5,10 +5,11 @@ use mlx_guard_core::{
     AdvisoryMetrics, AdvisoryScope, AdvisorySnapshot, ArtifactErrorCode, ArtifactErrorRecord,
     ArtifactKind, CALIBRATION_SCHEMA_VERSION, CalibrationArtifact, CalibrationGuidance,
     Capabilities, CheckpointArtifactRecord, CheckpointRecord, CheckpointStatus, ChildStatus,
-    EscapeEvidence, MemoryPressureLevel, ObservationError, Observed, OnParentExit, ParentWatch,
-    PolicyState, PrivacyDefaults, REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError,
-    ReportMode, ReportV1, RunIdentity, SampleWindow, SignalReason, SignalRecord, SignalResult,
-    SignalTarget, TerminalKind, TerminalOutcome, TransitionRecord, UnavailableReason,
+    EscapeEvidence, MemoryCategories, MemoryPressureLevel, ObservationError, Observed,
+    OnParentExit, ParentWatch, PolicyState, PrelaunchRecord, PrelaunchWarning, PrivacyDefaults,
+    REPORT_SCHEMA_VERSION, ReportConfiguration, ReportError, ReportMode, ReportV1, RunIdentity,
+    SampleWindow, SignalReason, SignalRecord, SignalResult, SignalTarget, TerminalKind,
+    TerminalOutcome, TransitionRecord, UnavailableReason,
 };
 
 fn identity() -> RunIdentity {
@@ -112,6 +113,7 @@ fn report() -> ReportV1 {
             parent_exited_at_ms: None,
         },
         calibration: None,
+        prelaunch: None,
         privacy,
     }
 }
@@ -526,6 +528,11 @@ fn awkward_exit_fields_round_trip_byte_exact() {
     // Catches dropping child_status, owned_group_survivors, or a signal reason on either side of
     // JSON serialization. This is a schema-level round trip; it does not exercise
     // `From<RootOutcome> for ChildStatus` (see `report::tests` for that direct coverage).
+    //
+    // The fixture is a deliberate composite that no single run writes: an `enforce` configuration
+    // and a `root_exit_cleanup` signal from `run`, next to `owned_group_survivors`, which only
+    // `observe` sets. It exercises the schema, not one run's shape. JSON has no comments, and the
+    // byte-exact round trip below would reject an added field, so the note lives here.
     let json = include_str!("fixtures/report-v1-awkward.json");
     let report = ReportV1::from_json(json).unwrap();
     assert_eq!(
@@ -554,4 +561,214 @@ fn parent_fields_round_trip_byte_exact() {
     assert_eq!(report.signals[0].reason, Some(SignalReason::ParentExit));
     assert_eq!(report.outcome.parent_exited_at_ms, Some(120));
     assert_eq!(report.to_json_pretty().unwrap(), json);
+}
+
+/// One field per decimal digit, so the estimate shows at a glance which categories it added.
+fn digit_categories() -> MemoryCategories {
+    MemoryCategories {
+        free_bytes: 1,
+        active_bytes: 10,
+        inactive_bytes: 100,
+        wired_bytes: 1_000,
+        compressor_bytes: 10_000,
+    }
+}
+
+/// The counts of the worked example in the report contract (Q5 of the 0107 plan).
+fn worked_example_categories() -> MemoryCategories {
+    MemoryCategories {
+        free_bytes: 310_263_808,
+        active_bytes: 11_716_935_680,
+        inactive_bytes: 11_692_703_744,
+        wired_bytes: 3_135_979_520,
+        compressor_bytes: 6_607_978_496,
+    }
+}
+
+fn available(categories: MemoryCategories) -> Observed<MemoryCategories> {
+    Observed::Available { value: categories }
+}
+
+#[test]
+fn the_estimate_adds_exactly_the_decided_categories() {
+    // Catches wired pages counted as room (11_111), or free, active, inactive or compressor left
+    // out (10_110, 10_101, 10_011, 111): each changes the number by GiB on a real host.
+    assert_eq!(digit_categories().estimate(), 10_111);
+    assert_eq!(worked_example_categories().estimate(), 30_327_881_728);
+}
+
+#[test]
+fn the_estimate_saturates_instead_of_overflowing() {
+    // Catches plain `+`, which panics in a debug build and wraps to a tiny number in release.
+    let huge = MemoryCategories {
+        free_bytes: u64::MAX,
+        active_bytes: u64::MAX,
+        inactive_bytes: u64::MAX,
+        wired_bytes: 0,
+        compressor_bytes: u64::MAX,
+    };
+    assert_eq!(huge.estimate(), u64::MAX);
+}
+
+#[test]
+fn limit_above_the_estimate_records_the_warning() {
+    // Catches an inverted comparison, and a record that drops the number behind the warning.
+    let record = PrelaunchRecord::for_limit(10_112, available(digit_categories()));
+    assert_eq!(record.warnings, [PrelaunchWarning::LimitMayNotFit]);
+    assert_eq!(
+        record.memory_estimate,
+        Observed::Available { value: 10_111 }
+    );
+    assert_eq!(record.memory_categories, available(digit_categories()));
+}
+
+#[test]
+fn limit_at_or_below_records_none() {
+    // Catches `>=` for `>` (the equal case) and an inverted comparison (the case below).
+    for limit in [10_111, 10_110, 0] {
+        let record = PrelaunchRecord::for_limit(limit, available(digit_categories()));
+        assert_eq!(record.warnings, [], "limit {limit}");
+        assert_eq!(
+            record.memory_estimate,
+            Observed::Available { value: 10_111 }
+        );
+    }
+}
+
+#[test]
+fn an_unavailable_estimate_records_no_warning_and_no_zero() {
+    // Catches a missing number treated as 0 (so every limit warns), and a typed reason collapsed
+    // into one variant, which hides why the number was missing.
+    let missing: [Observed<MemoryCategories>; 4] = [
+        Observed::Unknown,
+        Observed::Unavailable {
+            reason: UnavailableReason::NotSupported,
+        },
+        Observed::Stale { last_seen_at_ms: 7 },
+        Observed::Error {
+            code: ObservationError::Internal,
+        },
+    ];
+    let expected_estimates: [Observed<u64>; 4] = [
+        Observed::Unknown,
+        Observed::Unavailable {
+            reason: UnavailableReason::NotSupported,
+        },
+        Observed::Stale { last_seen_at_ms: 7 },
+        Observed::Error {
+            code: ObservationError::Internal,
+        },
+    ];
+    for (categories, expected) in missing.into_iter().zip(expected_estimates) {
+        let record = PrelaunchRecord::for_limit(u64::MAX, categories.clone());
+        assert_eq!(record.warnings, []);
+        assert_eq!(record.memory_estimate, expected);
+        assert_eq!(record.memory_categories, categories);
+    }
+}
+
+#[test]
+fn a_report_with_prelaunch_round_trips() {
+    // Catches the field dropped on either side of JSON, a wire shape that differs from the
+    // documented one, and the field serialized somewhere other than after `calibration`.
+    let mut with_prelaunch = report();
+    with_prelaunch.prelaunch = Some(PrelaunchRecord::for_limit(
+        32 * 1024 * 1024 * 1024,
+        available(worked_example_categories()),
+    ));
+    let encoded = with_prelaunch.to_json_pretty().unwrap();
+    let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    let expected: serde_json::Value = serde_json::from_str(
+        r#"{
+          "memory_estimate": { "status": "available", "value": 30327881728 },
+          "memory_categories": { "status": "available", "value": { "free_bytes": 310263808, "active_bytes": 11716935680, "inactive_bytes": 11692703744, "wired_bytes": 3135979520, "compressor_bytes": 6607978496 } },
+          "warnings": ["limit_may_not_fit"]
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(value["prelaunch"], expected);
+    let outcome = encoded.find("\n  \"outcome\":").unwrap();
+    let prelaunch = encoded.find("\n  \"prelaunch\":").unwrap();
+    let privacy = encoded.find("\n  \"privacy\":").unwrap();
+    assert!(outcome < prelaunch && prelaunch < privacy, "{encoded}");
+    assert_eq!(ReportV1::from_json(&encoded).unwrap(), with_prelaunch);
+}
+
+#[test]
+fn a_report_without_prelaunch_still_validates() {
+    // Catches the field made mandatory (older reports stop parsing) or written as `null` when
+    // absent (the committed golden would change).
+    let report = ReportV1::from_json(include_str!("fixtures/report-v1.json")).unwrap();
+    assert_eq!(report.prelaunch, None);
+    assert!(!report.to_json_pretty().unwrap().contains("prelaunch"));
+}
+
+fn prelaunch_with(estimate: Observed<u64>, warnings: Vec<PrelaunchWarning>) -> PrelaunchRecord {
+    PrelaunchRecord {
+        memory_estimate: estimate,
+        memory_categories: Observed::Error {
+            code: ObservationError::Internal,
+        },
+        warnings,
+    }
+}
+
+#[test]
+fn validation_rejects_a_warning_without_an_available_estimate() {
+    // Catches a "may not fit" warning accepted with no number behind it. The pair with an
+    // available estimate shows the rejection comes from the estimate, not from the warning.
+    let mut enforcing = report();
+    enforcing.prelaunch = Some(prelaunch_with(
+        Observed::Error {
+            code: ObservationError::Internal,
+        },
+        vec![PrelaunchWarning::LimitMayNotFit],
+    ));
+    assert!(matches!(
+        enforcing.validate(),
+        Err(ReportError::InvalidPrelaunch)
+    ));
+    enforcing.prelaunch = Some(prelaunch_with(
+        Observed::Error {
+            code: ObservationError::Internal,
+        },
+        vec![],
+    ));
+    assert!(enforcing.validate().is_ok());
+    enforcing.prelaunch = Some(prelaunch_with(
+        Observed::Available { value: 10_111 },
+        vec![PrelaunchWarning::LimitMayNotFit],
+    ));
+    assert!(enforcing.validate().is_ok());
+}
+
+#[test]
+fn validation_rejects_prelaunch_on_an_observe_report() {
+    // Catches a pre-launch record on an observe run, which has no limit to compare.
+    let record = prelaunch_with(Observed::Available { value: 10_111 }, vec![]);
+    let mut observing = observe_report();
+    observing.prelaunch = Some(record.clone());
+    assert!(matches!(
+        observing.validate(),
+        Err(ReportError::InvalidPrelaunch)
+    ));
+    let mut enforcing = report();
+    enforcing.prelaunch = Some(record);
+    assert!(enforcing.validate().is_ok());
+}
+
+#[test]
+fn validation_accepts_a_warning_whatever_the_numbers_say() {
+    // Catches the comparison frozen into the validator: the report's limit is 100 bytes and the
+    // estimate is far above it, yet the release that wrote the report printed the line, so the
+    // report stays valid and a later release can move the comparison.
+    let mut enforcing = report();
+    assert_eq!(enforcing.configuration.max_footprint_bytes, Some(100));
+    enforcing.prelaunch = Some(prelaunch_with(
+        Observed::Available {
+            value: 30_327_881_728,
+        },
+        vec![PrelaunchWarning::LimitMayNotFit],
+    ));
+    assert!(enforcing.validate().is_ok());
 }

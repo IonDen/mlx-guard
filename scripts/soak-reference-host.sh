@@ -108,6 +108,44 @@ refuse_strays() {
     fi
 }
 
+# keep_failed_attempt ARTIFACT LOG [REPORT] — a rerun never destroys an earlier attempt's
+# evidence: the artifact (a file or a directory), the transcript and the optional supervisor
+# report (a .json file), whichever exist, move into $log_directory/attempts/ under the first
+# attempt number N free there for all of them: NAME.attempt-N.json (NAME.attempt-N for a
+# directory), NAME.attempt-N.log and REPORT_NAME.attempt-N.json. The attempts leave with the
+# transcripts (OUTPUT.logs), never in the published JSON set, and the canonical names are free
+# for the new attempt.
+keep_failed_attempt() {
+    local artifact=$1 log=$2 report=${3:-} attempts="$log_directory/attempts"
+    local artifact_stem="$attempts/${artifact##*/}" artifact_suffix=""
+    local log_stem="$attempts/${log##*/}" report_stem="$attempts/${report##*/}" attempt=1
+    if [[ ! -e "$artifact" && ! -e "$log" && ! -e "$report" ]]; then
+        return 0
+    fi
+    if [[ "$artifact" == *.json ]]; then
+        artifact_stem=${artifact_stem%.json}
+        artifact_suffix=.json
+    fi
+    log_stem=${log_stem%.log}
+    report_stem=${report_stem%.json}
+    while [[ -e "$artifact_stem.attempt-$attempt$artifact_suffix" \
+        || -e "$log_stem.attempt-$attempt.log" \
+        || ( -n "$report" && -e "$report_stem.attempt-$attempt.json" ) ]]; do
+        attempt=$((attempt + 1))
+    done
+    mkdir -p "$attempts"
+    if [[ -e "$artifact" ]]; then
+        mv "$artifact" "$artifact_stem.attempt-$attempt$artifact_suffix"
+    fi
+    if [[ -e "$log" ]]; then
+        mv "$log" "$log_stem.attempt-$attempt.log"
+    fi
+    if [[ -e "$report" ]]; then
+        mv "$report" "$report_stem.attempt-$attempt.json"
+    fi
+    echo "[keep] the earlier attempt is kept in $attempts as attempt $attempt"
+}
+
 # run_chunk NAME OUTPUT_ENV SECONDS_ENV TEST_FILE TEST_NAME [EXTRA_ENV=VALUE ...]
 # A chunk counts as done only when its success sentinel exists: every chunk test writes its JSON
 # before judging its ceilings, so the artifact alone would let a failed chunk into the bundle.
@@ -128,7 +166,10 @@ run_chunk() {
     fi
     refuse_strays "before chunk $name"
     echo "[run] $name (${seconds}s) -> $artifact"
-    rm -f "$artifact" "$sentinel"
+    rm -f "$sentinel"
+    # NAME-report.json is the supervisor's own report, which only the real-binary chunk writes
+    # (its MLX_GUARD_SOAK_BINARY_REPORT below); for the other chunks it never exists.
+    keep_failed_attempt "$artifact" "$log_directory/$name.log" "$log_directory/$name-report.json"
     env "$output_env=$artifact" "$seconds_env=$seconds" "$@" \
         cargo test -p mlx-guard-test-support --test "$test_file" "$test_name" \
         -- --ignored --exact --nocapture 2>&1 | tee "$log_directory/$name.log"

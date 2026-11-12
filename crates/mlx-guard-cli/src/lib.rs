@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fmt;
+use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -13,12 +14,30 @@ use clap::{Args, Parser, Subcommand};
 #[cfg(unix)]
 mod completion;
 #[cfg(unix)]
+mod notices;
+#[cfg(unix)]
 mod runtime;
 
 #[cfg(unix)]
+pub use notices::Notices;
+#[cfg(unix)]
 pub use runtime::{RuntimeResult, execute};
 
-/// Write the result summary, tolerating a summary reader that has gone away.
+/// Run one parsed command, write its result, and return the outcome.
+///
+/// # Panics
+///
+/// Panics on any write or flush error other than a broken pipe, as [`write_stdout`] does.
+#[cfg(unix)]
+#[must_use]
+pub fn execute_and_report(parsed: ParsedCli) -> mlx_guard_core::SupervisorOutcome {
+    let mut notices = Notices::default();
+    let result = execute(parsed, &mut notices);
+    write_summary(&result, &mut notices);
+    result.outcome
+}
+
+/// Write to stdout, tolerating a reader that has gone away.
 ///
 /// Only a broken pipe is swallowed — a dead parent that held our stdout must not turn a
 /// finalized supervision result into a panic (exit 101).
@@ -27,24 +46,49 @@ pub use runtime::{RuntimeResult, execute};
 ///
 /// Panics on any write or flush error other than a broken pipe: it is a supervisor-host
 /// defect worth surfacing.
+pub fn write_stdout(text: &str) {
+    write_tolerant(&mut std::io::stdout(), text.as_bytes());
+}
+
+/// Write to stderr, tolerating a reader that has gone away.
+///
+/// # Panics
+///
+/// Panics on any write or flush error other than a broken pipe, as [`write_stdout`] does.
+pub fn write_stderr(text: &str) {
+    write_tolerant(&mut std::io::stderr(), text.as_bytes());
+}
+
 #[cfg(unix)]
-pub fn write_summary(result: &RuntimeResult) {
-    use std::io::{ErrorKind, Write};
-    for (stream, bytes) in [
-        (
-            &mut std::io::stdout().lock() as &mut dyn Write,
-            result.stdout.as_bytes(),
-        ),
-        (
-            &mut std::io::stderr().lock() as &mut dyn Write,
-            result.stderr.as_bytes(),
-        ),
-    ] {
-        match stream.write_all(bytes).and_then(|()| stream.flush()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == ErrorKind::BrokenPipe => {}
-            Err(error) => panic!("summary write failed: {error}"),
-        }
+fn write_summary(result: &RuntimeResult, notices: &mut Notices) {
+    write_summary_to(
+        result,
+        notices,
+        &mut std::io::stdout(),
+        &mut std::io::stderr(),
+    );
+}
+
+/// The stdout summary, then the wait for the stderr lines already queued, then the plain lines. The
+/// wait sits between the two writes because a caller reading only stdout must not be held back by a
+/// stuck stderr, and a blocked line must not land inside the plain lines.
+#[cfg(unix)]
+fn write_summary_to(
+    result: &RuntimeResult,
+    notices: &mut Notices,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) {
+    write_tolerant(stdout, result.stdout.as_bytes());
+    notices.finish(!result.stderr.is_empty());
+    write_tolerant(stderr, result.stderr.as_bytes());
+}
+
+fn write_tolerant(stream: &mut dyn Write, bytes: &[u8]) {
+    match stream.write_all(bytes).and_then(|()| stream.flush()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("summary write failed: {error}"),
     }
 }
 
@@ -472,6 +516,141 @@ mod tests {
             stdout: "stdout content\n".to_owned(),
             stderr: "stderr content\n".to_owned(),
         };
-        write_summary(&result);
+        write_summary(&result, &mut Notices::default());
+    }
+
+    /// Records each write on the timeline the notices' writer shares.
+    #[cfg(unix)]
+    struct Recording(notices::stuck_writer::Timeline);
+
+    #[cfg(unix)]
+    impl Write for Recording {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(bytes).into_owned());
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_summary_goes_first_then_every_notice_then_the_plain_lines() {
+        // Bugs: the wait comes before the stdout write, so a stuck stderr holds back the summary;
+        // there is no wait, or a bounded one, so a blocked line lands inside the plain lines.
+        use std::sync::{Arc, Mutex};
+        use std::time::{Duration, Instant};
+
+        let timeline = Arc::new(Mutex::new(Vec::new()));
+        let (writer, gate) = notices::stuck_writer::stuck_writer(&timeline);
+        let mut notices = Notices::with_writer(writer);
+        notices.send("banner\n".to_owned());
+        gate.wait_for_a_blocked_write();
+        let result = RuntimeResult {
+            outcome: mlx_guard_core::SupervisorOutcome::PolicyIntervention,
+            stdout: "summary\n".to_owned(),
+            stderr: "plain lines\n".to_owned(),
+        };
+        let (stdout, stderr) = (Arc::clone(&timeline), Arc::clone(&timeline));
+        let writing = std::thread::spawn(move || {
+            write_summary_to(
+                &result,
+                &mut notices,
+                &mut Recording(stdout),
+                &mut Recording(stderr),
+            );
+        });
+
+        let started = Instant::now();
+        while timeline.lock().unwrap().is_empty() {
+            assert!(
+                started.elapsed() < Duration::from_secs(5),
+                "the summary was held back by a stuck stderr"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        // Twice the clean-exit bound, so a wait that gave up on a timer has already moved on.
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(
+            *timeline.lock().unwrap(),
+            ["summary\n"],
+            "the plain lines must wait for the blocked line"
+        );
+
+        gate.release();
+        writing.join().unwrap();
+        assert_eq!(
+            *timeline.lock().unwrap(),
+            ["summary\n", "banner\n", "plain lines\n"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_summary_with_no_plain_lines_does_not_wait_for_a_stuck_stderr() {
+        // Bug: the wait ignores whether plain lines follow, so a clean exit hangs on an unread pipe.
+        use std::sync::{Arc, Mutex, mpsc};
+        use std::time::Duration;
+
+        let timeline = Arc::new(Mutex::new(Vec::new()));
+        let (writer, gate) = notices::stuck_writer::stuck_writer(&timeline);
+        let mut notices = Notices::with_writer(writer);
+        notices.send("banner\n".to_owned());
+        gate.wait_for_a_blocked_write();
+        let result = RuntimeResult {
+            outcome: mlx_guard_core::SupervisorOutcome::ChildExited(0),
+            stdout: "summary\n".to_owned(),
+            stderr: String::new(),
+        };
+        let (stdout, stderr) = (Arc::clone(&timeline), Arc::clone(&timeline));
+        let (returned, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            write_summary_to(
+                &result,
+                &mut notices,
+                &mut Recording(stdout),
+                &mut Recording(stderr),
+            );
+            returned.send(()).ok();
+        });
+
+        finished
+            .recv_timeout(Duration::from_secs(5))
+            .expect("nothing follows the banner, so nothing may wait for it");
+        assert_eq!(*timeline.lock().unwrap(), ["summary\n"]);
+    }
+
+    /// Fails every write with one error kind.
+    struct Failing(std::io::ErrorKind);
+
+    impl Write for Failing {
+        fn write(&mut self, _bytes: &[u8]) -> std::io::Result<usize> {
+            Err(self.0.into())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_reader_that_has_gone_away_is_tolerated() {
+        // Bug: a broken pipe panics, so exit 64 or the command's own code becomes 101.
+        write_tolerant(&mut Failing(std::io::ErrorKind::BrokenPipe), b"line\n");
+    }
+
+    #[test]
+    #[should_panic(expected = "summary write failed")]
+    fn any_other_write_error_still_panics() {
+        // Bug: the tolerance widens to every error and hides a supervisor-host defect.
+        write_tolerant(
+            &mut Failing(std::io::ErrorKind::PermissionDenied),
+            b"line\n",
+        );
     }
 }

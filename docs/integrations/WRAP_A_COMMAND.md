@@ -109,6 +109,12 @@ also prints the two plain outcome lines on stderr, so you will see them under th
 you repeat these examples. The one exception is a command's own exit code that mlx-guard does not
 also use, which prints nothing. See the [troubleshooting page](../TROUBLESHOOTING.md).
 
+Since 0.5.0, a `run` whose footprint climbs to within 10 % of its limit also prints a warning line
+on stderr while the command is still going, and another when it falls back. The demo runs here stay
+far below their limits, so you will not see one. If you read stderr in a script, expect those lines
+between the command's own output, and read the exit code or the report instead of the text. See
+[warnings during a run](../TROUBLESHOOTING.md#warnings-during-a-run).
+
 ```console
 $ jq '.outcome.kind, .checkpoint, .signals' reports/run-wall-time.json
 "policy_intervention"
@@ -274,12 +280,15 @@ jq '.outcome.kind, .checkpoint' reports/lora-finetune.json
 From Python, `load_report` gives you the same data as a typed object:
 
 ```python
+from collections.abc import Mapping
 from pathlib import Path
 
 import mlx_guard
 
 report = mlx_guard.load_report(Path("reports/lora-finetune.json"))
-print(report.outcome.kind, report.payload["checkpoint"]["status"])
+checkpoint = report.payload.get("checkpoint")
+if isinstance(checkpoint, Mapping):
+    print(report.outcome.kind, checkpoint.get("status"))
 ```
 
 A command wrapped this way, never having connected `mlx_guard.CheckpointWorker`, always reports

@@ -18,10 +18,11 @@
 
 use std::ffi::OsString;
 use std::fs;
+use std::io::Write;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -62,6 +63,18 @@ const MARKER_MISSING_CWD: &str = "RDCT_E2E_12_c4n4ry";
 const MARKER_WALL_ARGV: &str = "RDCT_E2E_13a_c4n4ry";
 const MARKER_WALL_ENV_KEY: &str = "RDCT_E2E_13k_c4n4ry";
 const MARKER_WALL_ENV_VALUE: &str = "RDCT_E2E_13v_c4n4ry";
+
+// Canaries for a run whose footprint enters the warning band, so the band line is scanned on the
+// one path that prints it.
+const MARKER_BAND_ARGV: &str = "RDCT_E2E_14a_c4n4ry";
+const MARKER_BAND_ENV_KEY: &str = "RDCT_E2E_14k_c4n4ry";
+const MARKER_BAND_ENV_VALUE: &str = "RDCT_E2E_14v_c4n4ry";
+
+// Canaries for a run whose limit is more than the launch estimate, so the fit line is scanned on
+// the one path that prints it.
+const MARKER_FIT_ARGV: &str = "RDCT_E2E_15a_c4n4ry";
+const MARKER_FIT_ENV_KEY: &str = "RDCT_E2E_15k_c4n4ry";
+const MARKER_FIT_ENV_VALUE: &str = "RDCT_E2E_15v_c4n4ry";
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
@@ -262,21 +275,27 @@ fn assert_output(output: &Output, expected: &Expectation) {
         ("stdout", output.stdout.as_slice()),
         ("stderr", output.stderr.as_slice()),
     ] {
+        // Only a marker the worker itself prints narrows the scan to supervisor lines; every other
+        // marker is scanned across the whole stream. Bug this catches: a supervisor leak of a
+        // marker the worker never prints, on a line without the `mlx-guard:` prefix.
         for marker in expected.markers {
-            match expected.child_output {
-                ChildOutput::Silent => assert!(
+            let printed_by_worker = matches!(
+                expected.child_output,
+                ChildOutput::Prints(printed) if printed.contains(marker)
+            );
+            if printed_by_worker {
+                for line in supervisor_lines(stream) {
+                    assert!(
+                        !contains(line, marker.as_bytes()),
+                        "a supervisor {stream_name} line leaked {marker}: {}",
+                        String::from_utf8_lossy(line)
+                    );
+                }
+            } else {
+                assert!(
                     !contains(stream, marker.as_bytes()),
                     "the supervisor's {stream_name} leaked {marker}"
-                ),
-                ChildOutput::Prints(_) => {
-                    for line in supervisor_lines(stream) {
-                        assert!(
-                            !contains(line, marker.as_bytes()),
-                            "a supervisor {stream_name} line leaked {marker}: {}",
-                            String::from_utf8_lossy(line)
-                        );
-                    }
-                }
+                );
             }
         }
     }
@@ -665,4 +684,134 @@ fn a_wall_time_intervention_keeps_argv_and_environment_out_of_the_plain_lines() 
             child_output: ChildOutput::Silent,
         },
     );
+}
+
+/// The fixture lives in another crate of this workspace: `MLX_GUARD_FIXTURE` wins, otherwise it
+/// sits next to the supervisor in the target directory, where a workspace build puts it.
+fn fixture() -> PathBuf {
+    let guard = Path::new(env!("CARGO_BIN_EXE_mlx-guard"));
+    let path = std::env::var_os("MLX_GUARD_FIXTURE")
+        .map_or_else(|| guard.with_file_name("mlx-guard-fixture"), PathBuf::from);
+    assert!(
+        path.is_file(),
+        "no fixture at {}; run `cargo build -p mlx-guard-test-support --bin mlx-guard-fixture`",
+        path.display()
+    );
+    path
+}
+
+#[test]
+fn a_run_in_the_warning_band_keeps_argv_and_environment_out_of_the_band_line() {
+    // Catches the band line naming the command, its arguments or an --env assignment, when it
+    // may hold only measured numbers and fixed text.
+    //
+    // A 70 MiB limit puts warning at 63 MiB, and the allocate fixture holds 64 MiB plus a base of
+    // about 1.2 MiB, so the run sits in the band until the wall time stops it. The shell passes the
+    // markers as its own arguments and execs the fixture, which takes no extra arguments.
+    let directory = CaseDirectory::new();
+    let script = format!(
+        "exec '{}' allocate 67108864 9000",
+        fixture().to_str().expect("the fixture path is UTF-8")
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args([
+            "run",
+            "--max-footprint",
+            "70MiB",
+            "--sample-interval",
+            "10ms",
+            "--wall-time",
+            "3s",
+            "--report",
+        ])
+        .arg(directory.report_path())
+        .arg("--env")
+        .arg(format!("{MARKER_BAND_ENV_KEY}={MARKER_BAND_ENV_VALUE}"))
+        .args(["--", "/bin/sh", "-c", &script, MARKER_BAND_ARGV])
+        .arg(format!("--token={MARKER_BAND_ARGV}"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the command must run");
+    // Held open until the run ends: the fixture exits on end of file.
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    stdin.write_all(b"allocate\n").unwrap();
+    let output = child.wait_with_output().expect("the run must end");
+    drop(stdin);
+
+    assert_case(
+        &directory,
+        &output,
+        &Expectation {
+            exit_code: 75,
+            executable_basename: "sh",
+            argument_count: 4,
+            markers: &[MARKER_BAND_ARGV, MARKER_BAND_ENV_KEY, MARKER_BAND_ENV_VALUE],
+            child_output: ChildOutput::Silent,
+        },
+    );
+    // The scans above prove nothing about the band line if it never printed.
+    let band_lines: Vec<&[u8]> = supervisor_lines(&output.stderr)
+        .filter(|line| line.starts_with(b"mlx-guard: warning: "))
+        .collect();
+    assert!(
+        !band_lines.is_empty(),
+        "a run held in the band must print a warning line: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for line in band_lines {
+        for marker in [MARKER_BAND_ARGV, MARKER_BAND_ENV_KEY, MARKER_BAND_ENV_VALUE] {
+            assert!(
+                !contains(line, marker.as_bytes()),
+                "the band line leaked {marker}: {}",
+                String::from_utf8_lossy(line)
+            );
+        }
+    }
+}
+
+#[test]
+fn a_limit_beyond_the_launch_estimate_keeps_argv_and_environment_out_of_the_fit_line() {
+    // Bug: the fit line names the command, its arguments or an --env assignment, when it may hold
+    // only the two numbers, the version and fixed text; or this channel goes untested by staying
+    // silent.
+    let directory = CaseDirectory::new();
+    let output = guard(&directory)
+        .arg("--env")
+        .arg(format!("{MARKER_FIT_ENV_KEY}={MARKER_FIT_ENV_VALUE}"))
+        .args(["--", "/bin/sh", "-c", SLEEP_SCRIPT, MARKER_FIT_ARGV])
+        .arg(format!("--token={MARKER_FIT_ARGV}"))
+        .output()
+        .expect("the command must run");
+
+    assert_case(
+        &directory,
+        &output,
+        &Expectation {
+            exit_code: 0,
+            executable_basename: "sh",
+            argument_count: 4,
+            markers: &[MARKER_FIT_ARGV, MARKER_FIT_ENV_KEY, MARKER_FIT_ENV_VALUE],
+            child_output: ChildOutput::Silent,
+        },
+    );
+    // The scans above prove nothing about the fit line if it never printed: `guard` asks for
+    // 1 TiB, more than any Mac's launch estimate.
+    let fit_lines: Vec<&[u8]> = supervisor_lines(&output.stderr)
+        .filter(|line| line.starts_with(b"mlx-guard: warning: your limit of "))
+        .collect();
+    assert_eq!(
+        fit_lines.len(),
+        1,
+        "a 1 TiB limit must print one fit line: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for marker in [MARKER_FIT_ARGV, MARKER_FIT_ENV_KEY, MARKER_FIT_ENV_VALUE] {
+        assert!(
+            !contains(fit_lines[0], marker.as_bytes()),
+            "the fit line leaked {marker}: {}",
+            String::from_utf8_lossy(fit_lines[0])
+        );
+    }
 }

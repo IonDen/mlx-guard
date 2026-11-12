@@ -34,8 +34,23 @@ typed value state. They provide context, not worker-attributable enforcement inp
 | Footprint growth rate | Owned process group | Consecutive complete footprint samples | `unknown` until two samples; stale after a gap |
 
 Pressure notifications are best effort and system-wide. An absent first event is not “normal.” A
-warning or critical event produces a pre-launch warning, but the supervisor does not invent a
-rejection threshold. The same applies when footprint or advisory capabilities are unavailable.
+warning or critical event is not turned into a line on stderr or into a rejection threshold; the
+supervisor does not invent one. The same applies when footprint or advisory capabilities are
+unavailable.
+
+## The launch check
+
+`mlx-guard run` makes one more memory reading, just before it starts the command: the memory macOS
+has not locked as wired (free, speculative included, plus active, inactive, and held by the
+compressor). If your limit is more than that number, it prints one warning line right after the
+start-of-run notice and runs the command with your limit as given. It never refuses to run, and the
+line is described in [troubleshooting](TROUBLESHOOTING.md#the-launch-line). The number is advisory like
+the metrics in the table: it counts every other program's memory as room, it is one estimate at one moment,
+and it never enters the policy decision. It is recorded in `run` reports as `prelaunch`
+([reports](REPORTS.md)).
+
+`observe` has no launch check. It has no limit to compare with, so it measures nothing new and
+prints nothing new. Choosing a limit stays your decision, made from the calibration section below.
 
 ## Calibration section
 

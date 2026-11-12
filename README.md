@@ -38,7 +38,7 @@ It is for MLX work you launch and do not watch: fine-tunes, generation batches, 
 shell scripts. It does not fix a leak for you, and it cannot stop a kernel or driver failure;
 [Limits](https://github.com/IonDen/mlx-guard#limits-and-safety-boundary) lists what it cannot do.
 
-Version 0.4.0 is an alpha release. The
+Version 0.5.0 is an alpha release. The
 [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) says which
 surfaces may still change before 1.0. If you already use MetalGuard, the two tools guard against
 different failures and work together; the
@@ -177,7 +177,8 @@ print(result.returncode, result.report.outcome.kind)
 
 Commands are literal argument tuples and never pass through a shell. The supervisor inherits the
 script's standard input; if that is a terminal, the command reads `/dev/null` instead and the
-supervisor prints one line on stderr to say so. Since 0.2, if the process that launched the supervisor dies, the
+supervisor prints one line on stderr to say so (a `run` can also print warning lines there; see
+[When a run stops](#when-a-run-stops)). Since 0.2, if the process that launched the supervisor dies, the
 supervised command is stopped with it. Pass `on_parent_exit="detach"` (or
 `--on-parent-exit detach`) to let it keep running. The
 [Python API guide](https://github.com/IonDen/mlx-guard/blob/main/docs/PYTHON_API.md) covers
@@ -203,6 +204,18 @@ The [troubleshooting page](https://github.com/IonDen/mlx-guard/blob/main/docs/TR
 has one section per case, with what happened, why, what to do, and which report fields to read.
 Since 0.4.0 the same explanation is printed on stderr when a run ends with a non-zero exit. A
 command's own exit code that mlx-guard does not also use prints nothing.
+
+Since 0.5.0, `run` also warns before it stops anything. When the OS-accounted footprint first
+reaches 10 % below your limit, it prints one line on stderr, repeats it at most every 5 minutes
+while the footprint stays high, and prints another when it falls back to 20 % below the limit.
+Warnings stop nothing: only your limits decide when a run is stopped. Delivery is best effort, so
+if nothing is reading stderr, a line can be lost. The report always has the facts. See
+[warnings during a run](https://github.com/IonDen/mlx-guard/blob/main/docs/TROUBLESHOOTING.md#warnings-during-a-run).
+
+`run` also checks your limit once at launch. If it is more than the memory macOS has not locked as
+wired, `mlx-guard` prints one warning line after the start-of-run notice and still runs the command
+with your limit as given; no line does not mean the run fits. The limit you set is the limit it
+enforces, and there is no automatic limit, so choose one by observing the command first.
 
 A command may return a number the supervisor also uses. The report's `outcome.kind` always tells the
 cases apart; the [CLI contract](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md) has the
@@ -291,7 +304,7 @@ Check support and evidence:
 |---|---|
 | [Support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md) | Supported platforms and release boundaries |
 | [Compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) | Which hardware setups have measured evidence, which are untested, and how to fill a cell |
-| [M1 Max 32 GB evidence (0.3.1)](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.3.1/m1-max-32gb/README.md) | Raw 0.3.1 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
+| [M1 Max 32 GB evidence (0.5.0)](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.5.0/m1-max-32gb/README.md) | Raw 0.5.0 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
 | [Security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) | Vulnerability reporting |
 | [Changelog](https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md) | What changed in each release |
 

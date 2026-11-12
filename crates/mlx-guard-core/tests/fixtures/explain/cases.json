@@ -42,12 +42,18 @@
   {
     "row": "75-wall-checkpoint-then-ended",
     "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-checkpoint-then-ended.json",
-    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to save a checkpoint at 1.0 s; the command ended before the SIGTERM that followed could reach it. The command had not acknowledged checkpoint request 7 when it ended.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to save a checkpoint at 1.0 s and then found no process left in the command's process group when it sent SIGTERM at 1.1 s. The command had not acknowledged checkpoint request 7 by the end of the run.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
   },
   {
     "row": "75-wall-already-ended",
     "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-already-ended.json",
-    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard found the command already ended when it sent SIGTERM at 1.0 s.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard found no process left in the command's process group when it sent SIGTERM at 1.0 s.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+  },
+  {
+    "row": "75-root-left-group",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-root-left-group.json",
+    "note": "A root that moved to another process group: TERM and KILL both found no process and the root exited seconds later. Catches a wall-time KILL that found no process being told as sent (\", and SIGKILL 1.0 s later because it was still running\").",
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard found no process left in the command's process group when it sent SIGTERM at 1.0 s.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
   },
   {
     "row": "75-wall-kill-on-ended",
@@ -88,8 +94,8 @@
   {
     "row": "75-unrecorded-forward-missing",
     "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-unrecorded-forward-missing.json",
-    "note": "Defensive shape, not written by any run today: a forwarded terminal signal opens an uncounted shutdown (opens_an_uncounted_shutdown in crates/mlx-guard-cli/src/runtime.rs), so a 75 whose every record carries reason external_signal cannot occur. It pins the fallback for a report whose records carry a reason, and the KILL told as its own clause after a TERM that found the command ended.",
-    "text": "what happened: mlx-guard found the command already ended when it sent SIGTERM at 400 ms; a SIGKILL for a second terminal signal reached its process group 1.0 s later.\nwhat to do: read signals in the report to see what mlx-guard did; no limit was crossed. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-cause-not-recorded"
+    "note": "Defensive shape, not written by any run today: a forwarded terminal signal opens an uncounted shutdown (opens_an_uncounted_shutdown in crates/mlx-guard-cli/src/runtime.rs), so a 75 whose every record carries reason external_signal cannot occur. It pins the fallback for a report whose records carry a reason, and the KILL told as its own clause after a TERM that found no process.",
+    "text": "what happened: mlx-guard found no process left in the command's process group when it sent SIGTERM at 400 ms; a SIGKILL for a second terminal signal reached its process group 1.0 s later.\nwhat to do: read signals in the report to see what mlx-guard did; no limit was crossed. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-cause-not-recorded"
   },
   {
     "row": "64-launch-setting",
@@ -169,18 +175,18 @@
   {
     "row": "75-emergency-kill-missing",
     "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-emergency-kill-missing.json",
-    "text": "what happened: one sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency threshold of 6.60 GiB, which is 614.40 MiB more than your 6.00 GiB limit, so mlx-guard found the command already ended when it sent SIGKILL at 12.3 s.\nwhat to do: find what allocates that much between samples, or raise --max-footprint if that peak is expected; a shorter --sample-interval sees growth sooner. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-emergency-kill"
+    "text": "what happened: one sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency threshold of 6.60 GiB, which is 614.40 MiB more than your 6.00 GiB limit, so mlx-guard found no process left in the command's process group when it sent SIGKILL at 12.3 s.\nwhat to do: find what allocates that much between samples, or raise --max-footprint if that peak is expected; a shorter --sample-interval sees growth sooner. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-emergency-kill"
   },
   {
     "row": "75-survivors-kill-missing",
     "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-survivors-kill-missing.json",
-    "text": "what happened: the command exited, but processes it started were still running after SIGTERM, so mlx-guard found them already ended when it sent SIGKILL at 1.2 s; the command's own exit status is in the report under outcome.child_status.\nwhat to do: make the command wait for, or stop, the processes it starts before it exits. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-processes-left-behind"
+    "text": "what happened: the command exited, but processes it started were still running after SIGTERM, so mlx-guard found no process left in the command's process group when it sent SIGKILL at 1.2 s; the command's own exit status is in the report under outcome.child_status.\nwhat to do: make the command wait for, or stop, the processes it starts before it exits. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-processes-left-behind"
   },
   {
     "row": "75-wall-checkpoint-ended-second-signal",
     "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall-checkpoint-ended-second-signal.json",
-    "note": "Defensive shape: a TERM that found the group ended followed by a delivered KILL is not a shape a run writes today. It pins the KILL told as its own clause after a checkpoint request and a TERM that found the command ended.",
-    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to save a checkpoint at 1.0 s; the command ended before the SIGTERM that followed could reach it; a SIGKILL for a second terminal signal reached its process group 1.0 s later. The command had not acknowledged checkpoint request 7 when it ended.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
+    "note": "Defensive shape: a TERM that found no process followed by a delivered KILL is not a shape a run writes today. It pins the KILL told as its own clause after a checkpoint request and a TERM that found no process.",
+    "text": "what happened: the run reached the 1.0 s wall-time limit you set, so mlx-guard asked the command to save a checkpoint at 1.0 s and then found no process left in the command's process group when it sent SIGTERM at 1.1 s; a SIGKILL for a second terminal signal reached its process group 1.0 s later. The command had not acknowledged checkpoint request 7 by the end of the run.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"
   },
   {
     "row": "75-footprint-equal-render",

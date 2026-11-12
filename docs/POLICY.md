@@ -37,12 +37,16 @@ the parent's death does not change what that workload is doing. A suppressed `Pa
 no transition and no signal; the evidence that it happened is `outcome.parent_exited_at_ms`.
 
 The delivery-failure rows mean a live member the supervisor could not signal. When a TERM, KILL, or
-forwarded signal meets an owned group that has no live member left, the command has already ended,
+forwarded signal meets an owned group that has no live member left, the command has usually ended,
 and that is not a failure: the intervention stands (exit 75) and `child_status` records the
-command's own exit. Exit codes and their meanings are unchanged. Exit 70 for a signal delivery
-failure still means the group had a live member (or could not be scanned) and the signal was
-refused. A second terminal event or an escalation step that arrives while the group is going away
-does not produce it.
+command's own exit when mlx-guard collects it. Exit codes and their meanings are unchanged. Exit 70
+for a signal delivery failure still means the group had a live member (or could not be scanned) and
+the signal was refused. A second terminal event or an escalation step that arrives while the group
+is going away does not produce it.
+
+Since 0.5.0 `run` also prints a line on stderr when the warning threshold is reached and when the
+recovery threshold is reached again (see [warnings during a run](CLI.md#warnings-during-a-run)),
+and printing a line never changes state.
 
 Values between recovery and warning retain the previous normal or warning state. A sample at or
 above the ordinary limit contributes to the consecutive-breach count. A sample below that limit
@@ -73,14 +77,14 @@ maxima are not user-configurable, and the effective values are recorded in each 
 
 | Scenario | Measured interval | p95 (ms) | Maximum (ms) |
 |---|---|---:|---:|
-| `checkpoint_ack_idle` | request to acknowledgement | 27 | 27 |
-| `checkpoint_ack_idle` | TERM to quiet | 29 | 32 |
-| `checkpoint_ack_loaded` | request to acknowledgement | 27 | 27 |
-| `checkpoint_ack_loaded` | TERM to quiet | 27 | 29 |
-| `group_term` | TERM to quiet | 34 | 35 |
-| `group_kill` | KILL to quiet | 28 | 31 |
+| `checkpoint_ack_idle` | request to acknowledgement | 28 | 31 |
+| `checkpoint_ack_idle` | TERM to quiet | 29 | 34 |
+| `checkpoint_ack_loaded` | request to acknowledgement | 27 | 31 |
+| `checkpoint_ack_loaded` | TERM to quiet | 29 | 30 |
+| `group_term` | TERM to quiet | 35 | 36 |
+| `group_kill` | KILL to quiet | 30 | 31 |
 
-Measured on the M1 Max 32 GB reference host (macOS 27.0.1, 26A434), 20 repetitions per scenario,
+Measured on the M1 Max 32 GB reference host (macOS 27.2, 26B123), 20 repetitions per scenario,
 `resolution_ms: 10` — every mark is a supervisor-loop timestamp quantized to that interval, not an
 instantaneous event time. `*_to_quiet` marks the loop observing the root reaped and the owned
 group empty, never the reap instant itself. The measured binaries are unoptimized debug builds, so
@@ -93,7 +97,7 @@ the same derivation
 delivered group TERM to observed-quiet — but measured under different conditions (a sixteen-member
 group, a wall-time trigger, and 10 ms sampling here, versus a single ramp worker, a footprint
 trigger, and 50 ms sampling there), so the two figures are related by construction, not
-interchangeable. The full raw record is `evidence/v0.3.1/m1-max-32gb/escalation-envelope.json`.
+interchangeable. The full raw record is `evidence/v0.5.0/m1-max-32gb/escalation-envelope.json`.
 
 A dispatch-only workflow captures the same artifact on GitHub's shared macos-15 VM (3 vCPU / 7 GB)
 as corroboration; those runs are labeled shared-VM, pooled across at least five captures, and

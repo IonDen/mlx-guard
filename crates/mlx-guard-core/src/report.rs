@@ -651,7 +651,83 @@ pub struct ReportV1 {
     pub outcome: TerminalOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub calibration: Option<CalibrationArtifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prelaunch: Option<PrelaunchRecord>,
     pub privacy: PrivacyDefaults,
+}
+
+/// Non-fatal warning emitted before launch; no variant is an automatic rejection threshold.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrelaunchWarning {
+    FootprintObservationUnavailable,
+    PressureStateUnknown,
+    MemoryPressureWarning,
+    MemoryPressureCritical,
+    AdvisorySystemMetricsPartial,
+    LimitMayNotFit,
+}
+
+/// System-wide page-queue sizes read in one call just before launch, in bytes.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct MemoryCategories {
+    /// Free pages, speculative pages included.
+    pub free_bytes: u64,
+    pub active_bytes: u64,
+    pub inactive_bytes: u64,
+    pub wired_bytes: u64,
+    /// Physical memory occupied by the compressor.
+    pub compressor_bytes: u64,
+}
+
+impl MemoryCategories {
+    /// The launch estimate: everything the kernel accounts for except wired memory.
+    #[must_use]
+    pub const fn estimate(&self) -> u64 {
+        self.free_bytes
+            .saturating_add(self.active_bytes)
+            .saturating_add(self.inactive_bytes)
+            .saturating_add(self.compressor_bytes)
+    }
+}
+
+/// The memory estimate taken just before launch, and the warnings recorded when its comparison
+/// with the limit fired. A warning is recorded whether or not the launch succeeds; its stderr line
+/// prints only after a successful launch.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PrelaunchRecord {
+    pub memory_estimate: Observed<u64>,
+    pub memory_categories: Observed<MemoryCategories>,
+    pub warnings: Vec<PrelaunchWarning>,
+}
+
+impl PrelaunchRecord {
+    /// Record the estimate for a run with this limit, warning when the limit may not fit.
+    #[must_use]
+    pub fn for_limit(limit_bytes: u64, categories: Observed<MemoryCategories>) -> Self {
+        let memory_estimate = match &categories {
+            Observed::Available { value } => Observed::Available {
+                value: value.estimate(),
+            },
+            Observed::Unknown => Observed::Unknown,
+            Observed::Unavailable { reason } => Observed::Unavailable { reason: *reason },
+            Observed::Stale { last_seen_at_ms } => Observed::Stale {
+                last_seen_at_ms: *last_seen_at_ms,
+            },
+            Observed::Error { code } => Observed::Error { code: *code },
+        };
+        let mut warnings = Vec::new();
+        if let Observed::Available { value: estimate } = memory_estimate
+            && limit_bytes > estimate
+        {
+            warnings.push(PrelaunchWarning::LimitMayNotFit);
+        }
+        Self {
+            memory_estimate,
+            memory_categories: categories,
+            warnings,
+        }
+    }
 }
 
 impl ReportV1 {
@@ -672,6 +748,26 @@ impl ReportV1 {
         self.validate_privacy()?;
         self.validate_events()?;
         self.validate_calibration()?;
+        self.validate_prelaunch()?;
+        Ok(())
+    }
+
+    /// Only the shape is checked; the comparison belongs to the release that wrote the report.
+    fn validate_prelaunch(&self) -> Result<(), ReportError> {
+        let Some(prelaunch) = &self.prelaunch else {
+            return Ok(());
+        };
+        if self.configuration.mode != ReportMode::Enforce {
+            return Err(ReportError::InvalidPrelaunch);
+        }
+        let estimate_available = matches!(prelaunch.memory_estimate, Observed::Available { .. });
+        if prelaunch
+            .warnings
+            .contains(&PrelaunchWarning::LimitMayNotFit)
+            && !estimate_available
+        {
+            return Err(ReportError::InvalidPrelaunch);
+        }
         Ok(())
     }
 
@@ -967,6 +1063,7 @@ pub enum ReportError {
     InvalidEventOrder,
     InvalidAdvisoryMetrics,
     InvalidCalibration,
+    InvalidPrelaunch,
     Json(serde_json::Error),
 }
 
@@ -981,6 +1078,7 @@ impl fmt::Display for ReportError {
             Self::InvalidEventOrder => "invalid report event ordering",
             Self::InvalidAdvisoryMetrics => "invalid advisory metric metadata",
             Self::InvalidCalibration => "invalid calibration artifact for this report",
+            Self::InvalidPrelaunch => "invalid pre-launch record for this report",
             Self::Json(_) => "report JSON is malformed",
         };
         formatter.write_str(message)

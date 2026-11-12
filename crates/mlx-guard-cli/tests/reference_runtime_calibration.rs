@@ -172,9 +172,12 @@ fn run_guard(report_path: &Path, mode_args: &[&str], worker_args: &[String]) -> 
 }
 
 /// Lines every run is expected to print: the pre-launch banner (`run` announces the emergency
-/// threshold before launching) and the two plain lines a non-zero exit ends with.
-const EXPECTED_LINE_PREFIXES: [&str; 3] = [
+/// threshold before launching), the warning-band lines a run prints while its footprint sits
+/// between the recovery and warning thresholds, and the two plain lines a non-zero exit ends with.
+const EXPECTED_LINE_PREFIXES: [&str; 5] = [
     "mlx-guard: enforcing a",
+    "mlx-guard: warning: ",
+    "mlx-guard: warning cleared: ",
     "mlx-guard: what happened: ",
     "mlx-guard: what to do: ",
 ];
@@ -212,6 +215,22 @@ fn scenario_diagnostic_drops_the_launch_banner_but_keeps_a_real_anomaly() {
         Some("mlx-guard: artifact read failed".to_owned())
     );
     assert_eq!(scenario_diagnostic(b""), None);
+
+    // Catches the band lines a ramp scenario prints on its way to the limit being recorded as an
+    // anomaly in the published evidence, or a bare `mlx-guard: warning` prefix swallowing a line
+    // the band never prints.
+    let band = b"mlx-guard: enforcing a 100-byte footprint limit; emergency KILL at 110 bytes, about 10% above the limit\n\
+mlx-guard: warning: the OS-accounted footprint reached 95 B at 12.3 s, at or above the 90 B warning threshold for your 100 B limit; 2 samples in a row at or above the limit stop the command, and 1 sample at or above the 110 B emergency threshold kills it at once, with no checkpoint. More: https://github.com/IonDen/mlx-guard/blob/v0.5.0/docs/TROUBLESHOOTING.md#warnings-during-a-run\n\
+mlx-guard: warning: the OS-accounted footprint is 85 B at 5 min 12 s and has not fallen to the 80 B recovery threshold since 12.3 s; your limit is 100 B.\n\
+mlx-guard: warning cleared: the OS-accounted footprint fell to 79 B at 50.1 s, at or below the 80 B recovery threshold for your 100 B limit.\n";
+    assert_eq!(scenario_diagnostic(band), None);
+    let band_and_anomaly = b"mlx-guard: warning cleared: the OS-accounted footprint fell to 79 B at 50.1 s, at or below the 80 B recovery threshold for your 100 B limit.\n\
+mlx-guard: warnings could not be written\n\
+mlx-guard: warning: the OS-accounted footprint is 85 B at 5 min 12 s and has not fallen to the 80 B recovery threshold since 12.3 s; your limit is 100 B.\n";
+    assert_eq!(
+        scenario_diagnostic(band_and_anomaly),
+        Some("mlx-guard: warnings could not be written".to_owned())
+    );
 }
 
 #[test]

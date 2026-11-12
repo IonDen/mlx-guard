@@ -48,20 +48,38 @@ impl Drop for TestDirectory {
 }
 
 #[cfg(target_os = "macos")]
-/// Assert a successful `run`'s stderr is exactly the one launch-banner line and nothing else, so an
-/// unexpected diagnostic, panic fragment, or stray warning on the same stream still fails the test
-/// (the strictness the old `stderr.is_empty()` assertions gave, kept now that the banner is present).
+/// The start of the launch fit line, up to the limit it names.
+const FIT_PREFIX: &str = "mlx-guard: warning: your limit of ";
+
+#[cfg(target_os = "macos")]
+/// Whether `line` is the launch fit line: its exact prefix, its fixed sentences after the two
+/// numbers, and the versioned link to the warnings section.
+fn is_fit_line(line: &str) -> bool {
+    line.starts_with(FIT_PREFIX)
+        && line.ends_with(&format!(
+            " macOS reported as not wired just before launch, so a run that reaches it may not \
+             fit in memory on this Mac. That number is one estimate at one moment and counts \
+             every other program's memory as room. mlx-guard runs with your limit as given. \
+             More: {}",
+            doc_link("warnings-during-a-run")
+        ))
+}
+
+#[cfg(target_os = "macos")]
+/// Assert a successful `run`'s stderr is exactly the one launch-banner line, optionally followed
+/// by the launch fit line, and nothing else, so an unexpected diagnostic, panic fragment, or
+/// stray warning on the same stream still fails the test (the strictness the old
+/// `stderr.is_empty()` assertions gave, kept now that the banner is present).
 fn assert_only_launch_banner(stderr: &[u8]) {
     let text = String::from_utf8_lossy(stderr);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(
-        lines.len(),
-        1,
-        "a successful run's stderr must be only the launch banner: {text:?}"
+    assert!(
+        lines.len() == 1 || (lines.len() == 2 && is_fit_line(lines[1])),
+        "a successful run's stderr must be only the launch banner and the fit line: {text:?}"
     );
     assert!(
         lines[0].contains("emergency KILL"),
-        "the one stderr line must be the launch banner: {text:?}"
+        "the first stderr line must be the launch banner: {text:?}"
     );
 }
 
@@ -101,16 +119,20 @@ fn command_line_lines(flag: Option<&str>) -> String {
 }
 
 #[cfg(target_os = "macos")]
-/// Assert a non-zero `run`'s stderr is exactly three lines: the launch banner, then the
-/// "what happened" line, then the "what to do" line ending in the link to `anchor`. Returns the
-/// two plain lines (newline-ended) so a caller can also pin their exact text.
+/// Assert a non-zero `run`'s stderr is exactly the launch banner, optionally the launch fit line,
+/// then the "what happened" line and the "what to do" line ending in the link to `anchor`.
+/// Returns the two plain lines (newline-ended) so a caller can also pin their exact text.
 fn assert_banner_then_plain_lines(stderr: &[u8], anchor: &str) -> String {
     let text = String::from_utf8_lossy(stderr);
-    let lines: Vec<&str> = text.lines().collect();
+    let mut lines: Vec<&str> = text.lines().collect();
+    if lines.len() == 4 && is_fit_line(lines[1]) {
+        lines.remove(1);
+    }
     assert_eq!(
         lines.len(),
         3,
-        "a non-zero run's stderr must be the banner and the two plain lines: {text:?}"
+        "a non-zero run's stderr must be the banner, the fit line if any, and the two plain \
+         lines: {text:?}"
     );
     assert!(
         lines[0].contains("emergency KILL"),
@@ -1355,4 +1377,514 @@ fn a_missing_command_is_named_as_the_command_after_the_separator() {
         text.ends_with(&command_line_lines(Some("the command after --"))),
         "stderr must end with the missing-command plain lines: {text:?}"
     );
+}
+
+/// The warning band during a real run: the lines a run prints while its footprint sits between the
+/// recovery and warning thresholds, checked against the report's own records.
+#[cfg(target_os = "macos")]
+mod band {
+    use std::fs;
+    use std::io::{BufRead, BufReader, Write};
+    use std::path::{Path, PathBuf};
+    use std::process::{Child, ChildStdin, Command, Stdio};
+    use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use mlx_guard_core::{
+        JournalEntry, JournalRecovery, Observed, PolicyState, ReportV1, TransitionRecord,
+    };
+
+    use super::{TestDirectory, assert_only_launch_banner, doc_link, spoken_bytes, spoken_ms};
+
+    const GUARD: &str = env!("CARGO_BIN_EXE_mlx-guard");
+    const ENTERED: &str = "mlx-guard: warning: ";
+    const CLEARED: &str = "mlx-guard: warning cleared: ";
+    /// `--max-footprint 70MiB` has a 7 MiB band step: warning 63 MiB, recovery 56 MiB, emergency
+    /// 77 MiB. The allocate fixture holds 64 MiB plus a base measured at about 1.2 MiB on macOS
+    /// 27.2, so the held footprint sits in the band and short of the limit.
+    const LIMIT: &str = "70MiB";
+    const WARNING_BYTES: u64 = 66_060_288;
+    const RECOVERY_BYTES: u64 = 58_720_256;
+    const LIMIT_BYTES: u64 = 73_400_320;
+    /// Long enough for a 3 vCPU runner to allocate 64 MiB and sample it, and shorter than the
+    /// fixture's own 9 s ceiling, so a missing line fails here and not as a fixture timeout.
+    const LINE_DEADLINE: Duration = Duration::from_secs(8);
+
+    /// The fixture lives in another crate of this workspace: `MLX_GUARD_FIXTURE` wins, otherwise it
+    /// sits next to the supervisor in the target directory, where a workspace build puts it.
+    fn fixture() -> PathBuf {
+        let path = std::env::var_os("MLX_GUARD_FIXTURE").map_or_else(
+            || Path::new(GUARD).with_file_name("mlx-guard-fixture"),
+            PathBuf::from,
+        );
+        assert!(
+            path.is_file(),
+            "no fixture at {}; run `cargo build -p mlx-guard-test-support --bin mlx-guard-fixture`",
+            path.display()
+        );
+        path
+    }
+
+    /// A supervised allocate fixture driven through its stdin, with stderr read line by line as
+    /// it arrives. Dropping it closes stdin, which ends the fixture, and then kills a supervisor
+    /// that has not exited, so a failed test leaves nothing running.
+    struct BandRun {
+        child: Child,
+        stdin: Option<ChildStdin>,
+        lines: Receiver<String>,
+        seen: Vec<String>,
+        journal_path: PathBuf,
+    }
+
+    impl BandRun {
+        fn start(mode: &[&str], report_path: &Path) -> Self {
+            let mut child = Command::new(GUARD)
+                .args(mode)
+                .args(["--sample-interval", "10ms", "--report"])
+                .arg(report_path)
+                .arg("--")
+                .arg(fixture())
+                .args(["allocate", "67108864", "9000"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("the supervisor must start");
+            let stdin = child.stdin.take();
+            let mut stderr = BufReader::new(child.stderr.take().expect("stderr is piped"));
+            let (sender, lines) = mpsc::channel();
+            thread::spawn(move || {
+                let mut line = Vec::new();
+                while stderr
+                    .read_until(b'\n', &mut line)
+                    .is_ok_and(|read| read > 0)
+                {
+                    if sender
+                        .send(String::from_utf8_lossy(&line).into_owned())
+                        .is_err()
+                    {
+                        return;
+                    }
+                    line.clear();
+                }
+            });
+            let journal_name = format!(
+                ".{}.journal",
+                report_path.file_name().unwrap().to_string_lossy()
+            );
+            Self {
+                child,
+                stdin,
+                lines,
+                seen: Vec::new(),
+                journal_path: report_path.with_file_name(journal_name),
+            }
+        }
+
+        fn send(&mut self, command: &str) {
+            let stdin = self.stdin.as_mut().expect("stdin is open until finish");
+            stdin.write_all(format!("{command}\n").as_bytes()).unwrap();
+        }
+
+        /// The first stderr line starting with `prefix`, newline included, waiting at most
+        /// `LINE_DEADLINE` for it while the run is still going.
+        fn wait_for_line(&mut self, prefix: &str) -> String {
+            if let Some(line) = self.seen.iter().find(|line| line.starts_with(prefix)) {
+                return line.clone();
+            }
+            let deadline = Instant::now() + LINE_DEADLINE;
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                match self.lines.recv_timeout(left) {
+                    Ok(line) => {
+                        self.seen.push(line.clone());
+                        if line.starts_with(prefix) {
+                            return line;
+                        }
+                    }
+                    Err(RecvTimeoutError::Timeout) => panic!(
+                        "no {prefix:?} line within {LINE_DEADLINE:?}; stderr so far: {:?}",
+                        self.seen
+                    ),
+                    Err(RecvTimeoutError::Disconnected) => {
+                        panic!("stderr ended with no {prefix:?} line: {:?}", self.seen)
+                    }
+                }
+            }
+        }
+
+        /// Wait until the journal holds a sample that the predicate accepts.
+        fn wait_for_sample(&self, accept: impl Fn(u64) -> bool) {
+            let deadline = Instant::now() + LINE_DEADLINE;
+            loop {
+                if let Ok(recovery) = JournalRecovery::read(&self.journal_path)
+                    && recovery.records.iter().any(|record| {
+                        matches!(
+                            &record.entry,
+                            JournalEntry::Sample(window) if matches!(
+                                window.aggregate_footprint_bytes,
+                                Observed::Available { value } if accept(value)
+                            )
+                        )
+                    })
+                {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "no such sample within {LINE_DEADLINE:?}"
+                );
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        /// Close stdin after `exit`, wait for the supervisor, and return its exit code with every
+        /// stderr line it wrote.
+        fn finish(&mut self) -> (Option<i32>, Vec<String>) {
+            self.send("exit");
+            self.stdin = None;
+            let status = self
+                .child
+                .wait()
+                .expect("the supervisor must be waited for");
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                match self.lines.recv_timeout(left) {
+                    Ok(line) => self.seen.push(line),
+                    Err(RecvTimeoutError::Disconnected) => break,
+                    Err(RecvTimeoutError::Timeout) => panic!("stderr did not reach end of file"),
+                }
+            }
+            (status.code(), self.seen.clone())
+        }
+    }
+
+    impl Drop for BandRun {
+        fn drop(&mut self) {
+            self.stdin = None;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while self.child.try_wait().ok().flatten().is_none() {
+                if Instant::now() >= deadline {
+                    self.child.kill().ok();
+                    self.child.wait().ok();
+                    return;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }
+
+    fn read_report(path: &Path) -> ReportV1 {
+        ReportV1::from_json(&fs::read_to_string(path).expect("the final report must exist"))
+            .expect("the final report must validate")
+    }
+
+    fn transition(report: &ReportV1, from: PolicyState, to: PolicyState) -> &TransitionRecord {
+        report
+            .transitions
+            .iter()
+            .find(|record| record.from == from && record.to == to)
+            .unwrap_or_else(|| panic!("no {from:?} to {to:?} record: {:?}", report.transitions))
+    }
+
+    #[test]
+    fn a_run_in_the_band_prints_the_entered_line_matching_the_transition() {
+        // Bug: the line and the report disagree: the line reads a different clock, or prints the
+        // previous sample's footprint instead of the one that crossed.
+        let directory = TestDirectory::new();
+        let report_path = directory.0.join("report.json");
+        let mut run = BandRun::start(&["run", "--max-footprint", LIMIT], &report_path);
+        run.send("allocate");
+        let line = run.wait_for_line(ENTERED);
+        run.send("release");
+        let (code, stderr) = run.finish();
+
+        assert_eq!(code, Some(0), "stderr: {stderr:?}");
+        let report = read_report(&report_path);
+        let entered = transition(&report, PolicyState::Normal, PolicyState::Warning);
+        let footprint = entered
+            .aggregate_footprint_bytes
+            .expect("the crossing record carries its sample");
+        assert!(
+            (WARNING_BYTES..LIMIT_BYTES).contains(&footprint),
+            "the crossing sample must sit in the band: {footprint}"
+        );
+        assert_eq!(
+            line,
+            format!(
+                "mlx-guard: warning: the OS-accounted footprint reached {} at {}, at or above the \
+                 63.00 MiB warning threshold for your 70.00 MiB limit; 2 samples in a row at or \
+                 above the limit stop the command, and 1 sample at or above the 77.00 MiB \
+                 emergency threshold kills it at once, with no checkpoint. More: {}\n",
+                spoken_bytes(footprint),
+                spoken_ms(entered.at_ms),
+                doc_link("warnings-during-a-run")
+            )
+        );
+    }
+
+    #[test]
+    fn a_released_allocation_prints_the_cleared_line() {
+        // Bug: recovery is wired to the wrong state, so the warning never clears on stderr and the
+        // user is left believing the footprint is still in the band.
+        let directory = TestDirectory::new();
+        let report_path = directory.0.join("report.json");
+        let mut run = BandRun::start(&["run", "--max-footprint", LIMIT], &report_path);
+        run.send("allocate");
+        run.wait_for_line(ENTERED);
+        run.send("release");
+        // Waited for while the command still runs, so the line is shown to arrive before exit.
+        let line = run.wait_for_line(CLEARED);
+        let (code, stderr) = run.finish();
+
+        assert_eq!(code, Some(0), "stderr: {stderr:?}");
+        let report = read_report(&report_path);
+        let cleared = transition(&report, PolicyState::Warning, PolicyState::Normal);
+        let footprint = cleared
+            .aggregate_footprint_bytes
+            .expect("the recovery record carries its sample");
+        assert!(
+            footprint <= RECOVERY_BYTES,
+            "the recovery sample must be at or below the recovery threshold: {footprint}"
+        );
+        assert_eq!(
+            line,
+            format!(
+                "mlx-guard: warning cleared: the OS-accounted footprint fell to {} at {}, at or \
+                 below the 56.00 MiB recovery threshold for your 70.00 MiB limit.\n",
+                spoken_bytes(footprint),
+                spoken_ms(cleared.at_ms)
+            )
+        );
+    }
+
+    #[test]
+    fn a_run_that_never_reaches_the_band_prints_no_warning() {
+        // Bug: a band line on an ordinary run, one whose footprint never reaches the warning
+        // threshold.
+        let directory = TestDirectory::new();
+        let output = Command::new(GUARD)
+            .args([
+                "run",
+                "--max-footprint",
+                "64MiB",
+                "--sample-interval",
+                "10ms",
+            ])
+            .arg("--report")
+            .arg(directory.0.join("report.json"))
+            .args(["--", "/bin/sleep", "1"])
+            .stdin(Stdio::null())
+            .output()
+            .expect("the command must run");
+
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_only_launch_banner(&output.stderr);
+    }
+
+    #[test]
+    fn observe_prints_no_band_line() {
+        // Bug: the band leaks into `observe`, which has no limit and so no band to report.
+        let directory = TestDirectory::new();
+        let report_path = directory.0.join("report.json");
+        let mut run = BandRun::start(&["observe"], &report_path);
+        run.send("allocate");
+        // The same footprint that enters the band under `run --max-footprint 70MiB`, then a few
+        // more samples, so a line printed at the crossing has had time to arrive.
+        run.wait_for_sample(|value| value >= WARNING_BYTES);
+        thread::sleep(Duration::from_millis(200));
+        run.send("release");
+        let (code, stderr) = run.finish();
+
+        assert_eq!(code, Some(0), "stderr: {stderr:?}");
+        assert!(stderr.is_empty(), "observe wrote to stderr: {stderr:?}");
+        assert_eq!(
+            read_report(&report_path).configuration.mode,
+            mlx_guard_core::ReportMode::Observe
+        );
+    }
+}
+
+/// The launch fit line: one warning after the banner when the limit is more than the memory
+/// macOS reported as not wired just before launch.
+#[cfg(target_os = "macos")]
+mod fit {
+    use std::fs;
+    use std::path::Path;
+    use std::process::{Command, Output, Stdio};
+
+    use mlx_guard_core::explain::format_bytes;
+    use mlx_guard_core::{Observed, PrelaunchRecord, PrelaunchWarning, ReportMode, ReportV1};
+
+    use super::{FIT_PREFIX, TestDirectory, doc_link, plain_lines};
+
+    const GUARD: &str = env!("CARGO_BIN_EXE_mlx-guard");
+    /// A limit no Mac this runs on has as memory, so the line must print.
+    const BEYOND: &str = "1TiB";
+
+    fn read_report(path: &Path) -> ReportV1 {
+        ReportV1::from_json(&fs::read_to_string(path).expect("final report must exist"))
+            .expect("the report must parse as schema v1")
+    }
+
+    fn guard(mode: &[&str], report_path: &Path, command: &[&str]) -> Output {
+        Command::new(GUARD)
+            .args(mode)
+            .args(["--sample-interval", "10ms", "--report"])
+            .arg(report_path)
+            .arg("--")
+            .args(command)
+            .stdin(Stdio::null())
+            .output()
+            .expect("the command must run")
+    }
+
+    /// The estimate the report recorded, which must be a number.
+    fn recorded_estimate(prelaunch: &PrelaunchRecord) -> u64 {
+        match prelaunch.memory_estimate {
+            Observed::Available { value } => value,
+            ref other => panic!("the estimate must be available on macOS: {other:?}"),
+        }
+    }
+
+    /// The fit line for a 1 TiB limit, with the estimate the report recorded. 1 TiB prints as
+    /// GiB, and no Mac's estimate renders like it, so the short form is the one expected.
+    fn beyond_line(estimate: u64) -> String {
+        format!(
+            "{FIT_PREFIX}1024.00 GiB is more than the {} macOS reported as not wired just before \
+             launch, so a run that reaches it may not fit in memory on this Mac. That number is \
+             one estimate at one moment and counts every other program's memory as room. \
+             mlx-guard runs with your limit as given. More: {}",
+            format_bytes(estimate),
+            doc_link("warnings-during-a-run")
+        )
+    }
+
+    #[test]
+    fn a_limit_beyond_this_machine_prints_the_fit_line_and_still_runs() {
+        // Bug: the check refuses the run, changes its exit status, prints the line without
+        // recording the warning, or prints a number other than the one recorded.
+        let directory = TestDirectory::new();
+        let report_path = directory.0.join("report.json");
+        let output = guard(
+            &["run", "--max-footprint", BEYOND],
+            &report_path,
+            &["/bin/sh", "-c", "exit 3"],
+        );
+
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "the command's own status: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = read_report(&report_path);
+        let prelaunch = report
+            .prelaunch
+            .expect("a run report must carry the launch estimate");
+        assert_eq!(prelaunch.warnings, [PrelaunchWarning::LimitMayNotFit]);
+        let estimate = recorded_estimate(&prelaunch);
+        let text = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "the banner, then the fit line: {text:?}");
+        assert!(lines[0].contains("emergency KILL"), "{text:?}");
+        assert_eq!(lines[1], beyond_line(estimate));
+        assert!(text.ends_with('\n'), "{text:?}");
+        assert_eq!(
+            report.outcome.kind,
+            mlx_guard_core::TerminalKind::ChildExited { code: 3 }
+        );
+    }
+
+    #[test]
+    fn a_modest_limit_prints_no_fit_line() {
+        // Bug: the line printed on every run, whatever the limit and the estimate.
+        let directory = TestDirectory::new();
+        let report_path = directory.0.join("report.json");
+        let output = guard(
+            &["run", "--max-footprint", "64MiB"],
+            &report_path,
+            &["/usr/bin/true"],
+        );
+
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let text = String::from_utf8_lossy(&output.stderr);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 1, "the banner alone: {text:?}");
+        assert!(lines[0].contains("emergency KILL"), "{text:?}");
+        let prelaunch = read_report(&report_path)
+            .prelaunch
+            .expect("a run report records the estimate even when no line prints");
+        assert!(recorded_estimate(&prelaunch) > 64 << 20);
+        assert!(prelaunch.warnings.is_empty());
+    }
+
+    #[test]
+    fn observe_prints_no_fit_line_and_records_no_prelaunch() {
+        // Bug: the check leaks into `observe`, which has no limit to compare.
+        let directory = TestDirectory::new();
+        let report_path = directory.0.join("report.json");
+        let output = guard(&["observe"], &report_path, &["/usr/bin/true"]);
+
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            output.stderr.is_empty(),
+            "observe wrote to stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report = read_report(&report_path);
+        assert_eq!(report.configuration.mode, ReportMode::Observe);
+        assert_eq!(report.prelaunch, None);
+    }
+
+    #[test]
+    fn a_failed_launch_prints_no_fit_line_but_records_the_number() {
+        // Bug: the line announces a command that never ran, or a failed launch loses the number
+        // measured before it.
+        let directory = TestDirectory::new();
+        let report_path = directory.0.join("report.json");
+        let output = guard(
+            &["run", "--max-footprint", BEYOND],
+            &report_path,
+            &["/definitely/missing/mlx-guard-worker"],
+        );
+
+        assert_eq!(output.status.code(), Some(127));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            format!(
+                "mlx-guard: command was not found\n{}",
+                plain_lines(
+                    "no executable was found for the command named after --, so nothing was \
+                     launched.",
+                    "check the spelling, give the full path, or activate the environment that \
+                     provides it; give the retry a new --report name, because this run kept its \
+                     report.",
+                    "127-not-found",
+                )
+            )
+        );
+        let prelaunch = read_report(&report_path)
+            .prelaunch
+            .expect("a failed launch still records the estimate");
+        assert!(recorded_estimate(&prelaunch) > 0);
+        assert_eq!(prelaunch.warnings, [PrelaunchWarning::LimitMayNotFit]);
+    }
 }

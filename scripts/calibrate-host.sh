@@ -194,10 +194,44 @@ chunk_done() {
     return 1
 }
 
+# keep_failed_attempt ARTIFACT LOG — a rerun never destroys an earlier attempt's evidence: the
+# artifact (a file or a directory) and the transcript, whichever exist, move into
+# $log_directory/attempts/ under the first attempt number N free there for both:
+# NAME.attempt-N.json (NAME.attempt-N for a directory) and NAME.attempt-N.log. The logs
+# directory is excluded from the publish scan and leaves as OUTPUT.logs before the staging
+# directory becomes the bundle, so no attempt is ever published; the canonical names are free
+# for the new attempt.
+keep_failed_attempt() {
+    local artifact=$1 log=$2 attempts="$log_directory/attempts"
+    local artifact_stem="$attempts/${artifact##*/}" artifact_suffix=""
+    local log_stem="$attempts/${log##*/}" attempt=1
+    if [[ ! -e "$artifact" && ! -e "$log" ]]; then
+        return 0
+    fi
+    if [[ "$artifact" == *.json ]]; then
+        artifact_stem=${artifact_stem%.json}
+        artifact_suffix=.json
+    fi
+    log_stem=${log_stem%.log}
+    while [[ -e "$artifact_stem.attempt-$attempt$artifact_suffix" \
+        || -e "$log_stem.attempt-$attempt.log" ]]; do
+        attempt=$((attempt + 1))
+    done
+    mkdir -p "$attempts"
+    if [[ -e "$artifact" ]]; then
+        mv "$artifact" "$artifact_stem.attempt-$attempt$artifact_suffix"
+    fi
+    if [[ -e "$log" ]]; then
+        mv "$log" "$log_stem.attempt-$attempt.log"
+    fi
+    echo "[keep] the earlier attempt is kept in $attempts as attempt $attempt"
+}
+
 # run_chunk NAME ARTIFACT COMMAND... — runs COMMAND (an `env VAR=... cargo test ...` line) with
-# its transcript tee'd to the logs, then requires the artifact and a clean process table. The
-# artifact is what a retry removes first: a file for most chunks, the whole output directory for
-# the scenarios chunk, whose test refuses to run into an existing directory.
+# its transcript tee'd to the logs, then requires the artifact and a clean process table. A
+# retry first moves the earlier attempt's artifact and transcript under a numbered attempt name
+# into the logs' attempts/ directory (keep_failed_attempt): the artifact is a file for most chunks and the whole output directory
+# for the scenarios chunk, whose test refuses to run into an existing directory.
 run_chunk() {
     local name=$1 artifact=$2
     shift 2
@@ -206,7 +240,8 @@ run_chunk() {
     fi
     refuse_strays "before chunk $name"
     echo "[run] $name -> $artifact"
-    rm -rf "$artifact" "$log_directory/$name.ok"
+    rm -f "$log_directory/$name.ok"
+    keep_failed_attempt "$artifact" "$log_directory/$name.log"
     "$@" 2>&1 | tee "$log_directory/$name.log"
     if [[ ! -e "$artifact" ]]; then
         echo "chunk $name finished without writing $artifact" >&2

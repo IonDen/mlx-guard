@@ -265,6 +265,9 @@ impl InterventionActuator for ProcessInterventionActuator<'_> {
                     .map_err(|error| map_control_error(error.kind()))
                     .and_then(|result| map_signal_result(result, true));
                 if result.is_err() {
+                    // The signal failure in `result` is what the caller records. `cancel` marks the
+                    // protocol cancelled before it shuts the socket down, so a failed shutdown only
+                    // leaves the descriptor open until the channel drops; it has nothing to add.
                     let _ = binding.channel.cancel(requested_at);
                 }
                 result

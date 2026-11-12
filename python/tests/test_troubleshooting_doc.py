@@ -19,6 +19,9 @@ FIXTURES = ROOT / "crates" / "mlx-guard-core" / "tests" / "fixtures" / "explain"
 ANCHORS_TXT = FIXTURES / "anchors.txt"
 CASES_JSON = FIXTURES / "cases.json"
 EARLY_JSON = FIXTURES / "early.json"
+WARNINGS_JSON = FIXTURES / "warnings.json"
+# The band lines' anchor (mlx_guard_core::warnings::WARNING_ANCHOR), a literal from the line text.
+WARNING_ANCHOR = "warnings-during-a-run"
 # An inline-code span is taken as a quote of the binary when it has at least this many words.
 # Shorter spans are flags, field names or values (`--max-footprint`, `outcome.kind`, `0700`).
 QUOTE_MIN_WORDS = 5
@@ -110,6 +113,19 @@ def printed_lines(texts: list[str]) -> list[str]:
     return lines
 
 
+def warning_lines(texts: list[str]) -> list[str]:
+    """Return the band lines from ``warnings.json`` texts, each without its link."""
+    return [text.split(MORE, 1)[0] for text in texts]
+
+
+def corpus_lines() -> list[str]:
+    """Return every sentence the binary prints, from all three corpora."""
+    texts = [case["text"] for case in json.loads(CASES_JSON.read_text(encoding="utf-8"))]
+    texts += [entry["text"] for entry in json.loads(EARLY_JSON.read_text(encoding="utf-8"))]
+    warnings = [row["text"] for row in json.loads(WARNINGS_JSON.read_text(encoding="utf-8"))]
+    return printed_lines(texts) + warning_lines(warnings)
+
+
 def quote_pattern(quote: str) -> re.Pattern[str]:
     """Compile a page quote; a ``{placeholder}`` stands for any filled-in run value.
 
@@ -190,6 +206,28 @@ class QuoteRuleTests(unittest.TestCase):
         text = "what happened: a b.\nwhat to do: c d. More: https://x/y.md#z"
         self.assertEqual(printed_lines([text]), ["a b.", "c d."])
 
+    def test_warning_lines_drop_only_the_link(self) -> None:
+        # Bug: a band line run through printed_lines (it has no "what to do" half), or its link
+        # left in, so no page quote of its last clause matches.
+        texts = ["warning: a b, at or above c. More: https://x/y.md#z", "warning cleared: d e."]
+        self.assertEqual(
+            warning_lines(texts), ["warning: a b, at or above c.", "warning cleared: d e."]
+        )
+
+    def test_band_lines_count_as_printed(self) -> None:
+        # Bug: warnings.json left out of the scan, so a page quote of a band line can never match.
+        lines = corpus_lines()
+        self.assertTrue(
+            quote_is_printed(
+                "at or below the {value} recovery threshold for your {limit} limit.", lines
+            )
+        )
+        self.assertTrue(
+            quote_is_printed(
+                "and has not fallen to the {value} recovery threshold since {t};", lines
+            )
+        )
+
 
 class TroubleshootingPageTests(unittest.TestCase):
     page: str
@@ -214,6 +252,37 @@ class TroubleshootingPageTests(unittest.TestCase):
         slugs = set(heading_slugs(self.page))
         self.assertEqual(sorted(listed - slugs), [], "anchors.txt entries with no heading")
         self.assertEqual(sorted(emitted - slugs), [], "cases.json anchors with no heading")
+
+    def test_warning_anchor_has_a_heading(self) -> None:
+        # Bug this catches: the band lines' "More:" link pointing at a section the page does not
+        # have, or a corpus line linking an anchor other than the band lines' own.
+        rows = json.loads(WARNINGS_JSON.read_text(encoding="utf-8"))
+        emitted = {
+            m.group(1)
+            for row in rows
+            for m in re.finditer(r"TROUBLESHOOTING\.md#([^\s)]+)", row["text"])
+        }
+        self.assertEqual(emitted, {WARNING_ANCHOR}, "anchors linked from warnings.json")
+        self.assertIn(WARNING_ANCHOR, heading_slugs(self.page))
+
+    def test_warning_section_quotes_each_band_line(self) -> None:
+        # Bug this catches: a quote in "Warnings during a run" that falls out of the quote scan
+        # (a blank line or a stray backtick inside it), so the drift test below never checks it
+        # and still passes; or a band line the section no longer quotes at all.
+        section = self.page.split("\n## Warnings during a run\n", 1)[1].split("\n## ", 1)[0]
+        quotes = quoted_spans(section)
+        rows = json.loads(WARNINGS_JSON.read_text(encoding="utf-8"))
+        missing = [
+            kind
+            for kind in ("entered", "still", "cleared")
+            if not any(
+                quote_is_printed(
+                    quote, warning_lines([row["text"] for row in rows if row["kind"] == kind])
+                )
+                for quote in quotes
+            )
+        ]
+        self.assertEqual(missing, [], f"band lines the section does not quote; scanned: {quotes}")
 
     def test_every_readme_exit_row_has_a_section(self) -> None:
         # Bug this catches: an exit code row in the README (or the page's own table) with no
@@ -260,9 +329,8 @@ class TroubleshootingPageTests(unittest.TestCase):
         # Bug this catches: a page quote that drifts from the binary's own sentences (a reworded
         # 64, 70 or 74 line, an old fixture value, a clause the explainer no longer prints).
         # Both corpora are checked against the binary by the native and Python goldens.
-        texts = [case["text"] for case in json.loads(CASES_JSON.read_text(encoding="utf-8"))]
-        texts += [entry["text"] for entry in json.loads(EARLY_JSON.read_text(encoding="utf-8"))]
-        lines = printed_lines(texts)
+        # The band lines in warnings.json count as printed too.
+        lines = corpus_lines()
         quotes = quoted_spans(self.page)
         self.assertGreater(len(quotes), 40, "the quote scan found almost nothing on the page")
         unmatched = [quote for quote in quotes if not quote_is_printed(quote, lines)]
