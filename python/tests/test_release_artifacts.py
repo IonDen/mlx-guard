@@ -4,6 +4,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import re
 import tempfile
 import unittest
 import zipfile
@@ -20,12 +21,71 @@ def _load_sanitizer() -> ModuleType:
     return module
 
 
+_STEP_START = re.compile(r"^      - ")
+_STEP_KEY = re.compile(r"^(?:      - |        )([A-Za-z_][\w-]*):\s*(.*)$")
+_ENV_ENTRY = re.compile(r"^          ([A-Za-z_]\w*):\s*(.*)$")
+_RELEASE_TEST_SCRIPTS = ("scripts/test-fast.sh", "scripts/test-full.sh")
+
+
+def _step_env(workflow: str, run: str) -> list[dict[str, str]]:
+    """Return the `env` mapping of every step whose one-line `run` is exactly `run`."""
+    steps: list[list[str]] = []
+    for line in workflow.splitlines():
+        if _STEP_START.match(line):
+            steps.append([line])
+        elif steps and (line.startswith("        ") or not line.strip()):
+            steps[-1].append(line)
+        elif steps and line.strip():
+            steps.append([])
+    found: list[dict[str, str]] = []
+    for step in steps:
+        keys: dict[str, str] = {}
+        env: dict[str, str] = {}
+        in_env = False
+        for line in step:
+            key = _STEP_KEY.match(line)
+            if key:
+                keys[key.group(1)] = key.group(2).strip()
+                in_env = key.group(1) == "env" and not key.group(2).strip()
+                continue
+            entry = _ENV_ENTRY.match(line)
+            if in_env and entry:
+                env[entry.group(1)] = entry.group(2).strip().strip("\"'")
+        if keys.get("run") == run:
+            found.append(env)
+    return found
+
+
 class ReleaseArtifactTests(unittest.TestCase):
     def test_release_runner_installs_locked_cargo_audit(self) -> None:
         # Catches tag-only verification depending on cargo-audit from a mutable runner image.
         root = Path(__file__).resolve().parents[2]
         workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
         self.assertIn("cargo install cargo-audit --locked", workflow)
+
+    def test_release_runs_the_rust_tests_one_at_a_time(self) -> None:
+        """Catches the release test step losing `RUST_TEST_THREADS: "1"` or setting another value.
+
+        Main CI runs the Rust tests with `--test-threads=1`; without the same setting the release
+        build runs real-process timing tests in parallel on a 3-vCPU runner and can fail on code
+        that CI passed.
+        """
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/release.yml").read_text(encoding="utf-8")
+        envs = _step_env(workflow, "./scripts/test-full.sh")
+        self.assertEqual(len(envs), 1, "expected exactly one step that runs ./scripts/test-full.sh")
+        self.assertEqual(envs[0].get("RUST_TEST_THREADS"), "1")
+
+    def test_release_test_scripts_leave_the_thread_count_to_the_environment(self) -> None:
+        """Catches a test script appending `-- --test-threads=N` to its `cargo test` line.
+
+        The flag overrides `RUST_TEST_THREADS`, so the release step's `"1"` would stop applying
+        without any change to `release.yml`. CI's own `--test-threads=1` lives in `ci.yml`.
+        """
+        root = Path(__file__).resolve().parents[2]
+        for script in _RELEASE_TEST_SCRIPTS:
+            with self.subTest(script=script):
+                self.assertNotIn("--test-threads", (root / script).read_text(encoding="utf-8"))
 
     def test_release_scripts_only_use_baseline_text_search(self) -> None:
         # Catches reintroducing a ripgrep dependency that clean macOS runners do not provide.
