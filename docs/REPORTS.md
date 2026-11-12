@@ -129,14 +129,14 @@ value); `memory_categories`, the page counts behind it (`free_bytes`, `active_by
 `inactive_bytes`, `wired_bytes`, and `compressor_bytes`); and `warnings`, which holds
 `limit_may_not_fit` whenever the limit is more than the estimate. The line itself prints only after
 a successful launch, so a failed launch records the entry without a line, and a line that could not
-be written is still recorded (see [the launch line](TROUBLESHOOTING.md#the-launch-line)). The field is absent from `observe` reports
-and from reports written before 0.5.0, and validation accepts a report without it. When present, it
-must be on a `run` report, and `limit_may_not_fit` is accepted only when the estimate is available.
-Validation does not compare the estimate with the limit. What the number adds up and when the line
-fires belong to the release that wrote the report, named by `package_version`, so do not recompute
-the comparison from the fields. The field records one estimate at one moment. It does not certify
-that a run fits in memory, and its absence or an empty `warnings` list does not mean the run fit.
-Schema version 1 is unchanged.
+be written is still recorded (see [the launch line](TROUBLESHOOTING.md#the-launch-line)). The field
+is absent from `observe` reports and from reports written before 0.5.0, and validation accepts a
+report without it. When present, it must be on a `run` report, and `limit_may_not_fit` is accepted
+only when the estimate is available. Validation does not compare the estimate with the limit. What
+the number adds up and when the line fires belong to the release that wrote the report, named by
+`package_version`, so do not recompute the comparison from the fields. The field records one
+estimate at one moment. It does not certify that a run fits in memory, and its absence or an empty
+`warnings` list does not mean the run fit. Schema version 1 is unchanged.
 
 Advisory values retain their original schema-v1 fields. New writers may also add `pressure_level`
 and per-field `metadata` with the metric scope, public API source, observation timestamp, and

@@ -65,7 +65,7 @@ the command reads `/dev/null` instead and one stderr line says so. See the
 
 This output was captured on 2026-11-08 on the M1 Max 32 GB (macOS 27.2) with a 0.5.0
 build, with a non-terminal standard input, so it shows no terminal line. The reference
-measurements are on macOS 27.0.1. Timing and footprint
+measurements are on macOS 27.2. Timing and footprint
 values vary by host, so the stable facts are the typed outcome, sample count, and absence of
 signals.
 

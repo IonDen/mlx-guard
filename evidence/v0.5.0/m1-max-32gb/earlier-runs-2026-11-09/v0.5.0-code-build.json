@@ -1,0 +1,204 @@
+{
+  "schema_version": 1,
+  "requested_duration_seconds": 1800,
+  "actual_duration_nanoseconds": 1800003825250,
+  "sample_interval_milliseconds": 50,
+  "member_count": 16,
+  "history_capacity": 256,
+  "cpu_seconds": 50.466083,
+  "cpu_percent_of_one_core": 2.8036653195995753,
+  "starting_footprint_bytes": 1868184,
+  "final_footprint_bytes": 1933720,
+  "footprint_growth_bytes": 65536,
+  "maximum_resident_bytes": 3506176,
+  "final_history_length": 256,
+  "raw_observations": [
+    {
+      "elapsed_milliseconds": 0,
+      "current_footprint_bytes": 1868184,
+      "maximum_resident_bytes": 3424256,
+      "history_length": 176
+    },
+    {
+      "elapsed_milliseconds": 60028,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 120039,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 180003,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 240016,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 300055,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 360032,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 420007,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 480005,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 540025,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 600055,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 660018,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 720034,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 780045,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 840055,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 900050,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 960022,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1020031,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1080010,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1140001,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1200005,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1260047,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1320035,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1380040,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1440015,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1500033,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1560020,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1620045,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1680013,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1740029,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    },
+    {
+      "elapsed_milliseconds": 1800003,
+      "current_footprint_bytes": 1933720,
+      "maximum_resident_bytes": 3506176,
+      "history_length": 256
+    }
+  ],
+  "full_bounds_applied": true
+}

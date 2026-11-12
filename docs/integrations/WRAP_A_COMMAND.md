@@ -280,12 +280,15 @@ jq '.outcome.kind, .checkpoint' reports/lora-finetune.json
 From Python, `load_report` gives you the same data as a typed object:
 
 ```python
+from collections.abc import Mapping
 from pathlib import Path
 
 import mlx_guard
 
 report = mlx_guard.load_report(Path("reports/lora-finetune.json"))
-print(report.outcome.kind, report.payload["checkpoint"]["status"])
+checkpoint = report.payload.get("checkpoint")
+if isinstance(checkpoint, Mapping):
+    print(report.outcome.kind, checkpoint.get("status"))
 ```
 
 A command wrapped this way, never having connected `mlx_guard.CheckpointWorker`, always reports

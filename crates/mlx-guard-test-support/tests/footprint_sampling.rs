@@ -22,10 +22,10 @@ const ENDURANCE_HISTORY_CAPACITY: usize = 256;
 const MAX_RSS_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_FOOTPRINT_GROWTH_BYTES: u64 = 2 * 1024 * 1024;
 // Sampler CPU over the 30-minute run, in % of one core; it catches our own regressions.
-// Measured 2.58-2.83 % on macOS 27.2 (26B123), M1 Max 32 GB, 16 idle members, 50 ms, debug
-// build, four runs on 2026-11-09 (one of them a build of the v0.3.1 tag). The old 2.0 bound
-// dates from v0.1.0 and last read 1.90-1.93 % on macOS 27.0.1. 3.5 is about 24 % above the
-// highest 27.2 reading.
+// Measured 2.58-2.89 % on macOS 27.2 (26B123), M1 Max 32 GB, 16 idle members, 50 ms, debug
+// build, six 30-minute runs: four on 2026-11-09 (one a build of the v0.3.1 tag) and the
+// 2026-11-12 calibration and soak captures. The old 2.0 bound dates from v0.1.0 and last read
+// 1.90-1.93 % on macOS 27.0.1. 3.5 is about 21 % above the highest 27.2 reading (2.89 %).
 const ENDURANCE_MAX_CPU_PERCENT: f64 = 3.5;
 
 fn fixture(mode: &str, bytes: u64, wall_ms: u64) -> LaunchOptions {

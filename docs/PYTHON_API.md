@@ -42,12 +42,18 @@ in `iter_output()`. Code that reads a result should use `returncode` and `report
 launch check's number is in `report.payload["prelaunch"]` when the report has one (it is absent from
 `observe` reports and from reports written before 0.5.0). `memory_estimate` is a tagged object,
 for example `{"status": "available", "value": 30327881728}`; any other status carries no `value`.
-Read `["value"]` only when `["status"] == "available"`:
+Read `["value"]` only when `["status"] == "available"`. The payload is read-only: objects come
+back as `Mapping` values and arrays as tuples, not `dict` and `list`. Check each level with
+`isinstance(..., Mapping)` before indexing it:
 
 ```python
-estimate = report.payload["prelaunch"]["memory_estimate"]
-if estimate["status"] == "available":
-    not_wired_bytes = estimate["value"]
+from collections.abc import Mapping
+
+prelaunch = report.payload.get("prelaunch")
+if isinstance(prelaunch, Mapping):
+    estimate = prelaunch.get("memory_estimate")
+    if isinstance(estimate, Mapping) and estimate.get("status") == "available":
+        not_wired_bytes = estimate["value"]
 ```
 
 `start()` returns a `GuardProcess` for incremental work. Its `poll()` and `wait()` methods return
@@ -193,20 +199,23 @@ A later process can join an interrupted run back to whatever the worker actually
 the persisted report:
 
 ```python
+from collections.abc import Mapping
 from pathlib import Path
 
 import mlx_guard
 
 report = mlx_guard.load_report(Path("reports/train.json"))
 checkpoint = report.payload["checkpoint"]
-status = checkpoint["status"]
-request_id = checkpoint.get("request_id")
 
-if request_id is not None and status in (
-    "acknowledged_unverified_durability",
-    "timed_out",
-):
-    resume_training(f"checkpoints/{request_id}")
+if isinstance(checkpoint, Mapping):
+    status = checkpoint["status"]
+    request_id = checkpoint.get("request_id")
+
+    if request_id is not None and status in (
+        "acknowledged_unverified_durability",
+        "timed_out",
+    ):
+        resume_training(f"checkpoints/{request_id}")
 ```
 
 Match on `request_id`, the same value `save_checkpoint` embedded in its own save path above —

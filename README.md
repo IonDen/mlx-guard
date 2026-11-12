@@ -205,12 +205,11 @@ has one section per case, with what happened, why, what to do, and which report 
 Since 0.4.0 the same explanation is printed on stderr when a run ends with a non-zero exit. A
 command's own exit code that mlx-guard does not also use prints nothing.
 
-The warnings described next stop nothing. Only your limits decide when a run is stopped.
-Since 0.5.0, `run` also warns before it stops anything. When the footprint first reaches 10 % below
-your limit, it prints one line on stderr, repeats it at most every 5 minutes while the footprint stays
-high, and prints another when it falls back to 20 % below the limit. A warning changes nothing about
-when the command is stopped, and delivery is best effort: if nothing is reading stderr, a line can be
-lost. The report always has the facts. See
+Since 0.5.0, `run` also warns before it stops anything. When the OS-accounted footprint first
+reaches 10 % below your limit, it prints one line on stderr, repeats it at most every 5 minutes
+while the footprint stays high, and prints another when it falls back to 20 % below the limit.
+Warnings stop nothing: only your limits decide when a run is stopped. Delivery is best effort, so
+if nothing is reading stderr, a line can be lost. The report always has the facts. See
 [warnings during a run](https://github.com/IonDen/mlx-guard/blob/main/docs/TROUBLESHOOTING.md#warnings-during-a-run).
 
 `run` also checks your limit once at launch. If it is more than the memory macOS has not locked as
@@ -305,7 +304,7 @@ Check support and evidence:
 |---|---|
 | [Support matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/SUPPORT.md) | Supported platforms and release boundaries |
 | [Compatibility matrix](https://github.com/IonDen/mlx-guard/blob/main/docs/COMPATIBILITY.md) | Which hardware setups have measured evidence, which are untested, and how to fill a cell |
-| [M1 Max 32 GB evidence (0.3.1)](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.3.1/m1-max-32gb/README.md) | Raw 0.3.1 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
+| [M1 Max 32 GB evidence (0.5.0)](https://github.com/IonDen/mlx-guard/blob/main/evidence/v0.5.0/m1-max-32gb/README.md) | Raw 0.5.0 accuracy, timing, endurance, lifecycle, false-intervention, and escalation-envelope measurements |
 | [Security policy](https://github.com/IonDen/mlx-guard/blob/main/SECURITY.md) | Vulnerability reporting |
 | [Changelog](https://github.com/IonDen/mlx-guard/blob/main/CHANGELOG.md) | What changed in each release |
 

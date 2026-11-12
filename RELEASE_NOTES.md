@@ -53,14 +53,20 @@ limits do that, as before.
 
 ## Evidence
 
-The reference measurements remain the 0.3.1 bundle, captured on the M1 Max 32 GB MacBook Pro on
-macOS 27.0.1 (26A434), under `evidence/v0.3.1/m1-max-32gb/`. They were not repeated, and this release
-makes no new measurement claim. The README, the compatibility matrix, and the packaging notes still
-cite that bundle. Those numbers describe one host, one commit, and one build profile; they are not a
-promise for other Macs. The tutorial, the `mlx-train-perf` proof, and the in-house trial stay under
-`evidence/v0.2.0/` as recorded on macOS 26.6.2. The release workflow must also pass on GitHub's
-`macos-15` arm64 runner before publication. Intel Macs and other operating systems are not release
-targets.
+0.5.0 re-captured the reference calibration and soak on the M1 Max 32 GB MacBook Pro on macOS 27.2
+(26B123), under `evidence/v0.5.0/m1-max-32gb/`. Every bound passed. One bound changed: the 2 %
+sampler CPU bound failed on four 30-minute runs on 2026-11-09 (2.58 to 2.83 %). The sampler CPU
+row now records its reading with no 2 % target, and the endurance test fails above 3.5 % as a
+regression check. Six debug readings on 27.2 run from 2.58 % to 2.89 %, against 1.90 % and 1.93 %
+on 27.0.1. A build of the 0.3.1 code read 2.83 % on 27.2, so the rise is not in the 0.5.0 code
+alone, and the cause is not identified. The soak chunks show the same rise: escaping-churn went
+from 2.89 % to 4.09 % under a 5 % ceiling, and real-binary from 3.10 % to 4.50 % under 8 %.
+Every figure is inside its ceiling. The README, the compatibility matrix, and the packaging notes
+cite this bundle. Those numbers describe one host and the commits and build profiles recorded
+with them; they are not a promise for other Macs. The tutorial, the
+`mlx-train-perf` proof, and the in-house trial stay under `evidence/v0.2.0/` as recorded on macOS
+26.6.2. The release workflow must also pass on GitHub's `macos-15` arm64 runner before publication.
+Intel Macs and other operating systems are not release targets.
 
 ## Upgrading
 

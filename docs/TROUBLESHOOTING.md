@@ -142,15 +142,16 @@ limit: choose one by observing the command first (see
 [choosing the limit](integrations/WRAP_A_COMMAND.md#choosing-the-limit)).
 
 **Good to know.** The line prints only after a successful launch. If the command fails to launch, no
-line is printed, but the report still holds the number and `limit_may_not_fit`. `observe` measures nothing new and prints nothing new. The line follows the same rules as
-the other warnings: only numbers `mlx-guard` measured, fixed text, no command or paths, and best-effort
-delivery.
+line is printed, but the report still holds the number, and also `limit_may_not_fit` when the limit
+is more than that number. `observe` measures nothing new and prints nothing new. The line follows
+the same rules as the other warnings: only numbers `mlx-guard` measured, fixed text, no command or
+paths, and best-effort delivery.
 
 **Report fields.** `prelaunch.memory_estimate` is the number; `prelaunch.memory_categories` holds the
 macOS page counts behind it; `prelaunch.warnings` holds `limit_may_not_fit` whenever the limit is
-more than the estimate; `configuration.max_footprint_bytes` is your limit. Do not recompute the comparison from a
-report: what the number adds up and when the line fires belong to the release in `package_version`.
-See [reports](REPORTS.md).
+more than the estimate; `configuration.max_footprint_bytes` is your limit. Do not recompute the
+comparison from a report: what the number adds up and when the line fires belong to the release in
+`package_version`. See [reports](REPORTS.md).
 
 ## 64: the command line
 
