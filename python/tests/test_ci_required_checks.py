@@ -27,6 +27,9 @@ REQUIRED_CHECK_NAMES = frozenset(
         "Rust (ubuntu-24.04)",
     }
 )
+# Checks that report but are not part of the protection rule. A job outside both sets fails the
+# test below, so a new job is a deliberate choice: required (change the rule too) or not.
+NON_REQUIRED_CHECK_NAMES = frozenset({"Release build rehearsal (cold macos-15)"})
 SCOPE_OUTPUT = "needs.scope.outputs.scope"
 
 _JOB = re.compile(r"^  ([A-Za-z_][\w-]*):\s*$")
@@ -219,9 +222,17 @@ class RequiredCheckNameTests(unittest.TestCase):
         self.assertEqual(skippable_matrix_jobs(workflow), [])
 
     def test_ci_workflow_reports_exactly_the_required_check_names(self) -> None:
-        # Red if a job is renamed or the matrix `os` list changes without the protection rule.
+        # Red if a job is renamed or the matrix `os` list changes without the protection rule, or
+        # a job is added without being declared required or not required.
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertEqual(reported_check_names(workflow), set(REQUIRED_CHECK_NAMES))
+        self.assertEqual(
+            reported_check_names(workflow), set(REQUIRED_CHECK_NAMES | NON_REQUIRED_CHECK_NAMES)
+        )
+
+    def test_no_check_name_is_both_required_and_not_required(self) -> None:
+        # Red if a required name is also listed as not required, which would let the test above
+        # pass while that required check no longer reports.
+        self.assertEqual(REQUIRED_CHECK_NAMES & NON_REQUIRED_CHECK_NAMES, frozenset())
 
     def test_ci_workflow_matrix_uses_only_keys_the_name_reader_follows(self) -> None:
         # Red if the matrix gains `include:` or `exclude:`. Those add or drop check names that
