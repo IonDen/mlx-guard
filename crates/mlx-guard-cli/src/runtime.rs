@@ -434,6 +434,8 @@ fn execute_run(options: &RunOptions, notices: &mut Notices) -> RuntimeResult {
         inventory,
         checkpoint_endpoint,
         sample_config,
+        &banner,
+        fit_notice,
         notices,
     ) {
         Ok(prepared) => prepared,
@@ -446,12 +448,6 @@ fn execute_run(options: &RunOptions, notices: &mut Notices) -> RuntimeResult {
             );
         }
     };
-    // The workload is now launched; announce the ceiling this run authorises. Printed only on a
-    // successful launch, so a configuration or launch failure never emits a spurious banner.
-    notices.send(format!("{banner}\n"));
-    if let Some(line) = fit_notice {
-        notices.send(line);
-    }
     let checkpoint_signal = checkpoint_signal_usr1();
     let binding = CheckpointBinding::new(
         &mut checkpoint_channel,
@@ -669,6 +665,8 @@ fn prepare_run_worker(
     inventory: NativeProcessInventory,
     inherited_checkpoint: CheckpointWorkerEndpoint,
     sample_config: SamplingConfig,
+    banner: &str,
+    fit_notice: Option<String>,
     notices: &mut Notices,
 ) -> Result<PreparedRun, RunLaunchFailure> {
     let mut process = OwnedProcess::launch_with_checkpoint(
@@ -680,6 +678,13 @@ fn prepare_run_worker(
         diagnostic: error.to_string(),
     })?;
     announce_stdin_disposition(&process, notices);
+    // The workload is now launched; announce the ceiling this run authorises, before identity
+    // inspection, so a command that ends before it still gets the lines. A failed launch returned
+    // above, so it never emits a spurious banner.
+    notices.send(format!("{banner}\n"));
+    if let Some(line) = fit_notice {
+        notices.send(line);
+    }
     let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
         outcome: SupervisorOutcome::SupervisorFailure,
         diagnostic: "root process identity is invalid".to_owned(),
