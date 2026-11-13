@@ -1,11 +1,11 @@
-# mlx-guard 0.5.1
+# mlx-guard 0.5.2
 
-`mlx-guard` 0.5.1 is a patch release of the alpha external runtime safety supervisor for MLX
+`mlx-guard` 0.5.2 is a patch release of the alpha external runtime safety supervisor for MLX
 workloads on Apple Silicon. It launches one command in an owned process group, samples the group's
 OS-accounted footprint, and applies an explicit memory limit and optional wall-time limit from
 outside the process. This release fixes one bug in how a sample that finds no processes is read at
 the end of a run: it printed a false "warning cleared" line, and it changed the count of missed
-readings.
+readings. Version 0.5.1 was tagged but never published; this release carries its fix.
 
 ## What is fixed
 
@@ -24,9 +24,9 @@ return to normal never caused a stop or a signal.
 The same change means an empty sample now neither counts as a missed reading nor resets the count
 of missed readings. This matters only when readings were already being missed as the run ended, and
 then the exit code can differ from 0.5.0 in either direction. In 0.5.0 a slow or late empty sample
-at the exit could be the third missed reading in a row and end a finished run with exit 70; 0.5.1
+at the exit could be the third missed reading in a row and end a finished run with exit 70; 0.5.2
 no longer does that. Also in 0.5.0 an empty sample reset the count, so misses on either side of it
-could not add up; in 0.5.1 they can, and the missed-reading limit applies as it does at any other
+could not add up; in 0.5.2 they can, and the missed-reading limit applies as it does at any other
 time in the run. A sample that is incomplete because the process listing failed still counts as a
 missed reading, as before.
 
@@ -49,7 +49,7 @@ unit test pins that the skipped sample is not counted as a missed reading.
 
 The 0.5.0 reference bundle under `evidence/v0.5.0/m1-max-32gb/` still applies. Its numbers
 describe one host and the commits and build profiles recorded with them; they are not a promise for
-other Macs. The examples were captured from the 0.5.1 build. The release workflow runs on GitHub's
+other Macs. The examples were captured from the 0.5.2 build. The release workflow runs on GitHub's
 `macos-15` arm64 runner. Intel Macs and other operating systems are not release targets.
 
 ## Upgrading

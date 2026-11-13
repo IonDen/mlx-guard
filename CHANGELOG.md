@@ -5,7 +5,9 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
-## [0.5.1] - 2026-11-13
+## [0.5.2] - 2026-11-13
+
+Version 0.5.1 was tagged but never published; this release carries its fix.
 
 ### Fixed
 
@@ -398,8 +400,8 @@ versions follow Semantic Versioning.
   strict Python report permissions, unpredictable checkpoint request IDs, locked dependencies,
   CycloneDX SBOM, release checksums, and a self-contained Trusted Publishing workflow.
 
-[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.5.1...HEAD
-[0.5.1]: https://github.com/IonDen/mlx-guard/compare/v0.5.0...v0.5.1
+[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/IonDen/mlx-guard/compare/v0.5.0...v0.5.2
 [0.5.0]: https://github.com/IonDen/mlx-guard/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/IonDen/mlx-guard/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/IonDen/mlx-guard/compare/v0.3.0...v0.3.1
