@@ -99,6 +99,12 @@ if grep -aEq 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|pypi-[A-Za-z0-9_-]{20}|hf_[A
     exit 1
 fi
 
+# Debug builds alone read this variable; finding it means the shipped binary is a debug build.
+if grep -aFq 'MLX_GUARD_NOTICE_TRACE' < <(unzip -p "$wheel" "${package_name}.data/scripts/mlx-guard"); then
+    echo "wheel binary is a debug build: it reads MLX_GUARD_NOTICE_TRACE" >&2
+    exit 1
+fi
+
 wheel_metadata=$(unzip -p "$wheel" 'mlx_guard-*.dist-info/METADATA')
 if ! grep -Fqx 'Requires-Python: >=3.10, <3.15' <<<"$wheel_metadata"; then
     echo "wheel has an unexpected Python compatibility range" >&2
