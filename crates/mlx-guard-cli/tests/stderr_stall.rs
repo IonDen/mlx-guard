@@ -56,10 +56,11 @@ fn a_dead_stdout_reader_keeps_exit_0_on_help() {
 
 #[cfg(target_os = "macos")]
 mod darwin {
+    use std::ffi::OsStr;
     use std::fs::{self, File};
     use std::io::{self, BufRead, BufReader, ErrorKind, PipeReader, PipeWriter, Read, Write};
     use std::os::fd::{AsRawFd, FromRawFd};
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     use std::path::{Path, PathBuf};
     use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -87,6 +88,15 @@ mod darwin {
     /// 1.2 MiB on macOS 27.2, so its footprint sits between the two.
     const BAND_WARNING_BYTES: u64 = 66_060_288;
     const BAND_LIMIT_BYTES: u64 = 73_400_320;
+    /// The longest the band run may go without a sample, from its start to its wall-time TERM. A
+    /// band line written on the supervising thread is not caught by this bound: the test never
+    /// reads the pipe, so that blocking write itself never returns, and the report deadline catches
+    /// it. This bounds a pause that ends, a late first sample and an early last one. The hosted
+    /// macos-15 runner (3 vCPU) kept 27, 26 and 25 samples over the 3 s run, an average of about
+    /// 110 to 120 ms per sample against the 50 ms interval; those runs did not record single gaps,
+    /// and a CI run that gets a report now lists its sample times in the job summary. 500 ms is
+    /// ten intervals and about four times that average.
+    const CADENCE_GAP_MS: u64 = 500;
     /// One `echo` per write, two bytes each, and a bound so an abandoned loop still ends by itself.
     const FLOOD: &str = "exec 1>&2; i=0; while [ \"$i\" -lt 2000000 ]; do echo x; i=$((i+1)); done";
 
@@ -894,34 +904,68 @@ mod darwin {
             "a normal to warning transition must be recorded: {:?}",
             report.transitions
         );
-        assert!(
-            report.samples.len() >= 30,
-            "a 3 s run sampled every 50 ms kept only {} samples",
-            report.samples.len()
-        );
-        let largest_gap = report
+        // No sample count: a slow runner can keep fewer samples without any stall (the hosted
+        // macos-15 runner kept 25 to 27, an average of about 110 to 120 ms per sample). Every
+        // timing message below prints all sample times, so a run slow throughout and a run with
+        // one gap can be told apart.
+        let captured: Vec<u64> = report
             .samples
-            .windows(2)
-            .map(|pair| {
-                pair[1]
-                    .captured_at_ms
-                    .saturating_sub(pair[0].captured_at_ms)
-            })
-            .max()
-            .expect("at least two samples");
-        assert!(
-            largest_gap <= 500,
-            "sampling stalled for {largest_gap} ms between two samples"
-        );
+            .iter()
+            .map(|sample| sample.captured_at_ms)
+            .collect();
         let term = report
             .signals
             .iter()
-            .find(|signal| signal.signal == 15 && signal.target == SignalTarget::OwnedProcessGroup)
-            .expect("the wall time must send TERM to the group");
-        assert_eq!(term.reason, Some(SignalReason::WallTime));
+            .find(|signal| signal.signal == 15 && signal.target == SignalTarget::OwnedProcessGroup);
+        // Before the timing asserts, so a run that fails one of them still leaves its sample
+        // times in the CI job summary and the job log.
+        let telemetry = cadence_summary_line(
+            "a_full_pipe_keeps_the_sample_cadence_inside_the_band",
+            &captured,
+            term.map(|signal| signal.at_ms),
+        );
+        append_to_step_summary(&telemetry);
+        write_to_job_log(&telemetry);
+        let term = term.unwrap_or_else(|| {
+            panic!("the wall time must send TERM to the group; samples at {captured:?} ms")
+        });
+        let first = *captured
+            .first()
+            .unwrap_or_else(|| panic!("the run kept no samples: {:?}", report.samples));
+        assert!(
+            first <= CADENCE_GAP_MS,
+            "the first sample came {first} ms after the start, a gap wider than \
+             {CADENCE_GAP_MS} ms; samples at {captured:?} ms"
+        );
+        if let Some((gap, after)) = captured
+            .windows(2)
+            .map(|pair| (pair[1].saturating_sub(pair[0]), pair[0]))
+            .max()
+        {
+            assert!(
+                gap <= CADENCE_GAP_MS,
+                "sampling stalled for {gap} ms after the sample at {after} ms, a gap wider than \
+                 {CADENCE_GAP_MS} ms; samples at {captured:?} ms"
+            );
+        }
+        let last = *captured
+            .last()
+            .expect("the first sample is also a last one");
+        let tail = term.at_ms.saturating_sub(last);
+        assert!(
+            tail <= CADENCE_GAP_MS,
+            "sampling stopped {tail} ms before the TERM at {} ms, a gap wider than \
+             {CADENCE_GAP_MS} ms; samples at {captured:?} ms",
+            term.at_ms
+        );
+        assert_eq!(
+            term.reason,
+            Some(SignalReason::WallTime),
+            "samples at {captured:?} ms"
+        );
         assert!(
             term.at_ms.abs_diff(3000) <= 500,
-            "the 3 s wall-time TERM came at {} ms",
+            "the 3 s wall-time TERM came at {} ms; samples at {captured:?} ms",
             term.at_ms
         );
 
@@ -930,6 +974,155 @@ mod darwin {
             supervisor.exit_code_within(Duration::from_secs(5), "reader released"),
             Some(75)
         );
+    }
+
+    /// One Markdown list item for the CI job summary: the sample count, the largest gap and the
+    /// sample it followed, the first sample, the tail before the TERM, and every sample time.
+    fn cadence_summary_line(test: &str, captured: &[u64], term_at_ms: Option<u64>) -> String {
+        let gap = captured
+            .windows(2)
+            .map(|pair| (pair[1].saturating_sub(pair[0]), pair[0]))
+            .max()
+            .map_or_else(
+                || "no gap".to_owned(),
+                |(gap, after)| format!("largest gap {gap} ms after the sample at {after} ms"),
+            );
+        let first = captured.first().map_or_else(
+            || "no first sample".to_owned(),
+            |first| format!("first sample at {first} ms"),
+        );
+        let tail = match (captured.last(), term_at_ms) {
+            (Some(last), Some(term)) => {
+                format!(
+                    "tail {} ms before the TERM at {term} ms",
+                    term.saturating_sub(*last)
+                )
+            }
+            (None, Some(term)) => format!("TERM at {term} ms"),
+            (_, None) => "no TERM".to_owned(),
+        };
+        format!(
+            "- `{test}`: sample count {}; {gap}; {first}; {tail}; samples at {captured:?} ms\n",
+            captured.len()
+        )
+    }
+
+    /// Appends `line` to the file `GITHUB_STEP_SUMMARY` names, when it is set.
+    fn append_to_step_summary(line: &str) {
+        if let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+            append_line(Path::new(&path), line);
+        }
+    }
+
+    /// Writes `line` to the real stderr on GitHub Actions. The test harness captures only the
+    /// print macros, not `io::stderr()`, so the line reaches the job log even when the test passes.
+    fn write_to_job_log(line: &str) {
+        if let Some(text) = job_log_line(std::env::var_os("GITHUB_ACTIONS").as_deref(), line) {
+            io::stderr().write_all(text.as_bytes()).ok();
+        }
+    }
+
+    /// `line` with the `cadence-telemetry: ` prefix when `GITHUB_ACTIONS` is set, else nothing.
+    fn job_log_line(github_actions: Option<&OsStr>, line: &str) -> Option<String> {
+        github_actions.map(|_| format!("cadence-telemetry: {line}"))
+    }
+
+    /// Appends `line` to `path` and ignores every error. Opened non-blocking, so a FIFO with no
+    /// reader cannot hang the caller.
+    fn append_line(path: &Path, line: &str) {
+        if let Ok(mut file) = File::options()
+            .append(true)
+            .create(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+        {
+            file.write_all(line.as_bytes()).ok();
+        }
+    }
+
+    #[test]
+    fn the_cadence_summary_names_the_largest_gap_and_the_tail() {
+        // Bug: the gap is taken from the wrong end of a pair, is credited to the later sample, or
+        // the tail is measured from the first sample instead of the last.
+        assert_eq!(
+            cadence_summary_line("cadence", &[10, 60, 300, 350], Some(400)),
+            "- `cadence`: sample count 4; largest gap 240 ms after the sample at 60 ms; first sample \
+             at 10 ms; tail 50 ms before the TERM at 400 ms; samples at [10, 60, 300, 350] ms\n"
+        );
+    }
+
+    #[test]
+    fn the_cadence_summary_copes_with_no_samples_or_no_term() {
+        // Bug: the summary indexes the first sample or unwraps the TERM, so a run that kept no
+        // samples panics in the telemetry instead of in the assert that explains it.
+        assert_eq!(
+            cadence_summary_line("cadence", &[], Some(3000)),
+            "- `cadence`: sample count 0; no gap; no first sample; TERM at 3000 ms; samples at [] ms\n"
+        );
+        assert_eq!(
+            cadence_summary_line("cadence", &[5], None),
+            "- `cadence`: sample count 1; no gap; first sample at 5 ms; no TERM; samples at [5] ms\n"
+        );
+    }
+
+    #[test]
+    fn the_job_log_line_is_prefixed_and_written_only_on_github_actions() {
+        // Bug: the line is written outside CI, into every local run, or loses the prefix that
+        // finds it in the job log.
+        assert_eq!(job_log_line(None, "- `cadence`: sample count 4\n"), None);
+        assert_eq!(
+            job_log_line(Some(OsStr::new("true")), "- `cadence`: sample count 4\n"),
+            Some("cadence-telemetry: - `cadence`: sample count 4\n".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_summary_append_keeps_what_earlier_steps_wrote() {
+        // Bug: the file is opened for writing with truncation, so the test erases the summary
+        // that earlier steps of the job wrote.
+        let directory = TestDirectory::new();
+        let path = directory.0.join("summary.md");
+        fs::write(&path, "earlier step\n").unwrap();
+
+        append_line(&path, "one\n");
+        append_line(&path, "two\n");
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "earlier step\none\ntwo\n"
+        );
+    }
+
+    #[test]
+    fn the_summary_append_ignores_a_path_it_cannot_write() {
+        // Bug: an open or write error is unwrapped, so a bad summary path fails the cadence test.
+        let directory = TestDirectory::new();
+        append_line(&directory.0, "line\n");
+    }
+
+    #[test]
+    fn the_summary_append_does_not_wait_for_a_fifo_reader() {
+        // Bug: the open blocks, so a FIFO with no reader at the summary path hangs the test.
+        let directory = TestDirectory::new();
+        let path = directory.0.join("summary.fifo");
+        let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        // SAFETY: mkfifo only reads the NUL-terminated name, which outlives the call.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let (sender, returned) = mpsc::channel();
+        let writer_path = path.clone();
+        thread::spawn(move || {
+            append_line(&writer_path, "line\n");
+            sender.send(()).ok();
+        });
+
+        let outcome = returned.recv_timeout(Duration::from_secs(5));
+        // A blocked open returns once a reader appears, so a failing run does not leave it behind.
+        let _reader = File::options()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)
+            .unwrap();
+        assert!(outcome.is_ok(), "the append still waits after 5 s");
     }
 
     /// The first line on `reader`, read on a thread so a silent pipe fails the test instead of

@@ -23,10 +23,16 @@ use mlx_guard_core::{
 /// The root forks a child, names it, and exits when told to. A background job of a
 /// non-interactive `sh` stays in the root's process group, the group the test owns, so the child
 /// is a group member. It outlives the root, reparented to launchd, until the test kills it.
-const SCRIPT: &str = "/bin/sleep 5 & echo \"CHILD $!\"; read line; exit 0";
-/// Every phase must be seen in this many samples, or the test proves nothing about it.
+/// 30 s is well past a passing run's longest path to phase 3 (two phase deadlines and the root's
+/// exit deadline, 11 s). A failing run does not wait for it: dropping the owned process kills
+/// the whole group, this child included.
+const SCRIPT: &str = "/bin/sleep 30 & echo \"CHILD $!\"; read line; exit 0";
+/// Every phase must be seen in this many checked samples, or the test proves nothing about it.
 const MIN_SAMPLES_PER_PHASE: usize = 5;
-const PHASE: Duration = Duration::from_millis(150);
+/// How long a phase may take to collect its samples. A phase counts samples, not time, so a slow
+/// runner only takes longer. The cold hosted macos-15 runner took 4 samples in 150 ms, about
+/// 40 ms each; 3 s leaves room for samples fifteen times slower than that.
+const PHASE_DEADLINE: Duration = Duration::from_secs(3);
 const DEADLINE: Duration = Duration::from_secs(5);
 
 fn sh_root() -> LaunchOptions {
@@ -101,6 +107,16 @@ fn assert_measured(sample: &FootprintSample, phase: &str) {
     }
 }
 
+/// Fails the phase once it has run for [`PHASE_DEADLINE`] without enough checked samples.
+#[track_caller]
+fn assert_phase_in_time(started: Instant, seen: usize, phase: &str) {
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < PHASE_DEADLINE,
+        "{phase}: only {seen} of {MIN_SAMPLES_PER_PHASE} checked samples after {elapsed:?}"
+    );
+}
+
 #[test]
 fn an_empty_member_set_appears_only_after_every_group_member_is_gone() {
     // Bug: the inventory or the tracker drops a live group member once the root has exited
@@ -130,9 +146,10 @@ fn an_empty_member_set_appears_only_after_every_group_member_is_gone() {
     let epoch = Instant::now();
 
     // Phase 1: root and child alive. A sample counts only if the root was alive on both sides.
+    let started = Instant::now();
     let mut seen = 0;
-    let phase_end = Instant::now() + PHASE;
-    while Instant::now() < phase_end {
+    while seen < MIN_SAMPLES_PER_PHASE {
+        assert_phase_in_time(started, seen, "root alive");
         let alive_before = !has_exited_unreaped(root);
         let sample = sampler.sample_native(&inventory, epoch).clone();
         if alive_before && !has_exited_unreaped(root) {
@@ -141,10 +158,6 @@ fn an_empty_member_set_appears_only_after_every_group_member_is_gone() {
         }
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(
-        seen >= MIN_SAMPLES_PER_PHASE,
-        "only {seen} samples with the root alive"
-    );
 
     // Phase 2: the root has exited and is held unreaped; the child is alive in the group.
     stdin.write_all(b"go\n").unwrap();
@@ -154,9 +167,10 @@ fn an_empty_member_set_appears_only_after_every_group_member_is_gone() {
         assert!(Instant::now() < deadline, "the root did not exit");
         thread::sleep(Duration::from_millis(1));
     }
+    let started = Instant::now();
     let mut seen = 0;
-    let phase_end = Instant::now() + PHASE;
-    while Instant::now() < phase_end {
+    while seen < MIN_SAMPLES_PER_PHASE {
+        assert_phase_in_time(started, seen, "root exited, child alive");
         let sample = sampler.sample_native(&inventory, epoch).clone();
         assert!(pid_exists(child), "the child must outlive this phase");
         assert_measured(&sample, "root exited, child alive");
@@ -170,10 +184,6 @@ fn an_empty_member_set_appears_only_after_every_group_member_is_gone() {
         seen += 1;
         thread::sleep(Duration::from_millis(5));
     }
-    assert!(
-        seen >= MIN_SAMPLES_PER_PHASE,
-        "only {seen} samples with the child alive"
-    );
 
     // Phase 3: the child is gone (launchd reaped it); only the unreaped root is left.
     // SAFETY: `child` was named by the root of this test's own group and is still alive.
