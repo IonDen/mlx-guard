@@ -66,20 +66,32 @@ fn is_fit_line(line: &str) -> bool {
 }
 
 #[cfg(target_os = "macos")]
+/// Debug builds of `mlx-guard` append one line per notice-writer event to the file this names.
+const NOTICE_TRACE_ENV: &str = "MLX_GUARD_NOTICE_TRACE";
+
+#[cfg(target_os = "macos")]
 /// Assert a successful `run`'s stderr is exactly the one launch-banner line, optionally followed
 /// by the launch fit line, and nothing else, so an unexpected diagnostic, panic fragment, or
 /// stray warning on the same stream still fails the test (the strictness the old
-/// `stderr.is_empty()` assertions gave, kept now that the banner is present).
-fn assert_only_launch_banner(stderr: &[u8]) {
+/// `stderr.is_empty()` assertions gave, kept now that the banner is present). The run was started
+/// with `NOTICE_TRACE_ENV` set to `trace`, so a failure also prints the notice writer's trace,
+/// which says whether the writer started late, could not start, or was given up on.
+fn assert_only_launch_banner_traced(stderr: &[u8], trace: &std::path::Path) {
+    let events = fs::read_to_string(trace).unwrap_or_else(|error| format!("unreadable: {error}"));
+    check_only_launch_banner(stderr, &format!("\nnotice writer trace:\n{events}"));
+}
+
+#[cfg(target_os = "macos")]
+fn check_only_launch_banner(stderr: &[u8], trace: &str) {
     let text = String::from_utf8_lossy(stderr);
     let lines: Vec<&str> = text.lines().collect();
     assert!(
         lines.len() == 1 || (lines.len() == 2 && is_fit_line(lines[1])),
-        "a successful run's stderr must be only the launch banner and the fit line: {text:?}"
+        "a successful run's stderr must be only the launch banner and the fit line: {text:?}{trace}"
     );
     assert!(
         lines[0].contains("emergency KILL"),
-        "the first stderr line must be the launch banner: {text:?}"
+        "the first stderr line must be the launch banner: {text:?}{trace}"
     );
 }
 
@@ -567,6 +579,7 @@ fn run_preserves_a_fast_child_exit_and_finalizes_its_report() {
     // Catches treating an exit-before-first-sample race as a supervisor identity failure.
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
+    let trace_path = directory.0.join("notice-trace.log");
 
     let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
         .args([
@@ -579,6 +592,7 @@ fn run_preserves_a_fast_child_exit_and_finalizes_its_report() {
         ])
         .arg(&report_path)
         .args(["--", "/usr/bin/true"])
+        .env(NOTICE_TRACE_ENV, &trace_path)
         .output()
         .expect("the command must run");
 
@@ -588,7 +602,16 @@ fn run_preserves_a_fast_child_exit_and_finalizes_its_report() {
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_only_launch_banner(&output.stderr);
+    assert_only_launch_banner_traced(&output.stderr, &trace_path);
+    if cfg!(debug_assertions) {
+        // Bug: the trace file is never written, so a lost banner in any of these tests would
+        // again come with no cause.
+        let events = fs::read_to_string(&trace_path).unwrap_or_default();
+        assert!(
+            events.contains("finish(false) returned"),
+            "the notice writer trace must say how the clean exit ended: {events:?}"
+        );
+    }
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
@@ -655,6 +678,7 @@ fn raw_child_output_is_not_control_data_or_a_persisted_guard_artifact() {
     // Catches parsing inherited worker output as control data or copying it into guard artifacts.
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
+    let trace_path = directory.0.join("notice-trace.log");
     let child_canary = "CHILD_OUTPUT_SECRET_CANARY_5e91";
     let child_output = format!("\u{1b}[31m{child_canary}\u{1b}[0m");
 
@@ -669,11 +693,12 @@ fn raw_child_output_is_not_control_data_or_a_persisted_guard_artifact() {
         ])
         .arg(&report_path)
         .args(["--", "/usr/bin/printf", "%s", &child_output])
+        .env(NOTICE_TRACE_ENV, &trace_path)
         .output()
         .expect("the command must run");
 
     assert_eq!(output.status.code(), Some(0));
-    assert_only_launch_banner(&output.stderr);
+    assert_only_launch_banner_traced(&output.stderr, &trace_path);
     assert!(output.stdout.starts_with(child_output.as_bytes()));
     for entry in fs::read_dir(&directory.0).unwrap() {
         let bytes = fs::read(entry.unwrap().path()).unwrap();
@@ -1223,6 +1248,7 @@ fn run_preserves_nonzero_exit_status_when_child_exits_before_identity_inspection
     // its process identity.
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
+    let trace_path = directory.0.join("notice-trace.log");
 
     let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
         .args([
@@ -1235,6 +1261,7 @@ fn run_preserves_nonzero_exit_status_when_child_exits_before_identity_inspection
         ])
         .arg(&report_path)
         .args(["--", "/usr/bin/false"])
+        .env(NOTICE_TRACE_ENV, &trace_path)
         .output()
         .expect("the command must run");
 
@@ -1246,7 +1273,7 @@ fn run_preserves_nonzero_exit_status_when_child_exits_before_identity_inspection
     );
     // The command's own non-reserved exit code explains itself: red if the plain lines are
     // printed for it.
-    assert_only_launch_banner(&output.stderr);
+    assert_only_launch_banner_traced(&output.stderr, &trace_path);
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(&report_path).expect("final report must exist"),
     )
@@ -1395,7 +1422,10 @@ mod band {
         JournalEntry, JournalRecovery, Observed, PolicyState, ReportV1, TransitionRecord,
     };
 
-    use super::{TestDirectory, assert_only_launch_banner, doc_link, spoken_bytes, spoken_ms};
+    use super::{
+        NOTICE_TRACE_ENV, TestDirectory, assert_only_launch_banner_traced, doc_link, spoken_bytes,
+        spoken_ms,
+    };
 
     const GUARD: &str = env!("CARGO_BIN_EXE_mlx-guard");
     const ENTERED: &str = "mlx-guard: warning: ";
@@ -1665,6 +1695,7 @@ mod band {
         // Bug: a band line on an ordinary run, one whose footprint never reaches the warning
         // threshold.
         let directory = TestDirectory::new();
+        let trace_path = directory.0.join("notice-trace.log");
         let output = Command::new(GUARD)
             .args([
                 "run",
@@ -1677,6 +1708,7 @@ mod band {
             .arg(directory.0.join("report.json"))
             .args(["--", "/bin/sleep", "1"])
             .stdin(Stdio::null())
+            .env(NOTICE_TRACE_ENV, &trace_path)
             .output()
             .expect("the command must run");
 
@@ -1686,7 +1718,7 @@ mod band {
             "stderr: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_only_launch_banner(&output.stderr);
+        assert_only_launch_banner_traced(&output.stderr, &trace_path);
     }
 
     #[test]
