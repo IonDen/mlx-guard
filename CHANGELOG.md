@@ -17,6 +17,21 @@ Version 0.5.1 was tagged but never published; this release carries its fix.
   is now neither counted as a missed reading nor allowed to reset the count, so when readings were
   already being missed as a run ended, the exit code can differ from 0.5.0 in either direction. The
   report's final footprint can still read 0 B after such a run; this release does not change that.
+- A command that ended almost at once, before `mlx-guard` had finished setting up supervision,
+  printed no launch banner and no launch fit line; it now does. The run, its exit code and its report
+  were always right, and only the stderr lines were missing. `mlx-guard run` now queues the banner as
+  soon as the command has launched, and the fit line with it when the limit is above the launch
+  estimate, as before. A launch that fails before the command starts prints neither, as before, and
+  the banner text is unchanged. If supervision then fails to start while the command runs (exit 70),
+  the banner has already been printed and states the limit, but nothing was enforced, and the plain
+  lines say what went wrong. Also, on a clean exit with no plain lines after it, `mlx-guard` now
+  waits up to 2 s for queued lines to be written. A clean exit with queued lines can now wait up to
+  2 s, where it waited at most 250 ms before. A single write that is blocked, such as a stderr pipe
+  nobody reads, still releases the exit after 250 ms, and a writer that failed or died is not waited
+  for. Exit codes, stdout, the report and the journal are unchanged. Delivery is best effort: lines
+  can be lost when a write is blocked, when the 2 s cap is reached, when the writer fails or dies, or
+  when it cannot start, as in 0.5.0. The report still records the limit and the emergency threshold
+  the banner states, and the launch estimate the fit line states.
 
 ## [0.5.0] - 2026-11-12
 
