@@ -165,16 +165,18 @@ line (a progress bar, say), the warning follows it on the same line.
 Delivery is best effort. If whatever reads stderr has stopped reading, up to 8 lines wait and any
 further ones are dropped, because watching memory matters more than printing about it. If the reader
 starts again, it gets the waiting lines first and the two plain outcome lines after them. When the
-command ends normally and no plain lines follow, `mlx-guard` waits at most a quarter of a second for
-waiting lines and then exits, so they can be lost. Never rely on a warning line being delivered; read
-the report. The wording may change between releases (see [STABILITY](STABILITY.md)).
+command ends normally and no plain lines follow, `mlx-guard` waits up to 2 s for lines the writer has
+not yet written, but gives up on a single blocked write after 250 ms, so lines can be lost. When
+plain lines do follow, it waits as long as the writer needs. Never rely on a warning line being
+delivered; read the report. The wording may change between releases (see [STABILITY](STABILITY.md)).
 
 ### The launch line
 
-`run` can print one more line, right after the start-of-run notice and before the command does
-any work. Just before launch it reads how much memory macOS has not locked as wired (free,
+`run` can print one more line, right after the start-of-run notice. This is the fit line (the launch
+line in this section). It and the banner are both queued as soon as the command has launched, so a
+command that ends almost at once still gets them. Just before launch, `mlx-guard` reads how much memory macOS has not locked as wired (free,
 speculative included, plus active, inactive, and held by the compressor). If your limit is more than
-that number, it prints this and then runs the command with the limit as given:
+that number, it queues this line, and the command runs with the limit as given:
 
 ```text
 mlx-guard: warning: your limit of 30.00 GiB is more than the 28.31 GiB macOS reported as not wired just before launch, so a run that reaches it may not fit in memory on this Mac. That number is one estimate at one moment and counts every other program's memory as room. mlx-guard runs with your limit as given. More: https://github.com/IonDen/mlx-guard/blob/v0.5.0/docs/TROUBLESHOOTING.md#warnings-during-a-run
