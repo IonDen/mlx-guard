@@ -672,14 +672,15 @@ fn unsupported_platform_fails_before_worker_launch() {
 #[cfg(target_os = "macos")]
 #[test]
 fn observe_supervises_a_real_child_and_writes_a_valid_report() {
-    // Catches returning the child status without sampling, journalling, and finalizing the run.
+    // Catches returning the child status without sampling, journalling, and finalizing the run,
+    // and a stdout summary that disagrees with the report it was written from.
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
 
     let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
         .args(["observe", "--sample-interval", "10ms", "--report"])
         .arg(&report_path)
-        .args(["--", "/bin/sleep", "0.08"])
+        .args(["--", "/bin/sleep", "0.5"])
         .output()
         .expect("the command must run");
 
@@ -691,12 +692,23 @@ fn observe_supervises_a_real_child_and_writes_a_valid_report() {
     );
     assert!(output.stderr.is_empty());
     let summary = String::from_utf8(output.stdout).unwrap();
-    assert!(summary.starts_with("mlx-guard: child_exited at "));
-    assert!(summary.ends_with(" samples, 0 signals\n"));
     let report = mlx_guard_core::ReportV1::from_json(
         &fs::read_to_string(&report_path).expect("final report must exist"),
     )
     .unwrap();
+    // How many samples a 500 ms command gets at 10 ms varies with host load (a slow start can
+    // leave a short command with a single sample), so the line is checked against the report's
+    // own count.
+    let n = report.samples.len();
+    let noun = if n == 1 { "sample" } else { "samples" };
+    assert_eq!(
+        summary,
+        format!(
+            "mlx-guard: child_exited at {}ms; {n} {noun}, 0 signals\n",
+            report.outcome.at_ms
+        ),
+        "summary {summary:?} does not match the report's {n} samples"
+    );
     assert_eq!(
         report.configuration.mode,
         mlx_guard_core::ReportMode::Observe
@@ -721,6 +733,55 @@ fn observe_supervises_a_real_child_and_writes_a_valid_report() {
     assert_eq!(
         fs::metadata(report_path).unwrap().permissions().mode() & 0o777,
         0o600
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn observe_prints_a_single_sample_in_the_singular() {
+    // Catches observe's loop taking a sample after the command's exit is seen (a final sample at
+    // exit, or sampling before the exit check), which would give 2 samples here. The loop samples
+    // once at the start, while the 2 s command runs, and wakes next after the 4 s interval, where
+    // it must see the exit and stop before sampling again; about 2 s of margin on each side. The
+    // summary must then print the singular for that one sample.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args(["observe", "--sample-interval", "4s", "--report"])
+        .arg(&report_path)
+        .args(["--", "/bin/sleep", "2"])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let summary = String::from_utf8(output.stdout).unwrap();
+    let report = mlx_guard_core::ReportV1::from_json(
+        &fs::read_to_string(&report_path).expect("final report must exist"),
+    )
+    .unwrap();
+    assert_eq!(
+        report.samples.len(),
+        1,
+        "observe must take exactly one sample: one at start, none after the exit is seen; \
+         summary: {summary:?}"
+    );
+    assert_eq!(
+        summary,
+        format!(
+            "mlx-guard: child_exited at {}ms; 1 sample, 0 signals\n",
+            report.outcome.at_ms
+        )
     );
 }
 
