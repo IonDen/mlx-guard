@@ -229,6 +229,236 @@ fn wait_for_first_sample(journal_path: &std::path::Path) {
     }
 }
 
+#[cfg(target_os = "macos")]
+/// A shell that ignores SIGINT and SIGTERM and then writes its process id, newline-ended, to the
+/// file named by its first argument. The file exists only once the `trap` has run, so a signal
+/// sent after `wait_for_trap_set` returns always finds the shell immune to it.
+const TRAPPED_SHELL: &str = "trap '' INT TERM; echo $$ > \"$1\"; while :; do sleep 1; done";
+
+#[cfg(target_os = "macos")]
+/// Wait, at most 10 s, for `TRAPPED_SHELL` to write its readiness file, and return the shell's
+/// process id. The first journal sample can land before the shell has run its `trap`; a TERM sent
+/// in that window ends the shell with 143 instead of testing what the supervisor does next.
+fn wait_for_trap_set(marker: &std::path::Path) -> u32 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(text) = fs::read_to_string(marker)
+            && let Some(pid) = text.strip_suffix('\n')
+        {
+            return pid
+                .parse()
+                .expect("the readiness file holds the shell's process id");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the command never reported its trap set: no readiness file after 10 s"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[cfg(target_os = "macos")]
+/// Wait, at most 5 s, until the journal holds a signal record: the supervisor has handled the
+/// first terminal signal and passed it on, so the next one is a second signal, not a first.
+fn wait_for_first_signal_record(journal_path: &std::path::Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(recovery) = mlx_guard_core::JournalRecovery::read(journal_path)
+            && recovery
+                .records
+                .iter()
+                .any(|record| matches!(record.entry, mlx_guard_core::JournalEntry::Signal(_)))
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the first terminal signal was not recorded within 5 s"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[cfg(target_os = "macos")]
+/// Send `signal` (a `/bin/kill` option such as `-TERM`) to the supervisor.
+fn signal_supervisor(signal: &str, supervisor_pid: u32) {
+    let delivered = Command::new("/bin/kill")
+        .args([signal, &supervisor_pid.to_string()])
+        .status()
+        .expect("terminal signal delivery command must run");
+    assert!(delivered.success());
+}
+
+#[cfg(target_os = "macos")]
+/// A supervisor running `TRAPPED_SHELL`, armed from spawn: if the test panics before
+/// `wait_or_fail_on_hang` disarms it, dropping it SIGKILLs the shell's process group and then the
+/// supervisor. The shell ignores TERM and INT and leads its own group, so killing only the
+/// supervisor would leave it running. The supervisor is killed through its `Child`, which sends
+/// nothing once reaped. `Drop` does not check that the group still exists; it relies on where a
+/// panic can happen while armed:
+/// - before the readiness pid is known (the first-sample or readiness wait): the group is found
+///   with `pgrep -P` while the supervisor is unreaped, so the pid found is its live child. Best
+///   effort, with two accepted gaps that leak a shell but never kill a wrong process: the
+///   supervisor already died (no group is killed), or it forks between `pgrep` and the kill (the
+///   new shell is missed). Each needs that earlier panic and a microsecond window, and the shell
+///   has not reported its trap set yet, so it may still die of TERM;
+/// - after the readiness pid is known, in the test body (a `kill` that failed, the first-record
+///   wait): the trapped shell dies only of a KILL. When the first-record wait times out, no signal
+///   was handled, so no KILL was sent and the group is alive. When a `kill` fails after the first
+///   one landed, the supervisor may have emptied the group with its KILL a moment before; reusing
+///   that id would take a pid wraparound within microseconds (accepted);
+/// - the 15 s `try_wait` assert in `wait_or_fail_on_hang`: the supervisor is alive and unreaped,
+///   so the run is stuck; usually no KILL reached the group and the shell is alive, and if one did,
+///   reusing the emptied group id would again take a pid wraparound (accepted);
+/// - the output-drain timeout in `wait_or_fail_on_hang`: a writer still holds a pipe open, and the
+///   only writers left are in the shell's group, so the group exists.
+struct TrappedRun {
+    supervisor: Option<std::process::Child>,
+    shell_pid: Option<u32>,
+}
+
+#[cfg(target_os = "macos")]
+impl TrappedRun {
+    fn spawn(command: &mut Command) -> Self {
+        let supervisor = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("the command must run");
+        Self {
+            supervisor: Some(supervisor),
+            shell_pid: None,
+        }
+    }
+
+    fn supervisor_pid(&self) -> u32 {
+        self.supervisor
+            .as_ref()
+            .expect("the run is still armed")
+            .id()
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for TrappedRun {
+    fn drop(&mut self) {
+        let Some(mut supervisor) = self.supervisor.take() else {
+            return;
+        };
+        // Before the readiness file is read, the shell's pid is the supervisor's child's; ask for
+        // it only while the supervisor is unreaped, so the answer is still its child.
+        let groups: Vec<String> = match self.shell_pid {
+            Some(pid) => vec![pid.to_string()],
+            None if matches!(supervisor.try_wait(), Ok(None)) => Command::new("/usr/bin/pgrep")
+                .args(["-P", &supervisor.id().to_string()])
+                .output()
+                .map(|found| {
+                    String::from_utf8_lossy(&found.stdout)
+                        .split_whitespace()
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            None => Vec::new(),
+        };
+        for group in groups {
+            let _ = Command::new("/bin/kill")
+                .args(["-KILL", "--", &format!("-{group}")])
+                .status();
+        }
+        // `Child::kill` sends nothing once the child has been reaped, so no recycled pid is hit.
+        let _ = supervisor.kill();
+        let _ = supervisor.wait();
+    }
+}
+
+#[cfg(target_os = "macos")]
+/// Wait for the supervisor and collect its output, failing instead of hanging: if it has not
+/// exited within 15 s, or the command still holds its output open 2 s after the supervisor was
+/// reaped, the test panics and dropping `run` kills what is left. A clean finish disarms `run`.
+fn wait_or_fail_on_hang(mut run: TrappedRun) -> std::process::Output {
+    use std::io::Read;
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let supervisor = run.supervisor.as_mut().expect("the run is still armed");
+    let (sent, received) = std::sync::mpsc::channel::<(usize, Vec<u8>)>();
+    let pipes: [Box<dyn Read + Send>; 2] = [
+        Box::new(supervisor.stdout.take().expect("stdout is piped")),
+        Box::new(supervisor.stderr.take().expect("stderr is piped")),
+    ];
+    for (index, mut pipe) in pipes.into_iter().enumerate() {
+        let sent = sent.clone();
+        thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = pipe.read_to_end(&mut bytes);
+            let _ = sent.send((index, bytes));
+        });
+    }
+    let status = loop {
+        if let Some(status) = supervisor
+            .try_wait()
+            .expect("the supervisor can be waited for")
+        {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "hang: the supervisor did not end within 15 s"
+        );
+        thread::sleep(Duration::from_millis(5));
+    };
+    let drained_by = Instant::now() + Duration::from_secs(2);
+    let mut streams = [Vec::new(), Vec::new()];
+    for _ in 0..2 {
+        let (index, bytes) = received
+            .recv_timeout(drained_by.saturating_duration_since(Instant::now()))
+            .expect("hang: the command still held the supervisor's output open 2 s after it ended");
+        streams[index] = bytes;
+    }
+    run.supervisor = None;
+    let [stdout, stderr] = streams;
+    std::process::Output {
+        status,
+        stdout,
+        stderr,
+    }
+}
+
+#[cfg(target_os = "macos")]
+/// Assert the run ended on the KILL a second terminal signal forces, not on the KILL that ends the
+/// one-second TERM grace, and return the report. Both KILLs leave reason `ExternalSignal` and a
+/// terminating-to-emergency transition; only a grace KILL is mlx-guard's own intervention (exit
+/// 75, `PolicyIntervention`, "the command was still running after ..."), so the exit code, the
+/// outcome and the plain lines are what tell them apart. The caller checks the signal order.
+fn assert_second_signal_kill(
+    output: &std::process::Output,
+    report_path: &std::path::Path,
+) -> mlx_guard_core::ReportV1 {
+    let report = mlx_guard_core::ReportV1::from_json(
+        &fs::read_to_string(report_path).expect("final report must exist"),
+    )
+    .unwrap();
+    assert_eq!(output.status.code(), Some(137), "{report:#?}");
+    // Red if the second-terminal-signal KILL loses its n = 9 variant.
+    assert_eq!(
+        assert_banner_then_plain_lines(&output.stderr, "signal-passed-on-by-mlx-guard"),
+        plain_lines(
+            "the command ended on SIGKILL, which mlx-guard sent after a second terminal signal \
+             arrived.",
+            "nothing to do if you sent it.",
+            "signal-passed-on-by-mlx-guard",
+        )
+    );
+    assert_eq!(
+        report.outcome.kind,
+        mlx_guard_core::TerminalKind::ChildSignaled { signal: 9 }
+    );
+    assert!(report.transitions.iter().any(|transition| {
+        transition.from == mlx_guard_core::PolicyState::Terminating
+            && transition.to == mlx_guard_core::PolicyState::Emergency
+    }));
+    report
+}
+
 #[test]
 fn help_is_successful_and_invalid_input_is_usage() {
     // Catches help being treated as an error or invalid input returning false success.
@@ -847,61 +1077,39 @@ fn first_sigint_is_forwarded_and_the_child_signal_status_is_preserved() {
 #[cfg(target_os = "macos")]
 #[test]
 fn repeated_terminal_signal_escalates_to_group_kill() {
-    // Catches a second terminal signal being forwarded or ignored instead of forcing KILL.
+    // Catches a second terminal signal being forwarded or ignored instead of forcing KILL:
+    // forwarded, the signals read TERM, INT, ...; ignored, the immune command dies only of the
+    // TERM-grace KILL, which reads exit 75 and PolicyIntervention. The INT is sent once the TERM is
+    // recorded, so the order is fixed; it must reach the supervisor within the one-second TERM
+    // grace, and a late one gives a false red (75), never a false green.
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
     let journal_path = directory.0.join(".report.json.journal");
-    let guard = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
-        .args([
-            "run",
-            "--max-footprint",
-            "1TiB",
-            "--sample-interval",
-            "10ms",
-            "--report",
-        ])
-        .arg(&report_path)
-        .args([
-            "--",
-            "/bin/sh",
-            "-c",
-            "trap '' INT TERM; while :; do sleep 1; done",
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the command must run");
+    let marker = directory.0.join("trap-set");
+    let mut run = TrappedRun::spawn(
+        Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+            .args([
+                "run",
+                "--max-footprint",
+                "1TiB",
+                "--sample-interval",
+                "10ms",
+                "--report",
+            ])
+            .arg(&report_path)
+            .args(["--", "/bin/sh", "-c", TRAPPED_SHELL, "sh"])
+            .arg(&marker),
+    );
     wait_for_first_sample(&journal_path);
+    run.shell_pid = Some(wait_for_trap_set(&marker));
 
-    for signal in ["-TERM", "-INT"] {
-        let delivered = Command::new("/bin/kill")
-            .args([signal, &guard.id().to_string()])
-            .status()
-            .expect("terminal signal delivery command must run");
-        assert!(delivered.success());
-        thread::sleep(Duration::from_millis(20));
-    }
-    let output = guard.wait_with_output().expect("supervisor must terminate");
+    signal_supervisor("-TERM", run.supervisor_pid());
+    wait_for_first_signal_record(&journal_path);
+    signal_supervisor("-INT", run.supervisor_pid());
+    let output = wait_or_fail_on_hang(run);
 
-    assert_eq!(output.status.code(), Some(137));
-    // Red if the second-terminal-signal KILL loses its n = 9 variant.
-    assert_eq!(
-        assert_banner_then_plain_lines(&output.stderr, "signal-passed-on-by-mlx-guard"),
-        plain_lines(
-            "the command ended on SIGKILL, which mlx-guard sent after a second terminal signal \
-             arrived.",
-            "nothing to do if you sent it.",
-            "signal-passed-on-by-mlx-guard",
-        )
-    );
-    let report = mlx_guard_core::ReportV1::from_json(
-        &fs::read_to_string(report_path).expect("final report must exist"),
-    )
-    .unwrap();
-    assert_eq!(
-        report.outcome.kind,
-        mlx_guard_core::TerminalKind::ChildSignaled { signal: 9 }
-    );
+    let report = assert_second_signal_kill(&output, &report_path);
+    // Red if a forwarded TERM is passed on or recorded as another signal.
     assert_eq!(
         report
             .signals
@@ -910,10 +1118,108 @@ fn repeated_terminal_signal_escalates_to_group_kill() {
             .collect::<Vec<_>>(),
         [15, 9]
     );
-    assert!(report.transitions.iter().any(|transition| {
-        transition.from == mlx_guard_core::PolicyState::Terminating
-            && transition.to == mlx_guard_core::PolicyState::Emergency
-    }));
+    assert_eq!(
+        report.signals[0].result,
+        mlx_guard_core::SignalResult::Delivered
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn repeated_sigint_escalates_to_group_kill() {
+    // Catches a second Ctrl-C not forcing KILL: the immune command then dies only of the
+    // TERM-grace KILL (exit 75, PolicyIntervention), or the signals read INT, INT, ... The second
+    // INT is sent once the first is recorded; it must reach the supervisor within the one-second
+    // grace, and a late one gives a false red, never a false green.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let journal_path = directory.0.join(".report.json.journal");
+    let marker = directory.0.join("trap-set");
+    let mut run = TrappedRun::spawn(
+        Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+            .args([
+                "run",
+                "--max-footprint",
+                "1TiB",
+                "--sample-interval",
+                "10ms",
+                "--report",
+            ])
+            .arg(&report_path)
+            .args(["--", "/bin/sh", "-c", TRAPPED_SHELL, "sh"])
+            .arg(&marker),
+    );
+    wait_for_first_sample(&journal_path);
+    run.shell_pid = Some(wait_for_trap_set(&marker));
+
+    signal_supervisor("-INT", run.supervisor_pid());
+    wait_for_first_signal_record(&journal_path);
+    signal_supervisor("-INT", run.supervisor_pid());
+    let output = wait_or_fail_on_hang(run);
+
+    let report = assert_second_signal_kill(&output, &report_path);
+    assert_eq!(
+        report
+            .signals
+            .iter()
+            .map(|signal| signal.signal)
+            .collect::<Vec<_>>(),
+        [2, 9]
+    );
+    assert_eq!(
+        report.signals[0].result,
+        mlx_guard_core::SignalResult::Delivered
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn back_to_back_terminal_signals_escalate_to_group_kill() {
+    // Red if a second terminal signal right behind the first is lost, merged with it, or ignored:
+    // the immune command then dies only of the TERM-grace KILL (exit 75, PolicyIntervention), or
+    // the run hangs and fails at 15 s.
+    let directory = TestDirectory::new();
+    let report_path = directory.0.join("report.json");
+    let journal_path = directory.0.join(".report.json.journal");
+    let marker = directory.0.join("trap-set");
+    let mut run = TrappedRun::spawn(
+        Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+            .args([
+                "run",
+                "--max-footprint",
+                "1TiB",
+                "--sample-interval",
+                "10ms",
+                "--report",
+            ])
+            .arg(&report_path)
+            .args(["--", "/bin/sh", "-c", TRAPPED_SHELL, "sh"])
+            .arg(&marker),
+    );
+    wait_for_first_sample(&journal_path);
+    run.shell_pid = Some(wait_for_trap_set(&marker));
+
+    // One shell sends both with its builtin `kill`, so no process is started between them.
+    let delivered = Command::new("/bin/sh")
+        .args([
+            "-c",
+            "kill -TERM \"$1\" && kill -INT \"$1\"",
+            "sh",
+            &run.supervisor_pid().to_string(),
+        ])
+        .status()
+        .expect("terminal signal delivery command must run");
+    assert!(delivered.success());
+    let output = wait_or_fail_on_hang(run);
+
+    let report = assert_second_signal_kill(&output, &report_path);
+    // The supervisor can record INT first although TERM was sent first (seen once in 30 runs), and
+    // the policy counts terminal signals without caring which is which.
+    let signals: Vec<u8> = report.signals.iter().map(|signal| signal.signal).collect();
+    assert!(
+        matches!(signals.as_slice(), [15 | 2, 9]),
+        "expected the first terminal signal (15 or 2) passed on, then KILL: {signals:?}"
+    );
 }
 
 #[cfg(target_os = "macos")]
