@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import IO, NoReturn, TypeAlias, cast
+from typing import IO, Literal, NoReturn, TypeAlias, cast
 
 from ._binary import BinaryDiscoveryError, binary_path, binary_version
 from ._explain import explain_payload
@@ -88,7 +88,7 @@ class RunConfig:
 
     command: tuple[str, ...]
     report: Path
-    max_footprint_bytes: int
+    max_footprint_bytes: int | Literal["auto"]
     sample_interval_ms: int = 50
     wall_time_ms: int | None = None
     cwd: Path | None = None
@@ -100,11 +100,17 @@ class RunConfig:
     def __post_init__(self) -> None:
         _validate_common(self)
         limit = self.max_footprint_bytes
-        if type(limit) is not int or limit < 2 or limit > _MAX_U64:
-            raise ConfigurationError("max_footprint_bytes must be within 2..=u64::MAX")
-        band_step = max(limit // 10, 1)
-        if limit + band_step > _MAX_U64:
-            raise ConfigurationError("max_footprint_bytes cannot represent the emergency band")
+        if type(limit) is str:
+            if limit != "auto":
+                raise ConfigurationError(
+                    'max_footprint_bytes must be within 2..=u64::MAX or "auto"'
+                )
+        else:
+            if type(limit) is not int or limit < 2 or limit > _MAX_U64:
+                raise ConfigurationError("max_footprint_bytes must be within 2..=u64::MAX")
+            band_step = max(limit // 10, 1)
+            if limit + band_step > _MAX_U64:
+                raise ConfigurationError("max_footprint_bytes cannot represent the emergency band")
         wall_time = self.wall_time_ms
         if wall_time is not None and (
             type(wall_time) is not int or not 1 <= wall_time <= _MAX_WALL_TIME_MS
@@ -113,9 +119,7 @@ class RunConfig:
         checkpoint_timeout = self.checkpoint_timeout_ms
         if checkpoint_timeout is not None and (
             type(checkpoint_timeout) is not int
-            or not _MIN_CHECKPOINT_TIMEOUT_MS
-            <= checkpoint_timeout
-            <= _MAX_CHECKPOINT_TIMEOUT_MS
+            or not _MIN_CHECKPOINT_TIMEOUT_MS <= checkpoint_timeout <= _MAX_CHECKPOINT_TIMEOUT_MS
         ):
             raise ConfigurationError("checkpoint_timeout_ms must be within 10ms..=60s")
 
@@ -257,7 +261,20 @@ class GuardProcess:
         returncode = self._process.returncode
         if returncode is None:
             raise GuardError("native supervisor status is unavailable")
-        report = load_report(self._config.report)
+        try:
+            report = load_report(self._config.report)
+        except MissingReportError as error:
+            if (
+                returncode == 64
+                and isinstance(self._config, RunConfig)
+                and self._config.max_footprint_bytes == "auto"
+            ):
+                raise ConfigurationError(
+                    "the supervisor stopped before launch with exit code 64 and wrote no report;"
+                    ' with max_footprint_bytes="auto" the likely cause is that it could not pick'
+                    " a limit from this Mac's memory at launch: pass a size in bytes instead"
+                ) from error
+            raise
         expected = _expected_exit_code(report.outcome)
         if returncode != expected:
             raise ResultMismatchError("native supervisor status does not match its report")
@@ -531,7 +548,8 @@ def _argv_for(
         "run" if isinstance(config, RunConfig) else "observe",
     ]
     if isinstance(config, RunConfig):
-        common.extend(("--max-footprint", f"{config.max_footprint_bytes}B"))
+        limit = config.max_footprint_bytes
+        common.extend(("--max-footprint", "auto" if limit == "auto" else f"{limit}B"))
         if config.wall_time_ms is not None:
             common.extend(("--wall-time", f"{config.wall_time_ms}ms"))
         if config.checkpoint_timeout_ms is not None:

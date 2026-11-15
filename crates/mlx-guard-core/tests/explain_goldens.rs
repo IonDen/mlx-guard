@@ -13,10 +13,89 @@ use std::path::{Path, PathBuf};
 use mlx_guard_core::explain::{
     ANCHORS, EarlyCause, PlainOutcome, StorageClass, StoragePhase, explain_early, explain_report,
 };
-use mlx_guard_core::{ChildStatus, ReportV1, TerminalKind, VERSION};
+use mlx_guard_core::{
+    AutoLimitRecord, AutoLimitRule, ChildStatus, LimitSource, MemoryCategories, Observed,
+    PrelaunchRecord, ReportV1, TerminalKind, VERSION,
+};
 use serde::Deserialize;
 
 const EXPLAIN_FIXTURES: &str = "crates/mlx-guard-core/tests/fixtures/explain";
+
+/// The three reports of runs stopped at an automatic limit (breach value with TERM, no breach
+/// value, emergency KILL), each a copy of its explicit sibling plus the two automatic fields.
+const AUTO_FIXTURES: [&str; 3] = [
+    "report-75-footprint-auto.json",
+    "report-75-footprint-auto-no-breach.json",
+    "report-75-emergency-auto.json",
+];
+
+/// A typed-size report of a footprint stop with a 6.00 GiB limit and no checkpoint.
+const FOOTPRINT_REPORT: &str = "evidence/v0.2.0/tutorial/reports/run-limit.json";
+/// An emergency KILL against the same 6.00 GiB limit.
+const EMERGENCY_REPORT: &str =
+    "crates/mlx-guard-core/tests/fixtures/explain/report-75-emergency.json";
+/// The illustrative automatic limit: 6.00 GiB, three quarters of an 8.00 GiB estimate.
+const AUTO_LIMIT: u64 = 6_442_450_944;
+const AUTO_ESTIMATE: u64 = 8_589_934_592;
+
+/// The prelaunch record a 0.5.0 or later run writes: an 8.00 GiB estimate, no warning, and the
+/// automatic-limit record only when one is given.
+fn prelaunch_8_gib(auto_limit: Option<AutoLimitRecord>) -> PrelaunchRecord {
+    PrelaunchRecord {
+        memory_estimate: Observed::Available {
+            value: AUTO_ESTIMATE,
+        },
+        memory_categories: Observed::Available {
+            value: MemoryCategories {
+                free_bytes: 1_073_741_824,
+                active_bytes: 3_221_225_472,
+                inactive_bytes: 3_221_225_472,
+                wired_bytes: 2_147_483_648,
+                compressor_bytes: 1_073_741_824,
+            },
+        },
+        warnings: Vec::new(),
+        auto_limit,
+    }
+}
+
+/// `relative` as a typed-size run of this release writes it: a prelaunch record, and the source
+/// field either absent (0.5.0) or `explicit`.
+fn explicit_with_prelaunch(relative: &str, source: Option<LimitSource>) -> ReportV1 {
+    let mut report = load_report(relative);
+    report.prelaunch = Some(prelaunch_8_gib(None));
+    report.configuration.max_footprint_source = source;
+    report
+        .validate()
+        .unwrap_or_else(|error| panic!("{relative} with a prelaunch record: {error}"));
+    report
+}
+
+/// `relative` as an automatic run records it: source `auto`, and the rule's record with the
+/// report's own limit.
+fn as_automatic(relative: &str, rule: AutoLimitRule) -> ReportV1 {
+    let mut report = load_report(relative);
+    assert_eq!(
+        report.configuration.max_footprint_bytes,
+        Some(AUTO_LIMIT),
+        "{relative} must hold the illustrative 6.00 GiB limit"
+    );
+    report.prelaunch = Some(prelaunch_8_gib(Some(AutoLimitRecord {
+        rule,
+        limit_bytes: AUTO_LIMIT,
+    })));
+    report.configuration.max_footprint_source = Some(LimitSource::Auto);
+    report
+        .validate()
+        .unwrap_or_else(|error| panic!("{relative} as an automatic run: {error}"));
+    report
+}
+
+fn rendered(report: &ReportV1) -> String {
+    explain_report(report)
+        .expect("a policy intervention has plain lines")
+        .text()
+}
 
 /// One `cases.json` row. A row may also carry a `note` for readers, which the tests ignore.
 #[derive(Debug, Deserialize)]
@@ -193,6 +272,8 @@ const fn variant_word(cause: EarlyCause) -> &'static str {
         EarlyCause::FootprintUnavailable => "footprint_unavailable",
         EarlyCause::RunIdentity => "run_identity",
         EarlyCause::SupervisorSetup => "supervisor_setup",
+        EarlyCause::AutoLimitUnavailable => "auto_limit_unavailable",
+        EarlyCause::AutoLimitBelowFloor => "auto_limit_below_floor",
         EarlyCause::Storage { .. } => "storage",
     }
 }
@@ -223,6 +304,8 @@ fn parse_cause(words: &str) -> EarlyCause {
             EarlyCause::FootprintUnavailable,
             EarlyCause::RunIdentity,
             EarlyCause::SupervisorSetup,
+            EarlyCause::AutoLimitUnavailable,
+            EarlyCause::AutoLimitBelowFloor,
         ]
         .into_iter()
         .find(|cause| variant_word(*cause) == *word)
@@ -644,6 +727,8 @@ fn early_corpus_covers_every_cause_and_form() {
         EarlyCause::FootprintUnavailable,
         EarlyCause::RunIdentity,
         EarlyCause::SupervisorSetup,
+        EarlyCause::AutoLimitUnavailable,
+        EarlyCause::AutoLimitBelowFloor,
     ];
     for kind in STORAGE_CLASSES {
         for phase in [StoragePhase::BeforeLaunch, StoragePhase::AfterLaunch] {
@@ -706,4 +791,181 @@ fn no_sentence_names_the_run_id_or_the_executable() {
             );
         }
     }
+}
+
+#[test]
+fn report_without_source_keeps_the_explicit_wording() {
+    // Bug: the automatic wording keyed on the prelaunch record (every 0.5.0 typed-size report
+    // has one) or on "source is not explicit" (an absent source means explicit), so a 0.5.0
+    // report read by this release says the limit was chosen automatically.
+    for (relative, row) in [
+        (FOOTPRINT_REPORT, "75-footprint"),
+        (EMERGENCY_REPORT, "75-emergency"),
+        (
+            "crates/mlx-guard-core/tests/fixtures/report-v1-resume.json",
+            "75-footprint-no-breach",
+        ),
+    ] {
+        let case = find_case(row);
+        // "a_later_source" is a source written by a later release: still the limit you set.
+        let later: LimitSource = serde_json::from_str("\"a_later_source\"").unwrap();
+        for source in [None, Some(LimitSource::Explicit), Some(later)] {
+            let report = explicit_with_prelaunch(relative, source);
+            assert_eq!(
+                rendered(&report),
+                expected_text(&case, &report),
+                "row {row}, source {source:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn footprint_stop_at_an_automatic_limit_says_mlx_guard_chose_it() {
+    // Bug: the footprint row has no automatic branch (an automatic run reads "the limit you
+    // set" and "raise --max-footprint"), or its "what to do" drops the advice to pass a size
+    // with headroom above an observed peak. The explicit half of this pair is the test above.
+    let report = as_automatic(FOOTPRINT_REPORT, AutoLimitRule::NotWired75Percent);
+    assert_eq!(
+        rendered(&report),
+        "what happened: the OS-accounted footprint reached 6.05 GiB, at or above the 6.00 GiB \
+         automatic limit mlx-guard chose at launch, on 2 samples in a row, so mlx-guard sent \
+         SIGTERM to the command's process group at 40.0 s.\n\
+         what to do: the automatic limit came from this Mac's memory at launch, not from what \
+         the command needs: observe the command to see its peak, then pass a size with headroom \
+         above that peak to --max-footprint, or fix the growth. More: \
+         https://github.com/IonDen/mlx-guard/blob/v0.2.0/docs/TROUBLESHOOTING.md\
+         #75-the-footprint-limit"
+    );
+}
+
+#[test]
+fn emergency_kill_at_an_automatic_limit_says_mlx_guard_chose_it() {
+    // Bug: the emergency row has no automatic branch, so an automatic run reads "your 6.00 GiB
+    // limit" and "raise --max-footprint" for a number the user never chose.
+    let report = as_automatic(EMERGENCY_REPORT, AutoLimitRule::NotWired75Percent);
+    assert_eq!(
+        rendered(&report),
+        "what happened: one sample of the OS-accounted footprint, 7.00 GiB, was at or above the \
+         emergency threshold of 6.60 GiB, which is 614.40 MiB more than the 6.00 GiB automatic \
+         limit mlx-guard chose at launch, so mlx-guard sent SIGKILL to the command's process \
+         group at once at 12.3 s, with no checkpoint and no grace period.\n\
+         what to do: find what allocates that much between samples, or pass a size to \
+         --max-footprint if that peak is expected; a shorter --sample-interval sees growth \
+         sooner. More: https://github.com/IonDen/mlx-guard/blob/v0.1.0/docs/TROUBLESHOOTING.md\
+         #75-emergency-kill"
+    );
+}
+
+#[test]
+fn a_stop_line_reads_the_source_not_the_rule() {
+    // Bug: the stop lines branch on the rule (an id a later release writes falls back to "the
+    // limit you set") or print its share (an unknown rule's share renders as "0%").
+    for relative in [FOOTPRINT_REPORT, EMERGENCY_REPORT] {
+        let known = rendered(&as_automatic(relative, AutoLimitRule::NotWired75Percent));
+        let unknown = rendered(&as_automatic(relative, AutoLimitRule::Unknown));
+        assert_eq!(unknown, known, "{relative}");
+        assert!(!unknown.contains('%'), "{unknown}");
+    }
+}
+
+#[test]
+fn every_automatic_fixture_has_its_corpus_row() {
+    // Bug: an automatic stop fixture with no cases.json row, so its sentence (and the page's
+    // quote of it) is checked in neither language.
+    let all = cases();
+    for name in AUTO_FIXTURES {
+        let rows: Vec<&Case> = all
+            .iter()
+            .filter(|case| case.report == format!("{EXPLAIN_FIXTURES}/{name}"))
+            .collect();
+        assert_eq!(rows.len(), 1, "cases.json rows for {name}");
+        if let Err(problem) = check_row(rows[0]) {
+            panic!("{problem}");
+        }
+        let report = load_explain_fixture(name);
+        assert_eq!(
+            report.configuration.max_footprint_source,
+            Some(LimitSource::Auto),
+            "{name}"
+        );
+        assert!(
+            rows[0]
+                .text
+                .contains(" automatic limit mlx-guard chose at launch"),
+            "{name}: {}",
+            rows[0].text
+        );
+    }
+}
+
+#[test]
+fn max_footprint_hint_offers_auto() {
+    // Bug: the --max-footprint "what to do" line keeps the 0.5.0 text, so a user who left the
+    // flag out is never told that `auto` exists.
+    assert_eq!(
+        explain_early(EarlyCause::CommandLine {
+            flag: Some("--max-footprint"),
+        })
+        .text(),
+        format!(
+            "what happened: the command line was not accepted (--max-footprint), so nothing was \
+             launched and no report was written.\n\
+             what to do: fix --max-footprint as the error above says: give a size such as 16GiB, \
+             or auto to let mlx-guard pick one from this Mac's memory just before launch, then \
+             run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{VERSION}/\
+             docs/TROUBLESHOOTING.md#64-the-command-line"
+        )
+    );
+}
+
+#[test]
+fn no_usable_automatic_limit_has_its_own_plain_lines() {
+    // Bug: the refusal reuses the generic configuration row ("fix that setting"), which gives
+    // a user of `auto` nothing to fix, or links the command-line section.
+    let outcome = explain_early(EarlyCause::AutoLimitUnavailable);
+    assert_eq!(
+        outcome.text(),
+        format!(
+            "what happened: --max-footprint auto could not pick a limit, because macOS gave no \
+             usable memory number just before launch, so nothing was launched and no report was \
+             written.\n\
+             what to do: pass a size instead, such as --max-footprint 16GiB, taken from a peak \
+             you observed, then run the command again. More: \
+             https://github.com/IonDen/mlx-guard/blob/v{VERSION}/docs/TROUBLESHOOTING.md\
+             #64-the-automatic-limit"
+        )
+    );
+    assert_eq!(outcome.anchor, "64-the-automatic-limit");
+}
+
+#[test]
+fn automatic_limit_below_the_floor_names_the_minimum() {
+    // Bug: the below-floor refusal reuses the no-number plain line ("macOS gave no usable memory
+    // number"), which is false when macOS gave a number and the limit from it was too small.
+    let outcome = explain_early(EarlyCause::AutoLimitBelowFloor);
+    assert_eq!(
+        outcome.text(),
+        format!(
+            "what happened: --max-footprint auto could not pick a limit, because the limit it \
+             would pick from this Mac's memory just before launch is under the 1 GiB minimum, so \
+             nothing was launched and no report was written.\n\
+             what to do: pass a size instead, such as --max-footprint 16GiB, taken from a peak \
+             you observed, then run the command again. More: \
+             https://github.com/IonDen/mlx-guard/blob/v{VERSION}/docs/TROUBLESHOOTING.md\
+             #64-the-automatic-limit"
+        )
+    );
+    assert_eq!(outcome.anchor, "64-the-automatic-limit");
+}
+
+#[test]
+fn automatic_limit_anchor_follows_the_launch_setting_anchor() {
+    // Bug: the new anchor missing from ANCHORS, or placed elsewhere in the list that Python and
+    // the page test mirror in order.
+    let position = ANCHORS
+        .iter()
+        .position(|anchor| *anchor == "64-a-launch-setting")
+        .expect("64-a-launch-setting is listed");
+    assert_eq!(ANCHORS.get(position + 1), Some(&"64-the-automatic-limit"));
 }

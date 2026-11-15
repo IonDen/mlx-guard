@@ -46,6 +46,10 @@ is not listed is untested as well.
 | Apple M4 Max | none | untested | — |
 | Apple M5 family | none | untested | The M5 GPU's neural accelerators and their memory behaviour are new; nothing measured on M1 is assumed to carry over. |
 
+The automatic limit (`--max-footprint auto`) has its own caveat. Its share was chosen on, and has
+only been tried on, one 32 GB M1 Max; other memory sizes are not verified. On that Mac the automatic
+limit sat above the memory free at launch in every reading. Reports from other Macs are welcome.
+
 The wheel is tagged `macosx_11_0_arm64` because that is the deployment target it was built
 against. The tag does not establish runtime support on macOS 11 through 14; the verified cells
 above were captured on the macOS builds they name.

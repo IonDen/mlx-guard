@@ -7,8 +7,8 @@
 #[cfg(unix)]
 use crate::StorageErrorKind;
 use crate::{
-    CheckpointStatus, ObservationError, Observed, PolicyState, ReportMode, ReportV1, SignalReason,
-    SignalRecord, SignalResult, SignalTarget, SupervisorOutcome, TerminalKind,
+    CheckpointStatus, LimitSource, ObservationError, Observed, PolicyState, ReportMode, ReportV1,
+    SignalReason, SignalRecord, SignalResult, SignalTarget, SupervisorOutcome, TerminalKind,
 };
 
 const SIGKILL: u8 = 9;
@@ -19,6 +19,7 @@ const COLLISION_CODES: [u8; 6] = [64, 70, 74, 75, 126, 127];
 
 const ANCHOR_COMMAND_LINE: &str = "64-the-command-line";
 const ANCHOR_LAUNCH_SETTING: &str = "64-a-launch-setting";
+const ANCHOR_AUTO_LIMIT: &str = "64-the-automatic-limit";
 const ANCHOR_BEFORE_LAUNCH_70: &str = "70-before-launch";
 const ANCHOR_WHILE_STARTING: &str = "70-while-starting-the-command";
 const ANCHOR_READINGS_LOST: &str = "70-footprint-readings-lost";
@@ -45,6 +46,7 @@ const ANCHOR_COLLISION: &str = "a-code-mlx-guard-also-uses";
 pub const ANCHORS: &[&str] = &[
     ANCHOR_COMMAND_LINE,
     ANCHOR_LAUNCH_SETTING,
+    ANCHOR_AUTO_LIMIT,
     ANCHOR_BEFORE_LAUNCH_70,
     ANCHOR_WHILE_STARTING,
     ANCHOR_READINGS_LOST,
@@ -186,6 +188,10 @@ pub enum EarlyCause {
     FootprintUnavailable,
     RunIdentity,
     SupervisorSetup,
+    /// `--max-footprint auto` found no usable memory number just before launch.
+    AutoLimitUnavailable,
+    /// `--max-footprint auto` would have picked a limit under the 1 GiB minimum.
+    AutoLimitBelowFloor,
     Storage {
         kind: StorageClass,
         phase: StoragePhase,
@@ -221,6 +227,8 @@ pub fn explain_early(cause: EarlyCause) -> PlainOutcome {
         EarlyCause::FootprintUnavailable => footprint_unavailable(),
         EarlyCause::RunIdentity => run_identity(),
         EarlyCause::SupervisorSetup => supervisor_setup(),
+        EarlyCause::AutoLimitUnavailable => auto_limit_unavailable(),
+        EarlyCause::AutoLimitBelowFloor => auto_limit_below_floor(),
         EarlyCause::Storage { kind, phase } => storage(kind, phase),
     };
     lines.with_version(crate::VERSION)
@@ -791,15 +799,25 @@ fn emergency(report: &ReportV1) -> Option<Lines> {
         SignalResult::PermissionDenied | SignalResult::Failed => return None,
     };
     let [value, threshold_text, limit_text] = compared_bytes([value, threshold, limit]);
+    let (named, change) = if is_automatic(report) {
+        (
+            format!("the {limit_text} automatic limit mlx-guard chose at launch"),
+            "pass a size to",
+        )
+    } else {
+        (format!("your {limit_text} limit"), "raise")
+    };
     Some(Lines::new(
         format!(
             "one sample of the OS-accounted footprint, {value}, was at or above the emergency \
-             threshold of {threshold_text}, which is {} more than your {limit_text} limit, so \
-             mlx-guard {action}.",
+             threshold of {threshold_text}, which is {} more than {named}, so mlx-guard \
+             {action}.",
             format_bytes(threshold.saturating_sub(limit)),
         ),
-        "find what allocates that much between samples, or raise --max-footprint if that peak is \
-         expected; a shorter --sample-interval sees growth sooner.",
+        format!(
+            "find what allocates that much between samples, or {change} --max-footprint if that \
+             peak is expected; a shorter --sample-interval sees growth sooner."
+        ),
         ANCHOR_EMERGENCY,
     ))
 }
@@ -837,17 +855,33 @@ fn footprint(report: &ReportV1) -> Option<Lines> {
                 )
         })
         .and_then(|transition| transition.aggregate_footprint_bytes);
+    let automatic = is_automatic(report);
+    let named = |limit: &str| {
+        if automatic {
+            format!("{limit} automatic limit mlx-guard chose at launch")
+        } else {
+            format!("{limit} limit you set")
+        }
+    };
     let measured = match breach {
         Some(value) => {
             let [value, limit] = compared_bytes([value, limit]);
             format!(
-                "reached {value}, at or above the {limit} limit you set, on {samples} samples in a row"
+                "reached {value}, at or above the {}, on {samples} samples in a row",
+                named(&limit)
             )
         }
         None => format!(
-            "was at or above the {} limit you set on {samples} samples in a row",
-            format_bytes(limit)
+            "was at or above the {} on {samples} samples in a row",
+            named(&format_bytes(limit))
         ),
+    };
+    let to_do = if automatic {
+        "the automatic limit came from this Mac's memory at launch, not from what the command \
+         needs: observe the command to see its peak, then pass a size with headroom above that \
+         peak to --max-footprint, or fix the growth"
+    } else {
+        "observe the command to see its peak, then fix the growth or raise --max-footprint"
     };
     Some(Lines::new(
         format!(
@@ -855,12 +889,16 @@ fn footprint(report: &ReportV1) -> Option<Lines> {
             action_clause(report),
             checkpoint_clause(report)
         ),
-        format!(
-            "observe the command to see its peak, then fix the growth or raise --max-footprint{}.",
-            resume_clause(report)
-        ),
+        format!("{to_do}{}.", resume_clause(report)),
         ANCHOR_FOOTPRINT,
     ))
+}
+
+/// Whether the report's limit was picked by `--max-footprint auto`. Only the recorded source
+/// decides: an absent source (every report before 0.6.0) or one this release does not know reads
+/// as a limit the user set, and the prelaunch record says nothing about who chose the number.
+fn is_automatic(report: &ReportV1) -> bool {
+    report.configuration.max_footprint_source == Some(LimitSource::Auto)
 }
 
 fn wall_time(report: &ReportV1) -> Option<Lines> {
@@ -1003,16 +1041,44 @@ fn command_line(flag: Option<&'static str>) -> Lines {
         }
     });
     let named = shown.map_or_else(String::new, |flag| format!(" ({flag})"));
+    // Only a missing or rejected limit offers `auto`; every other flag keeps the plain advice.
+    let offer = if flag == Some("--max-footprint") {
+        ": give a size such as 16GiB, or auto to let mlx-guard pick one from this Mac's memory \
+         just before launch,"
+    } else {
+        ","
+    };
     Lines::new(
         format!(
             "the command line was not accepted{named}, so nothing was launched and no report \
              was written."
         ),
         format!(
-            "fix {} as the error above says, then run the command again.",
+            "fix {} as the error above says{offer} then run the command again.",
             shown.unwrap_or("the command line")
         ),
         ANCHOR_COMMAND_LINE,
+    )
+}
+
+fn auto_limit_unavailable() -> Lines {
+    Lines::new(
+        "--max-footprint auto could not pick a limit, because macOS gave no usable memory number \
+         just before launch, so nothing was launched and no report was written.",
+        "pass a size instead, such as --max-footprint 16GiB, taken from a peak you observed, then \
+         run the command again.",
+        ANCHOR_AUTO_LIMIT,
+    )
+}
+
+fn auto_limit_below_floor() -> Lines {
+    Lines::new(
+        "--max-footprint auto could not pick a limit, because the limit it would pick from this \
+         Mac's memory just before launch is under the 1 GiB minimum, so nothing was launched and \
+         no report was written.",
+        "pass a size instead, such as --max-footprint 16GiB, taken from a peak you observed, then \
+         run the command again.",
+        ANCHOR_AUTO_LIMIT,
     )
 }
 
@@ -1567,7 +1633,18 @@ mod tests {
             },
             "the command line was not accepted (--max-footprint), so nothing was launched and no \
              report was written.",
-            "fix --max-footprint as the error above says, then run the command again.",
+            "fix --max-footprint as the error above says: give a size such as 16GiB, or auto to \
+             let mlx-guard pick one from this Mac's memory just before launch, then run the \
+             command again.",
+            "64-the-command-line",
+        );
+        assert_early(
+            EarlyCause::CommandLine {
+                flag: Some("--wall-time"),
+            },
+            "the command line was not accepted (--wall-time), so nothing was launched and no \
+             report was written.",
+            "fix --wall-time as the error above says, then run the command again.",
             "64-the-command-line",
         );
         assert_early(
@@ -1575,6 +1652,69 @@ mod tests {
             "the command line was not accepted, so nothing was launched and no report was written.",
             "fix the command line as the error above says, then run the command again.",
             "64-the-command-line",
+        );
+    }
+
+    #[test]
+    fn only_max_footprint_offers_auto() {
+        // Bug: the auto offer keyed on "a flag is named" instead of on --max-footprint, so a bad
+        // --report or --wall-time value tells the user to type auto.
+        for flag in [
+            None,
+            Some("--wall-time"),
+            Some("--checkpoint-timeout"),
+            Some("--sample-interval"),
+            Some("--report"),
+            Some("--cwd"),
+            Some("--clear-env"),
+            Some("--env"),
+            Some("--on-parent-exit"),
+            Some("--client-ready-fd"),
+            Some("<COMMAND>"),
+        ] {
+            let outcome = explain_early(EarlyCause::CommandLine { flag });
+            assert!(
+                !outcome.what_to_do.contains("auto"),
+                "{flag:?}: {outcome:?}"
+            );
+        }
+        let offered = explain_early(EarlyCause::CommandLine {
+            flag: Some("--max-footprint"),
+        });
+        assert!(
+            offered
+                .what_to_do
+                .contains(", or auto to let mlx-guard pick one "),
+            "{offered:?}"
+        );
+    }
+
+    #[test]
+    fn early_cause_auto_limit_unavailable_renders_its_row() {
+        // Bug: the refusal of `auto` routed to the generic configuration row ("fix that
+        // setting"), which names nothing the user can fix, or linked to the command-line section.
+        assert_early(
+            EarlyCause::AutoLimitUnavailable,
+            "--max-footprint auto could not pick a limit, because macOS gave no usable memory \
+             number just before launch, so nothing was launched and no report was written.",
+            "pass a size instead, such as --max-footprint 16GiB, taken from a peak you observed, \
+             then run the command again.",
+            "64-the-automatic-limit",
+        );
+    }
+
+    #[test]
+    fn early_cause_auto_limit_below_floor_renders_its_row() {
+        // Bug: a below-floor refusal says macOS gave no usable memory number, when it gave one
+        // and the limit from it fell under the minimum.
+        assert_early(
+            EarlyCause::AutoLimitBelowFloor,
+            "--max-footprint auto could not pick a limit, because the limit it would pick from \
+             this Mac's memory just before launch is under the 1 GiB minimum, so nothing was \
+             launched and no report was written.",
+            "pass a size instead, such as --max-footprint 16GiB, taken from a peak you observed, \
+             then run the command again.",
+            "64-the-automatic-limit",
         );
     }
 

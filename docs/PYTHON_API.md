@@ -28,6 +28,11 @@ result = mlx_guard.run(
 print(result.returncode, result.report.outcome.kind)
 ```
 
+`max_footprint_bytes` is required. It takes a byte count, or the string `"auto"` to let mlx-guard
+pick the limit from this Mac's memory just before launch (see
+[the automatic limit](CLI.md#the-automatic-limit)). Any other string raises `ConfigurationError`.
+Code that does arithmetic on the field needs to handle both types.
+
 Configurations are frozen dataclasses. Commands remain literal argument tuples and never pass
 through a shell. The supervisor inherits the caller's standard input. If that is a terminal, the
 supervised command reads `/dev/null` instead and the supervisor prints one line on stderr (captured
@@ -110,7 +115,10 @@ code. See the [CLI contract](CLI.md#plain-outcome-lines) and the
 
 Outcomes that leave no report never produce a `RunResult`, so they have no `explanation`. They keep
 raising `MissingReportError` (and `ReportPathInUseError` for a used report path). Their plain lines
-reach your stderr, or `iter_output()` under `capture_output=True`.
+reach your stderr, or `iter_output()` under `capture_output=True`. One exception: under
+`max_footprint_bytes="auto"`, a run that stops before launch with exit code 64 raises
+`ConfigurationError` instead. The usual cause is that macOS gave no usable memory number, or one too
+small for the 1 GiB minimum; other refusals before launch raise it too. Pass a size in bytes.
 
 If the supervisor process itself is killed with SIGKILL, the supervised command keeps running and
 no final report is written (see [process control](PROCESS_CONTROL.md)). Stop a guarded run with

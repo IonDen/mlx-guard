@@ -12,7 +12,9 @@ link to a section of this page. The wording of those lines may change between re
 prefixes, where the lines appear, and the rule that they never contain your command, environment
 values, paths, or command output are stable (see [STABILITY](STABILITY.md)). Scripts should read the
 exit code or the [report](REPORTS.md), never these lines. A different kind of line, printed while
-a `run` is still going, is described under [warnings during a run](#warnings-during-a-run).
+a `run` is still going, is described under [warnings during a run](#warnings-during-a-run). Since
+0.6.0, `run --max-footprint auto` prints one more line of that kind, described under
+[the automatic limit](#the-automatic-limit).
 
 Below, each section quotes the sentences mlx-guard prints. Text in braces, such as `{limit}`, is
 filled in from the run. A sentence that says "the error above" points at the one-line diagnostic
@@ -21,7 +23,7 @@ mlx-guard prints just before the two lines.
 | Exit code | Sections |
 |---|---|
 | The command's own code (for example `1`) | Nothing is printed. See [a code mlx-guard also uses](#a-code-mlx-guard-also-uses) only if the code is 64, 70, 74, 75, 126, or 127 |
-| `64` | [the command line](#64-the-command-line), [a launch setting](#64-a-launch-setting) |
+| `64` | [the command line](#64-the-command-line), [the automatic limit](#64-the-automatic-limit), [a launch setting](#64-a-launch-setting) |
 | `70` | [before launch](#70-before-launch), [while starting the command](#70-while-starting-the-command), [footprint readings lost](#70-footprint-readings-lost), [a signal not delivered](#70-a-signal-not-delivered), [an internal failure](#70-an-internal-failure) |
 | `74` | [report path already used](#74-report-path-already-used), [report directory](#74-report-directory), [before launch](#74-before-launch), [after launch](#74-after-launch) |
 | `75` | [the footprint limit](#75-the-footprint-limit), [emergency kill](#75-emergency-kill), [the wall-time limit](#75-the-wall-time-limit), [the launching process exited](#75-the-launching-process-exited), [a signal the command ignored](#75-a-signal-the-command-ignored), [processes left behind](#75-processes-left-behind), [cause not recorded](#75-cause-not-recorded) |
@@ -137,9 +139,10 @@ to change the limit, stop it and start a new run.
 
 **The limit is yours.** The limit you pass is the limit `mlx-guard` enforces. It does not raise or
 lower it, whatever the launch check says. A limit well below the number, for example to leave room
-for other jobs on a big Mac, is obeyed as given and prints nothing. `mlx-guard` has no automatic
-limit: choose one by observing the command first (see
-[choosing the limit](integrations/WRAP_A_COMMAND.md#choosing-the-limit)).
+for other jobs on a big Mac, is obeyed as given and prints nothing. If you would rather not pick a
+number, `--max-footprint auto` picks one from this Mac's memory at launch (see
+[the automatic limit](#the-automatic-limit)). To choose one that fits the command, observe it first
+(see [choosing the limit](integrations/WRAP_A_COMMAND.md#choosing-the-limit)).
 
 **Good to know.** The line prints only after a successful launch. If the command fails to launch, no
 line is printed, but the report still holds the number, and also `limit_may_not_fit` when the limit
@@ -153,6 +156,39 @@ more than the estimate; `configuration.max_footprint_bytes` is your limit. Do no
 comparison from a report: what the number adds up and when the line fires belong to the release in
 `package_version`. See [reports](REPORTS.md).
 
+## The automatic limit
+
+**What happened.** You passed `--max-footprint auto`, so mlx-guard chose the limit for you. Just
+before it starts your command, it reads the same not-wired memory number the
+[launch line](#the-launch-line) uses, takes a fixed share of it, and enforces that as the limit.
+It then prints one line right after the start-of-run notice. After the `mlx-guard: ` prefix, the
+line reads: `automatic limit: {limit}, {percent}% of the {estimate} macOS reported as not wired
+just before launch, not a measure of what this command needs. It stays fixed for this run.` It ends
+with `More:` and a link to this section. The limit, the share and the number come from your Mac at
+that moment, so they differ from Mac to Mac and from run to run.
+
+**What `auto` is for.** It is meant to catch a run that grows out of control. It is not an estimate
+of what your command needs. A job that needs more memory than the automatic limit allows should
+pass a size instead.
+
+**Why.** The number counts memory that other programs are using as room, as if all of them could be
+pushed out. So a run can push those programs into compression or swap before it is stopped at the
+limit. A job that needs more memory than the automatic limit is stopped by it; give that job a
+size with headroom above a peak you observed. The automatic limit reduces the risk that a runaway
+uses up this Mac's memory. It does not prevent slowdowns, paging, crashes or a kernel panic. The
+number is read once, just before launch, and the limit does not move afterwards.
+
+**What to do.** If the line fits what you want, nothing. If you are unsure, observe the command to
+see its peak, then pass a size with headroom above that peak to `--max-footprint` (see
+[choosing the limit](integrations/WRAP_A_COMMAND.md#choosing-the-limit)). A typed size is enforced
+as given. A run that is stopped at an automatic limit says so in its
+[stop lines](#75-the-footprint-limit).
+
+**Report fields.** `configuration.max_footprint_source` is `auto` for these runs.
+`configuration.max_footprint_bytes` is the limit that was enforced. `prelaunch.auto_limit` holds
+the `rule` and `limit_bytes`, and `prelaunch.memory_estimate` is the number it started from. A typed
+size is recorded as `max_footprint_source: "explicit"`.
+
 ## 64: the command line
 
 **What happened.** mlx-guard did not like its own command line, so nothing was launched and no
@@ -163,12 +199,45 @@ names it), so nothing was launched and no report was written.` and `the internal
 descriptor could not be used, so nothing was launched and no report was written.`
 
 **What to do.** `fix {flag} as the error above says, then run the command again.` Without a named
-flag it says `fix the command line as the error above says, then run the command again.` For the
+flag it says `fix the command line as the error above says, then run the command again.` When the
+flag is `--max-footprint`, the advice offers both ways to give a limit: `fix --max-footprint as the
+error above says: give a size such as {size}, or auto to let mlx-guard pick one from this Mac's
+memory just before launch, then run the command again.` For the
 `--client-ready-fd` form: `leave --client-ready-fd out when you run mlx-guard yourself; it is for
 the Python client. If the Python client produced this, open an issue.` Byte values need a binary
 suffix such as `GiB`; see the [value grammar](CLI.md#value-grammar).
 
 **Report fields.** There is no report to read. The line above the two plain lines names the problem.
+
+## 64: the automatic limit
+
+**What happened.** You passed `--max-footprint auto`, and mlx-guard could not turn macOS's memory
+reading into a limit. The first stderr line names the cause, in one of two forms: either macOS gave
+no memory number just before launch, or 75 % of the memory macOS reported as not wired is under the
+1 GiB minimum. The plain lines that follow match the cause. When macOS gave no number, they say:
+`--max-footprint auto could not pick a limit, because macOS gave no usable memory number just before
+launch, so nothing was launched and no report was written.` When the number is too small, they say:
+`--max-footprint auto could not pick a limit, because the limit it would pick from this Mac's memory
+just before launch is under the 1 GiB minimum, so nothing was launched and no report was written.`
+
+**Why.** `auto` needs a usable number from macOS just before launch, and the limit it would pick
+must reach the 1 GiB minimum. If macOS gives no number, mlx-guard has nothing to base a limit on. If
+75 % of the number is under the 1 GiB minimum, the limit would be too small to use. In both cases
+mlx-guard will not invent a limit. The run is refused because the setting cannot be used: nothing
+has started, so there is nothing to supervise and no report to write.
+
+That is why this ends with exit 64, while a different failure ends with 70. Exit 64 is a setting you
+can change on the command line: here, pass a size. Exit 70 is a failure in mlx-guard's own setup or
+supervision, not in the size you pass, whether it comes before launch (see
+[70: before launch](#70-before-launch)) or after it. If mlx-guard cannot read the OS-accounted
+footprint during a run, the command is already running and mlx-guard has lost sight of it; that
+is a supervisor failure with a report (see [footprint readings lost](#70-footprint-readings-lost)).
+
+**What to do.** In both cases: `pass a size instead, such as --max-footprint {size}, taken from a
+peak you observed, then run the command again.` Observe the command first if you do not have a peak
+yet.
+
+**Report fields.** There is no report to read.
 
 ## 64: a launch setting
 
@@ -332,9 +401,19 @@ not acknowledge checkpoint request 11 within 1.0 s; it may still have saved it.`
 request could not be delivered.` A report with no breach reading says `the OS-accounted footprint
 was at or above the 100 B limit you set on 2 samples in a row`, with no measured value.
 
+When the limit was chosen by `--max-footprint auto`, the sentence says so: `the OS-accounted
+footprint reached {value}, at or above the {limit} automatic limit mlx-guard chose at launch, on 2
+samples in a row, so mlx-guard sent SIGTERM to the command's process group at {t}.` Without a breach
+reading it reads `the OS-accounted footprint was at or above the {limit} automatic limit mlx-guard
+chose at launch on 2 samples in a row`, again with no measured value.
+
 **What to do.** `observe the command to see its peak, then fix the growth or raise --max-footprint.`
 When a checkpoint was acknowledged, it adds `; resume from the state saved for checkpoint request
 {id}`. When it timed out: `; if the command saved state for checkpoint request {id}, resume from it`.
+For an automatic limit the advice is different, because the limit did not come from your command:
+`the automatic limit came from this Mac's memory at launch, not from what the command needs:
+observe the command to see its peak, then pass a size with headroom above that peak to
+--max-footprint, or fix the growth.` The same resume advice follows it.
 
 **Report fields.** `configuration.max_footprint_bytes` and `configuration.required_breach_samples`;
 the `transitions` entry that went from warning to checkpoint requested or terminating, with its
@@ -353,8 +432,15 @@ group when it sent SIGKILL at 12.3 s.`
 past the limit by default. At or above it, mlx-guard skips the checkpoint request and the TERM grace
 period.
 
+When the limit was chosen by `--max-footprint auto`, the sentence names it: `one sample of the
+OS-accounted footprint, {value}, was at or above the emergency threshold of {value}, which is {value}
+more than the {limit} automatic limit mlx-guard chose at launch, so mlx-guard sent SIGKILL to the
+command's process group at once at {t}, with no checkpoint and no grace period.`
+
 **What to do.** `find what allocates that much between samples, or raise --max-footprint if that peak
-is expected; a shorter --sample-interval sees growth sooner.`
+is expected; a shorter --sample-interval sees growth sooner.` For an automatic limit: `find what
+allocates that much between samples, or pass a size to --max-footprint if that peak is expected; a
+shorter --sample-interval sees growth sooner.`
 
 **Report fields.** `configuration.emergency_footprint_bytes` and `configuration.max_footprint_bytes`;
 the `transitions` entry that went to `emergency`; the KILL record in `signals`.

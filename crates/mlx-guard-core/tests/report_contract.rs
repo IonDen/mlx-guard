@@ -43,6 +43,7 @@ fn report() -> ReportV1 {
         configuration: ReportConfiguration {
             mode: ReportMode::Enforce,
             max_footprint_bytes: Some(100),
+            max_footprint_source: None,
             warning_footprint_bytes: Some(90),
             recovery_footprint_bytes: Some(80),
             emergency_footprint_bytes: Some(150),
@@ -710,6 +711,7 @@ fn prelaunch_with(estimate: Observed<u64>, warnings: Vec<PrelaunchWarning>) -> P
             code: ObservationError::Internal,
         },
         warnings,
+        auto_limit: None,
     }
 }
 

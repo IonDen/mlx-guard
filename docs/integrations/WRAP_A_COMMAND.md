@@ -76,8 +76,10 @@ on the status before taking a maximum, and the second counts the samples it skip
 means part of the run went unmeasured, and the peak you just read is the peak of what was seen.
 [Reports and privacy](../REPORTS.md) lists the states.
 
-A bare Python interpreter sleeping costs under 7 MiB here. `run` requires an explicit limit; set one
-well above that observed peak and nothing changes:
+A bare Python interpreter sleeping costs under 7 MiB here. `run` requires a limit. Observing the
+command gives you one that fits it (`auto` is only a stopgap, covered under
+[choosing the limit](#choosing-the-limit)). Set the limit well above the observed peak and nothing
+changes:
 
 ```console
 $ mlx-guard run --max-footprint 64MiB --report reports/run.json -- python3 -c "import time; time.sleep(3)" < /dev/null
@@ -229,11 +231,22 @@ configuration you actually intend to enforce.
 
 Run the real command under `observe` with representative arguments, read the peak out of the report
 the way the ladder above does, and set `--max-footprint` above it with headroom for run-to-run
-variation, never as a fraction of total machine memory. Repeat the observe run rather than trusting
-one of them: the number you want is the highest repeatable peak, not whichever peak the first run
-happened to produce. Whatever limit you set, enforcement authorizes a little more: the emergency
-KILL band sits about 10 % above it (`limit + max(1 byte, limit / 10)`), so the real ceiling is the
-limit plus that margin.
+variation, never as a fraction of total machine memory. (`auto` is a stopgap and takes a share of
+what macOS reports as not wired at launch, not of total memory; see below.) Repeat the observe run
+rather than trusting one of them: the number you want is the highest repeatable peak, not whichever
+peak the first run happened to produce. Whatever limit you set, enforcement authorizes a little
+more: the emergency KILL band sits about 10 % above it (`limit + max(1 byte, limit / 10)`), so the
+real ceiling is the limit plus that margin.
+
+If you have no peak yet, `--max-footprint auto` sets the limit to 75 % of the memory macOS had not
+locked as wired just before launch, records in the report how it chose, and enforces it like a size
+you typed. It is meant to catch a run that grows out of control. It counts memory other programs are
+using as room, so a run can push them into compression or swap before it reaches the limit; it does
+not account for jobs started after launch and knows nothing about what your command needs. A job
+that needs more memory than that limit is stopped by it: give it a size, with headroom above a peak
+you observed. It reduces the risk that a runaway uses up this Mac's memory; it does not prevent
+slowdowns, paging, crashes or a kernel panic. Observing first stays the way to choose a limit that
+fits the command (see [the automatic limit](../CLI.md#the-automatic-limit)).
 
 Two details decide whether the peak you read is the peak that matters.
 

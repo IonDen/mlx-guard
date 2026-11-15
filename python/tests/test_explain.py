@@ -540,6 +540,139 @@ class RunResultFieldTests(unittest.TestCase):
         self.assertTrue(repr(first).endswith(", explanation='one')"), repr(first))
 
 
+FOOTPRINT_REPORT = "evidence/v0.2.0/tutorial/reports/run-limit.json"
+EMERGENCY_REPORT = "crates/mlx-guard-core/tests/fixtures/explain/report-75-emergency.json"
+NO_BREACH_REPORT = "crates/mlx-guard-core/tests/fixtures/report-v1-resume.json"
+AUTO_FIXTURES = (
+    "report-75-footprint-auto.json",
+    "report-75-footprint-auto-no-breach.json",
+    "report-75-emergency-auto.json",
+)
+# Illustrative figures: a 6.00 GiB automatic limit, three quarters of an 8.00 GiB estimate.
+AUTO_LIMIT = 6_442_450_944
+AUTO_ESTIMATE = 8_589_934_592
+
+
+def prelaunch_8_gib(auto_limit: dict[str, object] | None) -> dict[str, object]:
+    """The prelaunch record a 0.5.0 or later run writes, with an automatic record if given."""
+    record: dict[str, object] = {
+        "memory_estimate": {"status": "available", "value": AUTO_ESTIMATE},
+        "memory_categories": {
+            "status": "available",
+            "value": {
+                "free_bytes": 1_073_741_824,
+                "active_bytes": 3_221_225_472,
+                "inactive_bytes": 3_221_225_472,
+                "wired_bytes": 2_147_483_648,
+                "compressor_bytes": 1_073_741_824,
+            },
+        },
+        "warnings": [],
+    }
+    if auto_limit is not None:
+        record["auto_limit"] = auto_limit
+    return record
+
+
+def explicit_with_prelaunch(relative: str, source: str | None) -> dict[str, object]:
+    """A typed-size report as 0.5.0 (no source) or this release (``explicit``) writes it."""
+    decoded = load_json(relative)
+    decoded["prelaunch"] = prelaunch_8_gib(None)
+    if source is not None:
+        as_dict(decoded["configuration"])["max_footprint_source"] = source
+    return decoded
+
+
+def as_automatic(relative: str, rule: str) -> dict[str, object]:
+    """The same report as an automatic run with the 6.00 GiB limit records it."""
+    decoded = load_json(relative)
+    configuration = as_dict(decoded["configuration"])
+    assert configuration["max_footprint_bytes"] == AUTO_LIMIT, relative
+    configuration["max_footprint_source"] = "auto"
+    decoded["prelaunch"] = prelaunch_8_gib({"rule": rule, "limit_bytes": AUTO_LIMIT})
+    return decoded
+
+
+class AutomaticLimitTests(unittest.TestCase):
+    """The stop lines of a run whose limit mlx-guard chose at launch, and of every other run."""
+
+    def test_report_without_source_keeps_the_explicit_wording(self) -> None:
+        # Bug: the automatic wording keyed on the prelaunch record (every 0.5.0 typed-size report
+        # has one) or on "source is not explicit" (an absent source means explicit).
+        for relative, row in (
+            (FOOTPRINT_REPORT, "75-footprint"),
+            (EMERGENCY_REPORT, "75-emergency"),
+            (NO_BREACH_REPORT, "75-footprint-no-breach"),
+        ):
+            # "a_later_source" is a source written by a later release: still the limit you set.
+            for source in (None, "explicit", "a_later_source"):
+                with self.subTest(row=row, source=source):
+                    decoded = explicit_with_prelaunch(relative, source)
+                    version = decoded["package_version"]
+                    assert isinstance(version, str)
+                    self.assertEqual(explain(freeze(decoded)), expected_text(row, version))
+
+    def test_footprint_stop_at_an_automatic_limit_says_mlx_guard_chose_it(self) -> None:
+        # Bug: `_footprint` has no automatic branch, or its "what to do" drops the advice to pass
+        # a size with headroom above an observed peak.
+        decoded = as_automatic(FOOTPRINT_REPORT, "not_wired_75_percent")
+        self.assertEqual(
+            explain(freeze(decoded)),
+            "what happened: the OS-accounted footprint reached 6.05 GiB, at or above the 6.00 GiB "
+            "automatic limit mlx-guard chose at launch, on 2 samples in a row, so mlx-guard sent "
+            "SIGTERM to the command's process group at 40.0 s.\n"
+            "what to do: the automatic limit came from this Mac's memory at launch, not from what "
+            "the command needs: observe the command to see its peak, then pass a size with "
+            "headroom above that peak to --max-footprint, or fix the growth. More: "
+            "https://github.com/IonDen/mlx-guard/blob/v0.2.0/docs/TROUBLESHOOTING.md"
+            "#75-the-footprint-limit",
+        )
+
+    def test_emergency_kill_at_an_automatic_limit_says_mlx_guard_chose_it(self) -> None:
+        # Bug: `_emergency` has no automatic branch, so an automatic run reads "your 6.00 GiB
+        # limit" and "raise --max-footprint" for a number the user never chose.
+        decoded = as_automatic(EMERGENCY_REPORT, "not_wired_75_percent")
+        self.assertEqual(
+            explain(freeze(decoded)),
+            "what happened: one sample of the OS-accounted footprint, 7.00 GiB, was at or above "
+            "the emergency threshold of 6.60 GiB, which is 614.40 MiB more than the 6.00 GiB "
+            "automatic limit mlx-guard chose at launch, so mlx-guard sent SIGKILL to the "
+            "command's process group at once at 12.3 s, with no checkpoint and no grace period.\n"
+            "what to do: find what allocates that much between samples, or pass a size to "
+            "--max-footprint if that peak is expected; a shorter --sample-interval sees growth "
+            "sooner. More: https://github.com/IonDen/mlx-guard/blob/v0.1.0/docs/TROUBLESHOOTING.md"
+            "#75-emergency-kill",
+        )
+
+    def test_a_stop_line_reads_the_source_not_the_rule(self) -> None:
+        # Bug: the stop lines branch on the rule (an id a later release writes falls back to "the
+        # limit you set") or print its share ("0%" for a rule this release does not know).
+        for relative in (FOOTPRINT_REPORT, EMERGENCY_REPORT):
+            with self.subTest(report=relative):
+                known = explain(freeze(as_automatic(relative, "not_wired_75_percent")))
+                unknown = explain(freeze(as_automatic(relative, "not_wired_70_percent")))
+                assert unknown is not None
+                self.assertEqual(unknown, known)
+                self.assertNotIn("%", unknown)
+
+    def test_every_automatic_fixture_has_its_corpus_row(self) -> None:
+        # Bug: an automatic stop fixture with no cases.json row, so the corpus loop above never
+        # checks its sentence in Python.
+        corpus = str(CORPUS.relative_to(ROOT))
+        for name in AUTO_FIXTURES:
+            with self.subTest(fixture=name):
+                rows = [entry for entry in cases() if entry["report"] == f"{corpus}/{name}"]
+                self.assertEqual(len(rows), 1, name)
+                decoded = load_json(rows[0]["report"])
+                self.assertEqual(as_dict(decoded["configuration"])["max_footprint_source"], "auto")
+                version = decoded["package_version"]
+                assert isinstance(version, str)
+                self.assertEqual(
+                    explain(freeze(decoded)), rows[0]["text"].replace("{version}", version)
+                )
+                self.assertIn(" automatic limit mlx-guard chose at launch", rows[0]["text"])
+
+
 class fresh_explain_module:  # A context manager, named to read like a function call.
     """Load a second copy of the explainer so module-level work runs under the caller's patches."""
 

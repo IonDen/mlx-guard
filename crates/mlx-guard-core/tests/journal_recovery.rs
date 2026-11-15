@@ -180,6 +180,7 @@ fn oversized_record_is_rejected_before_any_bytes_are_appended() {
         configuration: ReportConfiguration {
             mode: ReportMode::Observe,
             max_footprint_bytes: None,
+            max_footprint_source: None,
             warning_footprint_bytes: None,
             recovery_footprint_bytes: None,
             emergency_footprint_bytes: None,

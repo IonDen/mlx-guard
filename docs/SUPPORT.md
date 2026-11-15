@@ -2,7 +2,7 @@
 
 ## Release target
 
-| Component | Supported in 0.5.x |
+| Component | Supported in 0.6.x |
 |---|---|
 | Hardware | Apple Silicon (`arm64`) |
 | Verified local runtime | macOS 27.2 (26B123) for the reference measurements, taken with 0.5.0 (see the [compatibility matrix](COMPATIBILITY.md)) |
@@ -28,5 +28,5 @@ untested, and explains how a bundle from another machine fills a cell. The wheel
 
 For reproducible defects, open a GitHub issue with the package version, `uname -m`, macOS version,
 the path-free command shape, limit values, exit code, and a redacted report. Use the private process
-in `SECURITY.md` for vulnerabilities. Performance expectations and safe limits are workload- and
+in `SECURITY.md` for vulnerabilities. Performance expectations and limits that fit are workload- and
 host-specific; support cannot infer a destructive threshold from hardware capacity alone.

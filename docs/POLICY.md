@@ -5,6 +5,10 @@ OS-accounted aggregate footprint can trigger a memory intervention. An optional 
 forwarded terminal signal, the root command exiting with owned-group survivors, and the launching
 parent exiting are the machine's other destructive inputs. Pressure, swap, compressor, wired-memory,
 and growth-rate metrics are advisory and cannot change state. MLX's own counters are not read at all.
+One reading of the memory page counts, taken once before launch, sets the limit when the user
+passes `--max-footprint auto`. The estimate is free memory (speculative included) plus active,
+inactive and compressor memory; wired memory is read and left out. After launch, system memory
+metrics never change state.
 
 ## States and transitions
 

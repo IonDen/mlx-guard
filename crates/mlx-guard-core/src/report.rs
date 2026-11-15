@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::PolicyState;
 #[cfg(unix)]
 use crate::checkpoint::{CheckpointArtifactKind, CheckpointArtifactMetadata};
+use crate::limit::{AutoLimitRecord, LimitSource};
 #[cfg(unix)]
 use crate::process_control::RootOutcome;
 
@@ -264,6 +265,10 @@ pub struct ReportConfiguration {
     pub mode: ReportMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_footprint_bytes: Option<u64>,
+    /// Where the limit came from; written on every `run` report, absent (read as explicit) on
+    /// older reports and on `observe` reports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_footprint_source: Option<LimitSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub warning_footprint_bytes: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -699,6 +704,9 @@ pub struct PrelaunchRecord {
     pub memory_estimate: Observed<u64>,
     pub memory_categories: Observed<MemoryCategories>,
     pub warnings: Vec<PrelaunchWarning>,
+    /// How the limit was picked, on automatic runs only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_limit: Option<AutoLimitRecord>,
 }
 
 impl PrelaunchRecord {
@@ -726,6 +734,7 @@ impl PrelaunchRecord {
             memory_estimate,
             memory_categories: categories,
             warnings,
+            auto_limit: None,
         }
     }
 }
@@ -752,10 +761,16 @@ impl ReportV1 {
         Ok(())
     }
 
-    /// Only the shape is checked; the comparison belongs to the release that wrote the report.
+    /// Only the shape is checked; the comparison and the automatic rule's arithmetic belong to
+    /// the release that wrote the report.
     fn validate_prelaunch(&self) -> Result<(), ReportError> {
+        let source_is_auto = self.configuration.max_footprint_source == Some(LimitSource::Auto);
         let Some(prelaunch) = &self.prelaunch else {
-            return Ok(());
+            return if source_is_auto {
+                Err(ReportError::InvalidPrelaunch)
+            } else {
+                Ok(())
+            };
         };
         if self.configuration.mode != ReportMode::Enforce {
             return Err(ReportError::InvalidPrelaunch);
@@ -766,6 +781,24 @@ impl ReportV1 {
             .contains(&PrelaunchWarning::LimitMayNotFit)
             && !estimate_available
         {
+            return Err(ReportError::InvalidPrelaunch);
+        }
+        // A source written by a later release is read whether or not it records a rule; the
+        // recorded-limit and estimate checks belong to `auto` alone.
+        let auto_limit_valid = match (
+            self.configuration.max_footprint_source,
+            prelaunch.auto_limit,
+        ) {
+            (Some(LimitSource::Auto), Some(record)) => {
+                Some(record.limit_bytes) == self.configuration.max_footprint_bytes
+                    && estimate_available
+            }
+            (Some(LimitSource::Unknown), _) | (None | Some(LimitSource::Explicit), None) => true,
+            (Some(LimitSource::Auto), None) | (None | Some(LimitSource::Explicit), Some(_)) => {
+                false
+            }
+        };
+        if !auto_limit_valid {
             return Err(ReportError::InvalidPrelaunch);
         }
         Ok(())
@@ -824,6 +857,7 @@ impl ReportV1 {
         let mode_valid = match self.configuration.mode {
             ReportMode::Observe => {
                 self.configuration.max_footprint_bytes.is_none()
+                    && self.configuration.max_footprint_source.is_none()
                     && self.configuration.warning_footprint_bytes.is_none()
                     && self.configuration.recovery_footprint_bytes.is_none()
                     && self.configuration.emergency_footprint_bytes.is_none()

@@ -117,11 +117,12 @@ the outcome, and the transition is only evidence of what the sampler saw while i
 An observe report also carries a `calibration` section: total, complete, and incomplete sample
 counts; the observed duration; the highest complete aggregate footprint; and the highest positive
 growth rate. It always records `observation_only: true`, `safety_certified: false`, and no automatic
-limit. Its peak is an unbounded running maximum, so it holds the whole run's highest footprint even
-after the 4,096-sample history ring has evicted the sample it came from — the number a limit is
-chosen from. The section is present only on observe reports; it is absent from enforcing runs and
-from reports written before this release, and validation accepts a report without it. When present,
-it must be an observe report and the artifact's own invariants must hold.
+limit: observe's calibration never proposes a limit. Its peak is an unbounded running maximum, so
+it holds the whole run's highest footprint even after the 4,096-sample history ring has evicted the
+sample it came from — the number a limit is chosen from. The section is present only on observe
+reports; it is absent from enforcing runs and from reports written before this release, and
+validation accepts a report without it. When present, it must be an observe report and the
+artifact's own invariants must hold.
 
 A `run` report can carry an optional `prelaunch` field, added in 0.5.0. It holds
 `memory_estimate`, the memory macOS had not locked as wired just before the launch (an observed
@@ -137,6 +138,27 @@ the number adds up and when the line fires belong to the release that wrote the 
 `package_version`, so do not recompute the comparison from the fields. The field records one
 estimate at one moment. It does not certify that a run fits in memory, and its absence or an empty
 `warnings` list does not mean the run fit. Schema version 1 is unchanged.
+
+Two optional fields, added in 0.6.0, record how a `run` limit was chosen. `max_footprint_source`,
+inside `configuration`, is `explicit` for a size you typed and `auto` for `--max-footprint auto`;
+it is written on every `run` report of this release. When it is absent, as on reports written
+before 0.6.0, the limit was one you typed. An `observe` report has no limit, so it has no source
+either. `prelaunch.auto_limit` is present only on automatic runs and holds `rule`, the id of the
+rule that chose the limit, and `limit_bytes`, the limit that was enforced.
+
+Validation checks four things. `max_footprint_source` may appear only on a `run` report. For an
+`auto` source, a `prelaunch.auto_limit` must come with it: an `auto_limit` beside a source that is
+absent or `explicit` is invalid, and so is a source of `auto` with no `prelaunch`.
+`auto_limit.limit_bytes` must equal `configuration.max_footprint_bytes`. And an automatic run needs
+an available `memory_estimate`. Validation does not check the rule's arithmetic.
+
+Both `rule` and `max_footprint_source` are open sets. A later release may write a rule id or a
+source this one does not know, so accept values you do not recognize and do not hard-code the
+list. An unknown source is accepted with or without an `auto_limit` beside it, and the stop message
+that meets one reads it as a limit you set. Read the enforced limit from
+`configuration.max_footprint_bytes` and do not recompute it from the estimate; what the rule did
+belongs to the release named by `package_version`. Schema version 1 is unchanged. See
+[the automatic limit](CLI.md#the-automatic-limit).
 
 Advisory values retain their original schema-v1 fields. New writers may also add `pressure_level`
 and per-field `metadata` with the metric scope, public API source, observation timestamp, and

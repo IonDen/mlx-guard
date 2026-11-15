@@ -1,4 +1,5 @@
-//! Warning lines printed on stderr: the launch fit line and the warning-band lines of a run.
+//! Lines printed on stderr during a run: the two launch lines (the fit line of a typed size, the
+//! automatic-limit line of `--max-footprint auto`) and the warning-band lines.
 //!
 //! Each renderer is pure and returns one newline-ended line holding only the numbers it is given
 //! and fixed text. Byte counts and durations use the same formatters as the plain outcome lines,
@@ -6,10 +7,34 @@
 //! through `compared_bytes`, which prints them all as exact bytes when two different values would
 //! otherwise render alike.
 
+use crate::AutoLimitRule;
 use crate::explain::{compared_bytes, doc_url, format_duration_ms};
 
 /// Troubleshooting-page anchor the band lines link to. Kept apart from `explain::ANCHORS`.
 pub const WARNING_ANCHOR: &str = "warnings-during-a-run";
+
+/// Troubleshooting-page anchor the automatic-limit line links to. Kept apart from
+/// `explain::ANCHORS`.
+pub const AUTO_LIMIT_ANCHOR: &str = "the-automatic-limit";
+
+/// The line printed after the launch banner when `--max-footprint auto` picked the limit: the
+/// limit, the rule's share and the estimate it was taken from.
+#[must_use]
+pub fn auto_limit_line(
+    rule: AutoLimitRule,
+    limit_bytes: u64,
+    estimate_bytes: u64,
+    version: &str,
+) -> String {
+    let [limit, estimate] = compared_bytes([limit_bytes, estimate_bytes]);
+    format!(
+        "mlx-guard: automatic limit: {limit}, {}% of the {estimate} macOS reported as not wired \
+         just before launch, not a measure of what this command needs. It stays fixed for this \
+         run. More: {}\n",
+        rule.percent(),
+        doc_url(version, AUTO_LIMIT_ANCHOR),
+    )
+}
 
 /// The line printed after the launch banner when the limit is more than the launch estimate.
 #[must_use]

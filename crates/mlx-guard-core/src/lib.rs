@@ -9,6 +9,7 @@ pub mod explain;
 #[cfg(unix)]
 mod identity;
 mod intervention;
+mod limit;
 mod outcome;
 #[cfg(unix)]
 mod persistence;
@@ -43,6 +44,10 @@ pub use intervention::{
 };
 #[cfg(unix)]
 pub use intervention::{CheckpointBinding, CheckpointObservation, ProcessInterventionActuator};
+pub use limit::{
+    AUTO_LIMIT_FLOOR_BYTES, AutoLimitRecord, AutoLimitRule, AutoLimitUnavailable, FootprintRequest,
+    LimitSource, ResolvedLimit, resolve_limit,
+};
 pub use outcome::{SignalNumber, SupervisorOutcome};
 #[cfg(unix)]
 pub use persistence::{

@@ -112,8 +112,17 @@ fn plain_lines(happened: &str, to_do: &str, anchor: &str) -> String {
 }
 
 /// The plain lines for a command line that was not accepted, with or without a whitelisted flag.
+/// Only `--max-footprint` offers `auto` in its "what to do" line.
 fn command_line_lines(flag: Option<&str>) -> String {
     match flag {
+        Some("--max-footprint") => plain_lines(
+            "the command line was not accepted (--max-footprint), so nothing was launched and no \
+             report was written.",
+            "fix --max-footprint as the error above says: give a size such as 16GiB, or auto to \
+             let mlx-guard pick one from this Mac's memory just before launch, then run the \
+             command again.",
+            "64-the-command-line",
+        ),
         Some(flag) => plain_lines(
             &format!(
                 "the command line was not accepted ({flag}), so nothing was launched and no \
@@ -517,6 +526,44 @@ fn invalid_byte_unit_names_the_flag_in_the_plain_line() {
         "clap's own error must stay first and unchanged: {text:?}"
     );
     assert!(clap_error.ends_with('\n'), "{text:?}");
+}
+
+#[test]
+fn missing_max_footprint_still_exits_64_and_offers_auto() {
+    // Bug: a missing --max-footprint quietly means `auto` (a default value on the argument), so
+    // the command launches; or the refusal's "what to do" line keeps the 0.5.0 text and never
+    // names `auto`.
+    let report_path = std::env::temp_dir().join(format!(
+        "mlx-guard-missing-max-footprint-{}.json",
+        std::process::id()
+    ));
+    let output = Command::new(env!("CARGO_BIN_EXE_mlx-guard"))
+        .args(["run", "--report"])
+        .arg(&report_path)
+        .args(["--", "/usr/bin/true"])
+        .output()
+        .expect("the command must run");
+
+    assert_eq!(output.status.code(), Some(64));
+    assert!(output.stdout.is_empty());
+    assert!(!report_path.exists(), "no report may be written");
+    let text = String::from_utf8_lossy(&output.stderr);
+    let clap_error = text
+        .strip_suffix(&command_line_lines(Some("--max-footprint")))
+        .unwrap_or_else(|| {
+            panic!("stderr must end with the --max-footprint plain lines: {text:?}")
+        });
+    assert!(
+        clap_error.starts_with(
+            "error: the following required arguments were not provided:\n  \
+             --max-footprint <MAX_FOOTPRINT_BYTES>\n"
+        ),
+        "clap's own error must stay first and unchanged: {text:?}"
+    );
+    assert!(
+        !text.contains("enforcing a "),
+        "nothing may be launched: {text:?}"
+    );
 }
 
 #[test]

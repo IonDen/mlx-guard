@@ -51,6 +51,17 @@
     "text": "warning cleared: the OS-accounted footprint fell to 4.79 GiB at 50.1 s, at or below the 4.80 GiB recovery threshold for your 6.00 GiB limit."
   },
   {
+    "row": "auto",
+    "kind": "auto",
+    "note": "Illustrative figures: a 6.00 GiB automatic limit, three quarters of an 8.00 GiB estimate.",
+    "args": {
+      "rule": "not_wired_75_percent",
+      "limit": 6442450944,
+      "estimate": 8589934592
+    },
+    "text": "automatic limit: 6.00 GiB, 75% of the 8.00 GiB macOS reported as not wired just before launch, not a measure of what this command needs. It stays fixed for this run. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#the-automatic-limit"
+  },
+  {
     "row": "fit",
     "kind": "fit",
     "note": "A 30.00 GiB limit against a launch estimate of 28.31 GiB.",

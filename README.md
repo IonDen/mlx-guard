@@ -38,7 +38,7 @@ It is for MLX work you launch and do not watch: fine-tunes, generation batches, 
 shell scripts. It does not fix a leak for you, and it cannot stop a kernel or driver failure;
 [Limits](https://github.com/IonDen/mlx-guard#limits-and-safety-boundary) lists what it cannot do.
 
-Version 0.5.2 is an alpha release. The
+Version 0.6.0 is an alpha release. The
 [stability table](https://github.com/IonDen/mlx-guard/blob/main/docs/STABILITY.md) says which
 surfaces may still change before 1.0. If you already use MetalGuard, the two tools guard against
 different failures and work together; the
@@ -147,6 +147,10 @@ wrong limit shows up cheaply.
    only spikes above the limit for one sample at a time, by less than 10 %, is never stopped. Leave
    that room below what the machine can take.
 
+   Measuring first stays the recommendation. If you have no peak yet, `--max-footprint auto`
+   picks a limit from this Mac's memory at launch (see
+   [the automatic limit](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md#the-automatic-limit)).
+
 4. Enforce the limit, with a wall-clock cap.
 
    ```bash
@@ -215,7 +219,18 @@ if nothing is reading stderr, a line can be lost. The report always has the fact
 `run` also checks your limit once at launch. If it is more than the memory macOS has not locked as
 wired, `mlx-guard` prints one warning line after the start-of-run notice and still runs the command
 with your limit as given; no line does not mean the run fits. The limit you set is the limit it
-enforces, and there is no automatic limit, so choose one by observing the command first.
+enforces.
+
+`--max-footprint auto` sets the limit to 75 % of the memory macOS had not locked as wired just
+before launch, records in the report how it chose, and enforces it like a size you typed. It is
+meant to catch a run that grows out of control. It counts memory other programs are using as room,
+so a run can push them into compression or swap before it reaches the limit; it does not account
+for jobs started after launch and knows nothing about what your command needs. A job that needs
+more memory than that limit is stopped by it: give it a size, with headroom above a peak you
+observed. It reduces the risk that a runaway uses up this Mac's memory; it does not prevent
+slowdowns, paging, crashes or a kernel panic. Since 0.6.0, every `run` report has
+`max_footprint_source`: `explicit` for a size you typed, `auto` for an automatic limit. See
+[the automatic limit](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md#the-automatic-limit).
 
 A command may return a number the supervisor also uses. The report's `outcome.kind` always tells the
 cases apart; the [CLI contract](https://github.com/IonDen/mlx-guard/blob/main/docs/CLI.md) has the
@@ -236,7 +251,8 @@ field.
 
 - KILL does not make the Metal driver give memory back at once.
 
-- It never chooses a destructive limit for you.
+- It chooses a limit for you only when you pass `--max-footprint auto`. That limit is a share of
+  this Mac's memory at launch, not an estimate of what your command needs.
 
 - If the supervisor itself is killed with SIGKILL, the command keeps running, in its own process
   group under launchd, and no final report is written; only the hidden `.<report-name>.journal`
@@ -338,8 +354,8 @@ from different places.
 | The failure it goes after | The Apple GPU driver bug that kernel-panics the whole Mac during MLX work. It avoids the known triggers, and after a panic it explains the report and holds new runs back for a cooldown | One command whose memory footprint or run time gets out of hand: a leak, a paging storm, a stuck job |
 | Where it runs | Mostly inside your Python process, as a library around the MLX code you write. It also ships a CLI, an optional shell guard that pauses MLX launches during a cooldown, and a runner that puts MLX in a child process | Outside, as a separate native parent of any command |
 | What it measures | For its memory-headroom checks, `mx.metal.get_active_memory()`, with `vm_stat` system totals as fallback | The `phys_footprint` macOS accounts to each process in the owned group, summed |
-| What it needs from you | Import it and route model loads, unloads and inference through its gates, or install the shell guard | Nothing inside the workload: a command line and a byte limit |
-| When things go wrong | Load and unload checks, OOM catch and retry, crash-burst and kernel-panic cooldowns, panic postmortems, a registry of known-panic models | An optional cooperative checkpoint request, then TERM and KILL against the explicit limit, plus a redacted JSON report and, after a checkpoint, a resume key |
+| What it needs from you | Import it and route model loads, unloads and inference through its gates, or install the shell guard | Nothing inside the workload: a command line and a byte limit (or `auto`) |
+| When things go wrong | Load and unload checks, OOM catch and retry, crash-burst and kernel-panic cooldowns, panic postmortems, a registry of known-panic models | An optional cooperative checkpoint request, then TERM and KILL against the limit you typed or the one `auto` chose, plus a redacted JSON report and, after a checkpoint, a resume key |
 | Across runs | Remembers load cadence and panic history, with a circuit breaker and a lockout that survive a reboot | Remembers nothing: each run stands alone and hands over one report |
 | Fits | MLX apps, servers and pipelines that load and unload models and want panic avoidance and recovery built in | Trainers, servers, benches, shell scripts, anything you can launch, in any language |
 

@@ -28,6 +28,7 @@ _MAX_PACKAGE_VERSION_BYTES = 64
 ANCHORS: tuple[str, ...] = (
     "64-the-command-line",
     "64-a-launch-setting",
+    "64-the-automatic-limit",
     "70-before-launch",
     "70-while-starting-the-command",
     "70-footprint-readings-lost",
@@ -102,6 +103,7 @@ class _View(NamedTuple):
     signal: int | None
     parent_exited_at_ms: int | None
     mode: str | None
+    limit_source: str | None
     configuration: object
     samples: tuple[object, ...]
     transitions: tuple[_Transition, ...]
@@ -193,6 +195,7 @@ def _view(payload: Mapping[str, object]) -> _View:
         signal=_uint(_get(outcome, "signal"), _MAX_U8),
         parent_exited_at_ms=_uint(_get(outcome, "parent_exited_at_ms")),
         mode=_text(_get(configuration, "mode")),
+        limit_source=_text(_get(configuration, "max_footprint_source")),
         configuration=configuration,
         samples=_items(payload.get("samples")),
         transitions=_transition_records(payload.get("transitions")),
@@ -673,12 +676,18 @@ def _emergency(view: _View) -> _Lines | None:
     else:
         return None
     value_text, threshold_text, limit_text = _compared_bytes(value, threshold, limit)
+    if _is_automatic(view):
+        named = f"the {limit_text} automatic limit mlx-guard chose at launch"
+        change = "pass a size to"
+    else:
+        named = f"your {limit_text} limit"
+        change = "raise"
     return _Lines(
         f"one sample of the OS-accounted footprint, {value_text}, was at or above the emergency "
         f"threshold of {threshold_text}, which is {_format_bytes(max(threshold - limit, 0))} "
-        f"more than your {limit_text} limit, so mlx-guard {action}.",
-        "find what allocates that much between samples, or raise --max-footprint if that peak "
-        "is expected; a shorter --sample-interval sees growth sooner.",
+        f"more than {named}, so mlx-guard {action}.",
+        f"find what allocates that much between samples, or {change} --max-footprint if that "
+        "peak is expected; a shorter --sample-interval sees growth sooner.",
         "75-emergency-kill",
     )
 
@@ -714,24 +723,38 @@ def _footprint(view: _View) -> _Lines | None:
         ),
         None,
     )
+    automatic = _is_automatic(view)
+    named = "automatic limit mlx-guard chose at launch" if automatic else "limit you set"
     if breach is not None and breach.footprint is not None:
         value_text, limit_text = _compared_bytes(breach.footprint, limit)
         measured = (
-            f"reached {value_text}, at or above the {limit_text} limit you set, on {samples} "
+            f"reached {value_text}, at or above the {limit_text} {named}, on {samples} "
             "samples in a row"
         )
     else:
         measured = (
-            f"was at or above the {_format_bytes(limit)} limit you set on {samples} samples "
-            "in a row"
+            f"was at or above the {_format_bytes(limit)} {named} on {samples} samples in a row"
         )
+    if automatic:
+        to_do = (
+            "the automatic limit came from this Mac's memory at launch, not from what the "
+            "command needs: observe the command to see its peak, then pass a size with headroom "
+            "above that peak to --max-footprint, or fix the growth"
+        )
+    else:
+        to_do = "observe the command to see its peak, then fix the growth or raise --max-footprint"
     return _Lines(
         f"the OS-accounted footprint {measured}, so mlx-guard {_action_clause(view)}."
         f"{_checkpoint_clause(view)}",
-        "observe the command to see its peak, then fix the growth or raise --max-footprint"
-        f"{_resume_clause(view)}.",
+        f"{to_do}{_resume_clause(view)}.",
         "75-the-footprint-limit",
     )
+
+
+def _is_automatic(view: _View) -> bool:
+    # Only the recorded source decides: an absent source (every report before 0.6.0) or one this
+    # release does not know reads as a limit the user set, whatever the prelaunch record holds.
+    return view.limit_source == "auto"
 
 
 def _wall_time(view: _View) -> _Lines | None:
