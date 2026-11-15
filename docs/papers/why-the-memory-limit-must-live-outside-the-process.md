@@ -5,6 +5,24 @@ unified memory, and the external supervisor built for the outer ring*
 
 > 📄 [Read on the website](https://ineshin.space/papers/why-the-memory-limit-must-live-outside-the-process/) — same paper, formatted for reading.
 
+## Update, 2026-11-15: where the incident figures come from
+
+The 2026-11-13 note below gave only the debug-build readings of the sampler. Its sampler passage
+now also gives one run of an optimized build, which read 1.74% of one core, and says what the
+percentage covers. That is the only change to that note.
+
+Section 1 stated the two public incidents in this memo's own voice. It now says which figures the
+reporters gave and which come from replies in the same thread, and it links each reply it uses.
+Three figures needed more than a label. The 2.4× ratio comes from a contributor's reply in
+MLX #3896; the reporter called the gap roughly 2x. The 83.23 GB in mlx-lm #883 is the process's
+resident memory as the report gives it, and this memo had called it a footprint; the report's
+wired figure is machine-wide and, by its own page arithmetic, in GiB. The gap of "more than
+60 GB" was this memo's own subtraction and is cut; the two reported figures, about 46 GB and
+110 GB, stand in its place. Section 1 also adds a reply in #883 that points at the wired limit,
+from a member of the ml-explore organisation who later closed the report, and its closing
+sentence now leaves the cause of that panic open, as the thread does. Sections 3 and 10, the
+introduction's paragraph on sources and the references follow.
+
 ## Update, 2026-11-13: what changed in mlx-guard 0.2 to 0.5
 
 The conclusion holds at `mlx-guard` v0.5.0 (published 2026-11-12): the limit must live outside the
@@ -22,9 +40,17 @@ On the same M1 Max, the Metal 64 MiB visible-delta error was 1.929% at v0.1.0, 4
 and 3.272% at 0.5.0
 ([bundle](https://github.com/IonDen/mlx-guard/blob/v0.5.0/evidence/v0.5.0/m1-max-32gb/README.md)),
 against a 10% bound. The 50 ms sampler read 2.58% to 2.89% of one core in six 30-minute debug
-runs on macOS 27.2. The four earliest failed the 2% bound then in force; one was a 0.3.1 build, so
+runs on macOS 27.2; the percentage counts every thread of the test process, not only the
+sampler's. The four earliest failed the 2% bound then in force; one was a 0.3.1 build, so
 the rise is not in the 0.5.0 code alone. The cause is not identified; the figure now has no
-target. The bundle's other rows differ by amounts that are small against their targets.
+target. One 30-minute run of an optimized (`--release`) build read 1.74% on the same machine and
+OS on 2026-11-12
+([run record](https://github.com/IonDen/mlx-guard/blob/v0.5.0/evidence/v0.5.0/m1-max-32gb/release-build/endurance.json);
+command and conditions in the
+[bundle README](https://github.com/IonDen/mlx-guard/blob/v0.5.0/evidence/v0.5.0/m1-max-32gb/README.md#results));
+it is a single run, and the endurance test's 3.5% regression check applied to it and passed; that
+check sets no target for the sampler's cost. The bundle's other rows differ by amounts that are
+small against their targets.
 
 The README names one failure the body does not: the IOGPU driver bug that panics macOS 26.4 and
 later under Metal workloads (unfixed as of late August 2026, per the README). It can fire with the
@@ -52,49 +78,67 @@ and a bounded consumer-integration run on the same recorded configuration with M
 mlx-lm 0.31.3
 ([integration bundle](https://github.com/IonDen/mlx-guard/blob/v0.1.0/evidence/v0.1.0/mlx-train-perf/README.md)).
 Nothing was rerun for this write-up. The incident figures in section 1 are the upstream
-reporters' own, not measurements taken here. In the body, links into `mlx-guard` source,
-contracts, and evidence are pinned to the public v0.1.0 tag, except the supervisor's SIGKILL limit
-in section 4, which is linked at v0.5.0, as are the update's sources. Figure 1 and its PlantUML
-source are read from `main`, and companion memos and upstream issues are linked at their public
-homes.
+reporters' and commenters' own, as given in the linked issues and replies, not measurements taken
+here. In the body, links into `mlx-guard` source, contracts, and evidence are pinned to the public
+v0.1.0 tag, except the supervisor's SIGKILL limit in section 4, which is linked at v0.5.0, as are
+the updates' sources. Figure 1 and its PlantUML
+source are read from `main`, and companion memos, upstream issues and their replies are linked at
+their public homes.
 
 ## 1. Two public incidents, one failure shape
 
 Two independent reports against the MLX stack bound the problem better than any synthetic
 demonstration could.
 
-In [MLX issue #3896](https://github.com/ml-explore/mlx/issues/3896), a streaming saliency
-workload over a 198-billion-parameter mixture-of-experts model tracked its memory with the
-framework's own counter. `mx.get_peak_memory()` reported roughly **46 GB** while the macOS
-`footprint` tool showed roughly **109 GB** of IOAccelerator (GPU) allocations and a
-phys_footprint — the operating system's own accounting of what the process holds — of roughly
-**110 GB**: about a **2.4×** undercount. Trusting that counter as the memory-pressure signal let
-the process exceed the machine's safe working set twice — once ending in a Metal command-buffer
-GPU watchdog timeout, once in a full hard reboot.
+In [MLX issue #3896](https://github.com/ml-explore/mlx/issues/3896), the reporter ran a
+streaming saliency workload over a 198-billion-parameter mixture-of-experts model, with MLX
+0.32.0 on an M5 Max with 128 GB of unified memory, and tracked its memory with the framework's
+own counter. By the report's figures, `mx.get_peak_memory()` logged about **46 GB** (46506 MB),
+while the macOS `footprint` tool showed **109 GB** of IOAccelerator (GPU) allocations and a
+phys_footprint — the operating system's own accounting of what the process holds — of
+**110 GB**. The reporter called the counter off by roughly 2x; a contributor's reply in the
+thread puts the undercount at about **2.4×**. In the reporter's account, trusting that counter as
+the memory-pressure signal let the process exceed the machine's safe working set twice: once
+ending in a full hard reboot, once in a Metal command-buffer GPU watchdog timeout.
 
-That issue is closed, and the explanation is not a mystery. `get_peak_memory()` tracks only the
-allocator's active bytes, so buffers MLX retains in its cache pool — still resident, still
-GPU-dirty — never enter the number. An MLX maintainer closed the report by noting that the
-counter is meant for measuring a single model, where the cache hit rate is near 100%, and that
-long-running or parallel serving should read `get_active_memory() + get_cache_memory()` instead;
-a contributor's churn test found that pair tracking the OS figure to within 0.14 GB on a run
-where peak memory reported 1.00 GB against a 60.19 GB footprint. The fix is real, and it is a fix
-to the *reading*: a corrected counter still describes one process's allocator, and it still runs
-inside the process it is meant to police. The operational lesson survives it: any decision keyed
-to the counter this workload was actually reading would have been made more than 60 GB below the
-number the operating system was charging the process.
+That issue is closed, and the explanation is not a mystery. The same contributor traced it in
+the allocator source: `get_peak_memory()` tracks only the allocator's active bytes, so buffers
+MLX retains in its cache pool — still resident, still GPU-dirty — never enter the number. The
+reply also reports a churn test, a synthetic stress test that the contributor built and ran on
+the same class of machine, in which `get_active_memory() + get_cache_memory()` tracked the OS figure
+to within **0.14 GB** while `get_peak_memory()` read **1.00 GB** against a **60.19 GB** footprint
+([contributor's reply](https://github.com/ml-explore/mlx/issues/3896#issuecomment-5078962917));
+the same contributor restated those figures unchanged in
+[a later correction to another part of that comment](https://github.com/ml-explore/mlx/issues/3896#issuecomment-5079204815).
+A member of the ml-explore organisation closed the report with a reply that the counter is mostly useful
+for measuring a single model, where the cache hit rate would be close to 100%, and that for
+long-running and parallel model serving it will not report the actual footprint accurately; the
+same reply suggested checking `get_active_memory() + get_cache_memory()` instead
+([closing reply](https://github.com/ml-explore/mlx/issues/3896#issuecomment-5225324875)).
+The fix is real, and it is a fix to the *reading*: a corrected counter still describes one
+process's allocator, and it still runs inside the process it is meant to police. The operational
+lesson survives it: any decision keyed to the counter this workload was actually reading would
+have been made at about 46 GB, while the operating system was charging the process 110 GB.
 
-In [mlx-lm issue #883](https://github.com/ml-explore/mlx-lm/issues/883), an `mlx_lm.server`
-instance serving a 30B model grew its KV cache without bound across a long agentic session. At
-crash time the process footprint was **83.23 GB** on a 96 GB machine, and **80.14 GB** of memory
-was wired — pinned so the OS cannot page it out. The machine kernel-panicked in `IOGPUMemory.cpp:550`
-(`completeMemory() prepare count underflow`) and force-rebooted.
+In [mlx-lm issue #883](https://github.com/ml-explore/mlx-lm/issues/883), the reporter ran
+`mlx_lm.server` with a 30B mixture-of-experts model on a 96 GB M3 Ultra through a long agentic
+coding session, and traced the crash to a KV cache that grew without bound under the server's
+default wired limit. By the report's figures, the server process held **83.23 GB** of resident
+memory at crash time, as the report prints it. The report's machine-wide wired figure, memory
+pinned so the OS cannot page it out, is **80.14**: the report labels it GB (83.5% of 96 GB), but
+its own page arithmetic gives GiB, so the two figures are not on one scale. The machine
+kernel-panicked in `IOGPUMemory.cpp:550` (`completeMemory() prepare count underflow`) and was
+forced to reboot. A member of the ml-explore organisation, who later closed the report, replied
+that the panic was probably related to the wired limit being too high, and asked whether the reporter had set it
+by hand with `sysctl`; the reporter did not answer in the thread
+([member's reply](https://github.com/ml-explore/mlx-lm/issues/883#issuecomment-3911355645)).
 
 Neither incident is a controlled experiment for any guard tool, and this memo does not claim a
 supervisor would have saved either machine. The incidents are evidence about *signals* and
 *boundaries*: the first shows the framework's counter and the OS's accounting can diverge by tens
-of gigabytes on exactly the workloads that need a limit most; the second shows what fills the gap
-when no boundary exists outside the process that is failing.
+of gigabytes on exactly the workloads that need a limit most; the second shows that a machine
+running one server process ended in a kernel panic, not in an error the process could catch. Its
+thread does not settle what caused the panic.
 
 ## 2. The cap inside the process was already tried
 
@@ -110,7 +154,8 @@ be a different process.
 
 An in-process guard almost always watches the framework's counters, because those are the numbers
 the process can see cheaply. Which counter it watches matters — #3896 is the cautionary case, and
-reading `get_active_memory() + get_cache_memory()` closes most of that particular gap. But even
+in the synthetic churn test reported in that thread, reading
+`get_active_memory() + get_cache_memory()` closed nearly all of the gap. But even
 a correctly read allocator total is the allocator's view of one process. The operating system
 keeps its own charge per process, phys_footprint, and that charge is not limited to what the
 framework allocated: the calibration below sees both a plain anonymous allocation and a Metal
@@ -364,10 +409,11 @@ mechanism, cap or watchdog, shares the process's scheduler, address space, and l
 therefore its fate.
 
 **Watch the number the OS charges you.** Framework counters are scoped to what the allocator
-tracks, and the counter a workload reaches for first may be scoped more narrowly still: the
-public 2.4× divergence came from a peak-memory counter that omits the retained cache pool.
-Reading the right pair narrows that gap, but phys_footprint is the bill, and summed over the owned
-group it covers every member of that group, including memory the framework never allocated.
+tracks, and the counter a workload reaches for first may be scoped more narrowly still: in the
+public case of section 1, a peak-memory counter that omits the retained cache pool read about
+46 GB against a reported 110 GB footprint. Reading the right pair narrows that gap, but
+phys_footprint is the bill, and summed over the owned group it covers every member of that group,
+including memory the framework never allocated.
 
 **The abort path must survive the thing it aborts.** A separate native parent can act while the
 worker is wedged, clean up the whole group, and — the part an in-process guard can never do —
@@ -402,18 +448,28 @@ workloads).
   (accuracy, latency, overhead, overshoot, endurance, lifecycle scenarios, safe-workload corpus);
   [mlx-train-perf integration bundle](https://github.com/IonDen/mlx-guard/blob/v0.1.0/evidence/v0.1.0/mlx-train-perf/README.md)
   (checkpoint timeline, failure paths).
-- `mlx-guard` at the v0.5.0 tag, for the update and the SIGKILL limit in section 4:
+- `mlx-guard` at the v0.5.0 tag, for the updates and the SIGKILL limit in section 4:
   [README](https://github.com/IonDen/mlx-guard/blob/v0.5.0/README.md),
   [changelog](https://github.com/IonDen/mlx-guard/blob/v0.5.0/CHANGELOG.md),
   [process control](https://github.com/IonDen/mlx-guard/blob/v0.5.0/docs/PROCESS_CONTROL.md),
   [M1 Max 32 GB reference bundle](https://github.com/IonDen/mlx-guard/blob/v0.5.0/evidence/v0.5.0/m1-max-32gb/README.md)
-  (macOS 27.2, with the 0.3.1 figures alongside).
-- Public incident reports: [MLX #3896](https://github.com/ml-explore/mlx/issues/3896)
+  (macOS 27.2, with the 0.3.1 figures alongside) and its
+  [optimized-build run record](https://github.com/IonDen/mlx-guard/blob/v0.5.0/evidence/v0.5.0/m1-max-32gb/release-build/endurance.json).
+- Public incident reports, with the figures as their reporters and commenters give them:
+  [MLX #3896](https://github.com/ml-explore/mlx/issues/3896)
   (peak-memory counter vs phys_footprint divergence; two exceedances, one GPU watchdog timeout
-  and one hard reboot; closed 2026-08-08 with upstream guidance to read active plus cache
-  memory);
+  and one hard reboot, per the reporter), with a
+  [contributor's reply](https://github.com/ml-explore/mlx/issues/3896#issuecomment-5078962917)
+  (allocator source, the 2.4× ratio, the churn test), its
+  [later correction](https://github.com/ml-explore/mlx/issues/3896#issuecomment-5079204815)
+  (the churn figures restated unchanged), and the
+  [closing reply](https://github.com/ml-explore/mlx/issues/3896#issuecomment-5225324875)
+  from a member of the ml-explore organisation, who closed the report on 2026-08-08 with a
+  suggestion to read active plus cache memory;
   [mlx-lm #883](https://github.com/ml-explore/mlx-lm/issues/883)
-  (unbounded KV cache, 83.23 GB footprint, kernel panic).
+  (KV cache growth as the reporter traced it, 83.23 GB resident, kernel panic), with a
+  [reply](https://github.com/ml-explore/mlx-lm/issues/883#issuecomment-3911355645)
+  on the wired limit from a member of the ml-explore organisation who later closed the report.
 - Companion memos:
   [When an MLX Memory Cap Is Not a Safety Boundary](https://github.com/IonDen/mlx-train-perf/blob/main/docs/papers/when-an-mlx-memory-cap-is-not-a-safety-boundary.md)
   (the predecessor, section 2);
@@ -424,4 +480,4 @@ workloads).
 
 ---
 
-*Prepared 2026-08-14. Last updated 2026-11-13. Denis Ineshin.*
+*Prepared 2026-08-14. Last updated 2026-11-15. Denis Ineshin.*
