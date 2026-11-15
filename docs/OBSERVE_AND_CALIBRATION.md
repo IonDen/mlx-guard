@@ -57,7 +57,9 @@ prints nothing new. Choosing a limit stays your decision, made from the calibrat
 Every observe report carries a `calibration` section. It records total, complete, and incomplete
 sample counts; the observed duration; the highest complete aggregate footprint; and the highest
 positive growth rate. It always records `observation_only: true`, `safety_certified: false`, and no
-automatic limit. Read the peak with:
+automatic limit. (`run --max-footprint auto` is a different thing: it picks a limit from this Mac's
+memory at launch, not from the command's peak. Observing stays the way to choose a limit that fits
+the command; see [the automatic limit](CLI.md#the-automatic-limit).) Read the peak with:
 
 ```bash
 jq '.calibration.peak_aggregate_footprint_bytes' reports/observe.json

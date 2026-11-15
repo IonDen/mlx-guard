@@ -185,13 +185,19 @@ class ClientTests(unittest.TestCase):
             tuple(argv[1:]),
             (
                 "run",
-                "--max-footprint", "1073741824B",
-                "--wall-time", "500ms",
-                "--checkpoint-timeout", "250ms",
-                "--sample-interval", "25ms",
-                "--report", "report.json",
+                "--max-footprint",
+                "1073741824B",
+                "--wall-time",
+                "500ms",
+                "--checkpoint-timeout",
+                "250ms",
+                "--sample-interval",
+                "25ms",
+                "--report",
+                "report.json",
                 "--",
-                "/usr/bin/true", "--flag",
+                "/usr/bin/true",
+                "--flag",
             ),
         )
 
@@ -499,6 +505,209 @@ class ClientTests(unittest.TestCase):
                 "^native supervisor status does not match its report$",
             ):
                 handle.wait()
+
+    def test_auto_is_passed_as_the_literal_value(self) -> None:
+        # Catches the integer formatting reaching the string: `f"{limit}B"` turns "auto" into
+        # "autoB", which the native grammar rejects with exit 64.
+        config = mlx_guard.RunConfig(
+            command=("/usr/bin/true",),
+            report=Path("report.json"),
+            max_footprint_bytes="auto",
+        )
+        self.assertEqual(config.max_footprint_bytes, "auto")
+        argv = mlx_guard.supervisor_argv(config)
+        self.assertEqual(Path(argv[0]), mlx_guard.binary_path())
+        self.assertEqual(
+            tuple(argv[1:]),
+            (
+                "run",
+                "--max-footprint",
+                "auto",
+                "--sample-interval",
+                "50ms",
+                "--report",
+                "report.json",
+                "--",
+                "/usr/bin/true",
+            ),
+        )
+
+    def test_other_strings_are_rejected(self) -> None:
+        # Catches a case-insensitive or stripped match (`limit.strip().lower() == "auto"`), or a
+        # size string handed through to the CLI: the native grammar matches only lowercase
+        # `auto`, so the client must refuse every other string before a process starts.
+        expected = 'max_footprint_bytes must be within 2..=u64::MAX or "auto"'
+        outcomes: list[tuple[str, str]] = []
+        for value in ("AUTO", "auto ", "24GiB", ""):
+            try:
+                mlx_guard.RunConfig(
+                    command=("/usr/bin/true",),
+                    report=Path("report.json"),
+                    max_footprint_bytes=value,  # type: ignore[arg-type]
+                )
+            except mlx_guard.ConfigurationError as error:
+                outcomes.append((value, str(error)))
+            else:
+                outcomes.append((value, "accepted"))
+        self.assertEqual(
+            outcomes,
+            [("AUTO", expected), ("auto ", expected), ("24GiB", expected), ("", expected)],
+        )
+
+    def test_int_messages_are_unchanged(self) -> None:
+        # Catches the new string wording leaking onto non-string limits (every int, bool or
+        # float refusal gaining `or "auto"`), or a bool slipping through as 1/0: the 0.5.0
+        # messages stay byte for byte.
+        range_message = "max_footprint_bytes must be within 2..=u64::MAX"
+        band_message = "max_footprint_bytes cannot represent the emergency band"
+        cases: tuple[tuple[object, str], ...] = (
+            (1, range_message),
+            (0, range_message),
+            (-1, range_message),
+            (1 << 64, range_message),
+            (True, range_message),
+            (False, range_message),
+            (2.0, range_message),
+            (16_769_767_339_735_956_015, band_message),
+        )
+        outcomes: list[tuple[object, str]] = []
+        for value, _ in cases:
+            try:
+                mlx_guard.RunConfig(
+                    command=("/usr/bin/true",),
+                    report=Path("report.json"),
+                    max_footprint_bytes=value,  # type: ignore[arg-type]
+                )
+            except mlx_guard.ConfigurationError as error:
+                outcomes.append((value, str(error)))
+            else:
+                outcomes.append((value, "accepted"))
+        self.assertEqual(outcomes, list(cases))
+
+    def test_auto_run_report_carries_the_chosen_limit(self) -> None:
+        # Catches the client asking for a size instead of `auto` (the report would then say
+        # `explicit`), or a report whose recorded limit differs from the one auto chose.
+        with tempfile.TemporaryDirectory() as temporary:
+            result = mlx_guard.run(
+                mlx_guard.RunConfig(
+                    command=("/usr/bin/true",),
+                    report=Path(temporary, "auto.json"),
+                    max_footprint_bytes="auto",
+                    sample_interval_ms=10,
+                ),
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.report.outcome.kind, mlx_guard.OutcomeKind.CHILD_EXITED)
+        configuration = result.report.payload["configuration"]
+        prelaunch = result.report.payload["prelaunch"]
+        assert isinstance(configuration, Mapping)
+        assert isinstance(prelaunch, Mapping)
+        auto_limit = prelaunch["auto_limit"]
+        assert isinstance(auto_limit, Mapping)
+        self.assertEqual(configuration["max_footprint_source"], "auto")
+        limit = configuration["max_footprint_bytes"]
+        self.assertIsInstance(limit, int)
+        self.assertEqual(limit, auto_limit["limit_bytes"])
+
+    def test_auto_without_a_report_raises_configuration_error(self) -> None:
+        # Catches the no-number refusal (exit 64, no report) surfacing as MissingReportError, which
+        # reads as a supervisor fault instead of "pass a size", or losing the original as cause.
+        with tempfile.TemporaryDirectory() as temporary:
+            config = mlx_guard.RunConfig(
+                command=("/usr/bin/true",),
+                report=Path(temporary, "never-written.json"),
+                max_footprint_bytes="auto",
+            )
+            refused = subprocess.Popen(["/bin/sh", "-c", "exit 64"])
+            self.assertEqual(refused.wait(), 64)
+            handle = mlx_guard.GuardProcess(refused, config, capture_output=False)
+            with self.assertRaises(mlx_guard.ConfigurationError) as raised:
+                handle.wait()
+
+        self.assertEqual(
+            str(raised.exception),
+            "the supervisor stopped before launch with exit code 64 and wrote no report; "
+            'with max_footprint_bytes="auto" the likely cause is that it could not pick a limit '
+            "from this Mac's memory at launch: pass a size in bytes instead",
+        )
+        self.assertIsInstance(raised.exception.__cause__, mlx_guard.MissingReportError)
+
+    def test_auto_exit_64_message_states_the_exit_code_before_the_cause(self) -> None:
+        # Catches the message naming auto's refusal as a fact ("could not pick a limit") before,
+        # or instead of, what was observed: exit code 64 and no report. Another configuration
+        # error that ends 64 before launch would then be misreported as auto's refusal.
+        with tempfile.TemporaryDirectory() as temporary:
+            config = mlx_guard.RunConfig(
+                command=("/usr/bin/true",),
+                report=Path(temporary, "never-written.json"),
+                max_footprint_bytes="auto",
+            )
+            refused = subprocess.Popen(["/bin/sh", "-c", "exit 64"])
+            self.assertEqual(refused.wait(), 64)
+            handle = mlx_guard.GuardProcess(refused, config, capture_output=False)
+            with self.assertRaises(mlx_guard.ConfigurationError) as raised:
+                handle.wait()
+
+        message = str(raised.exception)
+        self.assertIn("exit code 64", message)
+        self.assertTrue(
+            message.startswith("the supervisor stopped before launch with exit code 64"), message
+        )
+        self.assertIn("likely cause", message)
+
+    def test_explicit_run_without_a_report_keeps_missing_report_error(self) -> None:
+        # Catches the exit-64 mapping ignoring the limit kind: an integer run that ends 64 with no
+        # report must keep the 0.5.0 MissingReportError, never the auto-only advice.
+        with tempfile.TemporaryDirectory() as temporary:
+            config = mlx_guard.RunConfig(
+                command=("/usr/bin/true",),
+                report=Path(temporary, "never-written.json"),
+                max_footprint_bytes=1 << 30,
+            )
+            refused = subprocess.Popen(["/bin/sh", "-c", "exit 64"])
+            self.assertEqual(refused.wait(), 64)
+            handle = mlx_guard.GuardProcess(refused, config, capture_output=False)
+            with self.assertRaises(mlx_guard.MissingReportError) as raised:
+                handle.wait()
+
+        self.assertEqual(str(raised.exception), "native supervisor did not produce a report")
+
+    def test_auto_run_ending_other_than_64_without_a_report_keeps_missing_report_error(
+        self,
+    ) -> None:
+        # Catches the exit-64 mapping ignoring the return code: an auto run that ends 70 with no
+        # report is a supervisor failure, not "could not pick a limit, pass a size".
+        with tempfile.TemporaryDirectory() as temporary:
+            config = mlx_guard.RunConfig(
+                command=("/usr/bin/true",),
+                report=Path(temporary, "never-written.json"),
+                max_footprint_bytes="auto",
+            )
+            failed = subprocess.Popen(["/bin/sh", "-c", "exit 70"])
+            self.assertEqual(failed.wait(), 70)
+            handle = mlx_guard.GuardProcess(failed, config, capture_output=False)
+            with self.assertRaises(mlx_guard.MissingReportError) as raised:
+                handle.wait()
+
+        self.assertEqual(str(raised.exception), "native supervisor did not produce a report")
+
+    def test_observe_without_a_report_keeps_missing_report_error(self) -> None:
+        # Catches the exit-64 mapping reading the limit without checking for a RunConfig: an
+        # observe run has no max_footprint_bytes, so it would raise AttributeError instead.
+        with tempfile.TemporaryDirectory() as temporary:
+            config = mlx_guard.ObserveConfig(
+                command=("/usr/bin/true",),
+                report=Path(temporary, "never-written.json"),
+            )
+            refused = subprocess.Popen(["/bin/sh", "-c", "exit 64"])
+            self.assertEqual(refused.wait(), 64)
+            handle = mlx_guard.GuardProcess(refused, config, capture_output=False)
+            with self.assertRaises(mlx_guard.MissingReportError) as raised:
+                handle.wait()
+
+        self.assertEqual(str(raised.exception), "native supervisor did not produce a report")
 
     def test_expected_exit_code_table_matches_the_cli_contract(self) -> None:
         # Catches a swapped or drifted entry in the outcome-to-status table that the mismatch

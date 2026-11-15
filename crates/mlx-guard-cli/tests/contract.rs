@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use mlx_guard_cli::{CommandMode, OnParentExitOption, parse_bytes, parse_cli, parse_duration};
+use mlx_guard_core::FootprintRequest;
 
 fn golden_args(contents: &str) -> Vec<OsString> {
     std::iter::once(OsString::from("mlx-guard"))
@@ -19,7 +20,10 @@ fn run_golden_freezes_normalized_configuration_and_literal_argv() {
     let CommandMode::Run(run) = parsed.mode else {
         panic!("expected run mode");
     };
-    assert_eq!(run.max_footprint_bytes, 26 * 1024 * 1024 * 1024);
+    assert_eq!(
+        run.max_footprint,
+        FootprintRequest::Bytes(26 * 1024 * 1024 * 1024)
+    );
     assert_eq!(run.wall_time, Some(Duration::from_secs(2 * 60 * 60)));
     assert_eq!(run.checkpoint_timeout, None);
     assert_eq!(run.common.sample_interval, Duration::from_millis(50));

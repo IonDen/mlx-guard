@@ -6,11 +6,13 @@ This document defines the command syntax, runtime behavior, and process status r
 
 ```text
 mlx-guard observe --report PATH [OPTIONS] -- COMMAND [ARG...]
-mlx-guard run --max-footprint SIZE --report PATH [OPTIONS] -- COMMAND [ARG...]
+mlx-guard run --max-footprint SIZE|auto --report PATH [OPTIONS] -- COMMAND [ARG...]
 ```
 
-`run` requires `--max-footprint`. There is no automatic memory limit. `observe` has no memory or
-wall-time intervention options and never terminates a command because of footprint.
+`run` needs a limit: a size, or `auto` to let mlx-guard pick one from this Mac's memory just before
+launch (see [the automatic limit](#the-automatic-limit)). Leaving `--max-footprint` out stops with
+exit code 64; it never means automatic. `observe` has no memory or wall-time intervention options
+and never terminates a command because of footprint.
 
 The `--` separator is mandatory. Everything after it is one literal argv vector passed directly to
 the operating system without a shell. At least one command token is required.
@@ -63,13 +65,15 @@ Byte values are positive base-10 integers followed by one case-sensitive binary 
 be at least `2B`, the smallest value that permits ordered recovery, warning, limit, and emergency
 bands. SI aliases such as `GB`, bare numbers, fractions, zero, negative values, and overflow are
 invalid. A value too close to the `u64` maximum to add the emergency band is also invalid.
+`--max-footprint` also accepts the lowercase word `auto`; other spellings are invalid.
 
 Durations are positive base-10 integers followed by `ms`, `s`, `m`, or `h`. Fractions, implicit
 units, zero, negative values, other casing, and overflow are invalid.
 
 Policy configuration comes only from CLI options. There is no config file and no
 `MLX_GUARD_*` policy environment fallback. This keeps the destructive threshold visible in the
-invocation. `--env` and `--clear-env` affect only the child.
+invocation: with `auto`, the command names no number; the automatic-limit line and the report carry
+the number, and the report also records the rule. `--env` and `--clear-env` affect only the child.
 
 ## Process status
 
@@ -179,7 +183,7 @@ speculative included, plus active, inactive, and held by the compressor). If you
 that number, it queues this line, and the command runs with the limit as given:
 
 ```text
-mlx-guard: warning: your limit of 30.00 GiB is more than the 28.31 GiB macOS reported as not wired just before launch, so a run that reaches it may not fit in memory on this Mac. That number is one estimate at one moment and counts every other program's memory as room. mlx-guard runs with your limit as given. More: https://github.com/IonDen/mlx-guard/blob/v0.5.0/docs/TROUBLESHOOTING.md#warnings-during-a-run
+mlx-guard: warning: your limit of 30.00 GiB is more than the 28.31 GiB macOS reported as not wired just before launch, so a run that reaches it may not fit in memory on this Mac. That number is one estimate at one moment and counts every other program's memory as room. mlx-guard runs with your limit as given. More: https://github.com/IonDen/mlx-guard/blob/v0.6.0/docs/TROUBLESHOOTING.md#warnings-during-a-run
 ```
 
 It never refuses to run and changes no limit. If macOS gives no number, nothing is printed. A launch
@@ -188,6 +192,33 @@ No line does not mean the run fits. The report records the number under `prelaun
 `limit_may_not_fit` whenever the limit is more than that number, including when the launch failed
 and no line was printed (see [REPORTS](REPORTS.md)). The line follows the same privacy and delivery
 rules as the other warnings, and the wording may change between releases.
+
+## The automatic limit
+
+`--max-footprint auto` sets the limit to 75 % of the memory macOS had not locked as wired just
+before launch, records in the report how it chose, and enforces it like a size you typed. It is
+meant to catch a run that grows out of control. It counts memory other programs are using as room,
+so a run can push them into compression or swap before it reaches the limit; it does not account
+for jobs started after launch and knows nothing about what your command needs. A job that needs
+more memory than that limit is stopped by it: give it a size, with headroom above a peak you
+observed (see [observe and calibration](OBSERVE_AND_CALIBRATION.md)). It reduces the risk that a
+runaway uses up this Mac's memory; it does not prevent slowdowns, paging, crashes or a kernel
+panic.
+
+With `auto`, `run` prints one line right after the start-of-run notice. The text in braces is
+filled in from your Mac at that moment:
+
+```text
+mlx-guard: automatic limit: {limit}, {percent}% of the {estimate} macOS reported as not wired just before launch, not a measure of what this command needs. It stays fixed for this run. More: <link to the troubleshooting section>
+```
+
+The number is read once and the limit does not move afterwards. The line follows the same privacy
+and delivery rules as the other warnings, and the wording may change between releases. If macOS
+gives no usable number, or the limit it would pick is under the 1 GiB minimum, `run` stops with exit
+code 64 and asks for a size; nothing is launched and no report is written. The report records
+`configuration.max_footprint_source` (`auto`, or `explicit` for a size you typed) and, for
+automatic runs, `prelaunch.auto_limit` (see [REPORTS](REPORTS.md#recorded-data)). The
+[troubleshooting page](TROUBLESHOOTING.md#the-automatic-limit) explains the line and what to do.
 
 ## Signals, terminal, and stdio
 

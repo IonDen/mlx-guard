@@ -30,6 +30,22 @@
     "text": "what happened: one sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency threshold of 6.60 GiB, which is 614.40 MiB more than your 6.00 GiB limit, so mlx-guard sent SIGKILL to the command's process group at once at 12.3 s, with no checkpoint and no grace period.\nwhat to do: find what allocates that much between samples, or raise --max-footprint if that peak is expected; a shorter --sample-interval sees growth sooner. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-emergency-kill"
   },
   {
+    "row": "75-footprint-auto",
+    "note": "Illustrative figures: a 6.00 GiB automatic limit, three quarters of an 8.00 GiB estimate.",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-footprint-auto.json",
+    "text": "what happened: the OS-accounted footprint reached 6.05 GiB, at or above the 6.00 GiB automatic limit mlx-guard chose at launch, on 2 samples in a row, so mlx-guard sent SIGTERM to the command's process group at 40.0 s.\nwhat to do: the automatic limit came from this Mac's memory at launch, not from what the command needs: observe the command to see its peak, then pass a size with headroom above that peak to --max-footprint, or fix the growth. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-footprint-limit"
+  },
+  {
+    "row": "75-footprint-auto-no-breach",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-footprint-auto-no-breach.json",
+    "text": "what happened: the OS-accounted footprint was at or above the 6.00 GiB automatic limit mlx-guard chose at launch on 2 samples in a row, so mlx-guard sent SIGTERM to the command's process group at 13 ms. The command acknowledged checkpoint request 42.\nwhat to do: the automatic limit came from this Mac's memory at launch, not from what the command needs: observe the command to see its peak, then pass a size with headroom above that peak to --max-footprint, or fix the growth; resume from the state saved for checkpoint request 42. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-footprint-limit"
+  },
+  {
+    "row": "75-emergency-auto",
+    "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-emergency-auto.json",
+    "text": "what happened: one sample of the OS-accounted footprint, 7.00 GiB, was at or above the emergency threshold of 6.60 GiB, which is 614.40 MiB more than the 6.00 GiB automatic limit mlx-guard chose at launch, so mlx-guard sent SIGKILL to the command's process group at once at 12.3 s, with no checkpoint and no grace period.\nwhat to do: find what allocates that much between samples, or pass a size to --max-footprint if that peak is expected; a shorter --sample-interval sees growth sooner. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-emergency-kill"
+  },
+  {
     "row": "75-wall",
     "report": "crates/mlx-guard-core/tests/fixtures/explain/report-75-wall.json",
     "text": "what happened: the run reached the 30 ms wall-time limit you set, so mlx-guard sent SIGTERM to the command's process group at 31 ms.\nwhat to do: raise --wall-time if the command needs longer, or find out why it ran longer than expected. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#75-the-wall-time-limit"

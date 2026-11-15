@@ -24,14 +24,17 @@ the version in one commit and refreshes, by hand:
 - `README.md`: the status line ("Version X.Y is ..."), and any scope sentences that name the
   previous version. `SECURITY.md` names no version, so it needs no edit; if a version-bound
   support statement is ever added there, it joins this list.
-- Evidence: re-run and commit reference measurements only when supervision behaviour changed since the
-  last release (sampling, policy, identity tracking, intervention, and their timing or measurement
-  code), not when only the text a finished run prints changed; when a new bundle lands, move the links in
-  `README.md`, `docs/COMPATIBILITY.md`, and `docs/integrations/MLX_TRAIN_PERF.md` to it.
-  `scripts/calibrate-reference-host.sh <out>` (with `<out>` outside the repository) runs the six
-  measurements as chunks through `scripts/calibrate-host.sh`, writes each chunk's JSON as it
-  finishes, and resumes an interrupted run; the whole bundle takes about 45 minutes, most of it
-  the 30-minute endurance chunk. Copy the published files into
+- Evidence: a fresh bundle is needed when sampling, policy, identity tracking or intervention changed
+  since the last release (and their timing or measurement code). It is not needed when only the text
+  a finished run prints changed. A change in how the limit value is chosen before launch needs the
+  equality test (`explicit_run_stderr_is_byte_identical_to_0_5_2`, with its non-aligned twin
+  `explicit_run_with_a_non_aligned_size_records_the_0_5_2_configuration`) and a sentence in the PR,
+  not a bundle. When a new bundle lands, move the links in `README.md`, `docs/COMPATIBILITY.md`, and
+  `docs/integrations/MLX_TRAIN_PERF.md` to it. `scripts/calibrate-reference-host.sh <out>` (with
+  `<out>` outside the repository) runs the six measurements as chunks through
+  `scripts/calibrate-host.sh`, writes each chunk's JSON as it finishes, and resumes an interrupted
+  run; the calibration bundle takes about 35 minutes, most of it the 30-minute endurance chunk. The
+  soak gate below is a separate run of about two hours. Copy the published files into
   `evidence/vX.Y.Z/m1-max-32gb/` and write the README from them; the `<out>.logs` transcripts are
   not committed. Run `scripts/scan-evidence-bundle.sh <dir>` on any bundle that arrives from
   another machine before committing it.
@@ -81,8 +84,11 @@ Local preflight requires `cargo-audit`; artifact and Metal scripts use baseline 
 
 Review `RELEASE_NOTES.md`, the generated wheel, source distribution, external CycloneDX SBOM, and
 `SHA256SUMS`. Confirm that archive scans report no checkout paths, workspace-only files, or
-secret-like material. Re-run the reference calibration only when runtime behavior, timing, policy,
-or measurement code has changed.
+secret-like material. Re-run the reference calibration only when sampling, policy, identity
+tracking, intervention, or their timing or measurement code has changed. A change in how the limit
+value is chosen before launch needs the equality test
+(`explicit_run_stderr_is_byte_identical_to_0_5_2` and its non-aligned twin) and a sentence in the
+PR, not a bundle.
 
 ## Publish
 

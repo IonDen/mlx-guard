@@ -5,7 +5,7 @@
   },
   {
     "cause": "command_line --max-footprint",
-    "text": "what happened: the command line was not accepted (--max-footprint), so nothing was launched and no report was written.\nwhat to do: fix --max-footprint as the error above says, then run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-command-line"
+    "text": "what happened: the command line was not accepted (--max-footprint), so nothing was launched and no report was written.\nwhat to do: fix --max-footprint as the error above says: give a size such as 16GiB, or auto to let mlx-guard pick one from this Mac's memory just before launch, then run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-command-line"
   },
   {
     "cause": "command_line <COMMAND>",
@@ -34,6 +34,14 @@
   {
     "cause": "supervisor_setup",
     "text": "what happened: mlx-guard could not set up its own supervision, so it launched nothing and wrote no report.\nwhat to do: run it again; if it repeats, open an issue with the error line above. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#70-before-launch"
+  },
+  {
+    "cause": "auto_limit_unavailable",
+    "text": "what happened: --max-footprint auto could not pick a limit, because macOS gave no usable memory number just before launch, so nothing was launched and no report was written.\nwhat to do: pass a size instead, such as --max-footprint 16GiB, taken from a peak you observed, then run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-automatic-limit"
+  },
+  {
+    "cause": "auto_limit_below_floor",
+    "text": "what happened: --max-footprint auto could not pick a limit, because the limit it would pick from this Mac's memory just before launch is under the 1 GiB minimum, so nothing was launched and no report was written.\nwhat to do: pass a size instead, such as --max-footprint 16GiB, taken from a peak you observed, then run the command again. More: https://github.com/IonDen/mlx-guard/blob/v{version}/docs/TROUBLESHOOTING.md#64-the-automatic-limit"
   },
   {
     "cause": "storage journal_exists before_launch",

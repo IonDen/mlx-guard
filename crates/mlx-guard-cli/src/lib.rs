@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use clap::error::ErrorKind;
 use clap::{Args, Parser, Subcommand};
+use mlx_guard_core::FootprintRequest;
 
 #[cfg(unix)]
 mod completion;
@@ -147,8 +148,8 @@ pub struct ObserveOptions {
 /// Normalized enforcement options.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunOptions {
-    /// Required sampled OS-accounted footprint limit.
-    pub max_footprint_bytes: u64,
+    /// Required sampled OS-accounted footprint limit: a typed size, or the automatic request.
+    pub max_footprint: FootprintRequest,
     /// Optional wall-time intervention limit.
     pub wall_time: Option<Duration>,
     /// Optional cooperative checkpoint acknowledgement timeout override.
@@ -203,23 +204,11 @@ where
             checkpoint_timeout,
             common,
         } => {
-            if max_footprint_bytes < 2 {
-                return Err(CliParseError::contract(
-                    "--max-footprint",
-                    "--max-footprint must be at least 2B",
-                ));
-            }
-            if max_footprint_bytes
-                .checked_add(policy_band_step(max_footprint_bytes))
-                .is_none()
-            {
-                return Err(CliParseError::contract(
-                    "--max-footprint",
-                    "--max-footprint is too large for the emergency policy band",
-                ));
+            if let FootprintRequest::Bytes(bytes) = max_footprint_bytes {
+                check_typed_size(bytes)?;
             }
             CommandMode::Run(RunOptions {
-                max_footprint_bytes,
+                max_footprint: max_footprint_bytes,
                 wall_time,
                 checkpoint_timeout,
                 common: normalize(common)?,
@@ -227,6 +216,33 @@ where
         }
     };
     Ok(ParsedCli { mode })
+}
+
+/// The range a typed `--max-footprint` size must fall in; an automatic limit never needs it.
+fn check_typed_size(bytes: u64) -> Result<(), CliParseError> {
+    if bytes < 2 {
+        return Err(CliParseError::contract(
+            "--max-footprint",
+            "--max-footprint must be at least 2B",
+        ));
+    }
+    if bytes.checked_add(policy_band_step(bytes)).is_none() {
+        return Err(CliParseError::contract(
+            "--max-footprint",
+            "--max-footprint is too large for the emergency policy band",
+        ));
+    }
+    Ok(())
+}
+
+/// Parse `--max-footprint`: a byte quantity as [`parse_bytes`] reads it, or exactly `auto`.
+fn parse_footprint_request(value: &str) -> Result<FootprintRequest, String> {
+    if value == "auto" {
+        return Ok(FootprintRequest::Auto);
+    }
+    parse_bytes(value)
+        .map(FootprintRequest::Bytes)
+        .map_err(|message| format!("{message}, or the word auto"))
 }
 
 /// Parse a positive binary byte quantity using `B`, `KiB`, `MiB`, `GiB`, or `TiB`.
@@ -425,11 +441,12 @@ struct RawCli {
 enum RawCommand {
     /// Observe OS-accounted footprint without memory intervention.
     Observe(RawCommon),
-    /// Enforce an explicit OS-accounted footprint limit.
+    /// Enforce an OS-accounted footprint limit.
     Run {
-        /// Required sampled intervention threshold.
-        #[arg(long = "max-footprint", value_parser = parse_bytes)]
-        max_footprint_bytes: u64,
+        /// Required sampled intervention threshold: a size such as 16GiB, or auto to pick one from
+        /// this Mac's memory just before launch.
+        #[arg(long = "max-footprint", value_parser = parse_footprint_request)]
+        max_footprint_bytes: FootprintRequest,
         /// Optional wall-time intervention threshold, capped at 30 days.
         #[arg(long, value_parser = parse_wall_time)]
         wall_time: Option<Duration>,
@@ -635,6 +652,67 @@ mod tests {
 
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
+        }
+    }
+
+    #[test]
+    fn run_help_offers_a_size_or_auto_for_max_footprint() {
+        // Bug: `--help` still describes only a size, so the automatic request is undiscoverable.
+        let help = parse_cli(["mlx-guard", "run", "--help"]).expect_err("help is display-only");
+        assert!(help.is_display_only());
+        let words = help
+            .to_string()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            words.contains(
+                "Required sampled intervention threshold: a size such as 16GiB, or auto to pick \
+                 one from this Mac's memory just before launch"
+            ),
+            "{help}"
+        );
+    }
+
+    #[test]
+    fn help_describes_run_without_calling_the_limit_explicit() {
+        // Bug: `--help` still says run enforces "an explicit" limit, which `auto` contradicts.
+        for args in [
+            &["mlx-guard", "--help"][..],
+            &["mlx-guard", "run", "--help"][..],
+        ] {
+            let help = parse_cli(args.iter().copied()).expect_err("help is display-only");
+            assert!(help.is_display_only());
+            let words = help
+                .to_string()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                words.contains("Enforce an OS-accounted footprint limit"),
+                "{args:?}: {help}"
+            );
+            assert!(!words.contains("explicit"), "{args:?}: {help}");
+        }
+    }
+
+    #[test]
+    fn every_automatic_limit_passes_the_typed_size_check() {
+        // Bug: `check_typed_size` tightens (a higher minimum, or a band check stricter than "limit
+        // plus a tenth fits a u64"), so `auto` could enforce a limit that the same number typed
+        // as a size would be refused for. The two ends of what the rule can pick: the 1 GiB floor
+        // and the limit for the largest estimate, 3 * 2^62 - 1 MiB.
+        use mlx_guard_core::AutoLimitRule;
+        let floor = AutoLimitRule::CURRENT
+            .limit_for(1_431_655_766)
+            .expect("an estimate of 1431655766 gives the floor");
+        assert_eq!(floor, 1_073_741_824);
+        let largest = AutoLimitRule::CURRENT
+            .limit_for(u64::MAX)
+            .expect("the largest estimate gives a limit");
+        assert_eq!(largest, 13_835_058_055_281_115_136);
+        for limit in [floor, largest] {
+            assert_eq!(check_typed_size(limit), Ok(()), "limit {limit}");
         }
     }
 

@@ -94,13 +94,14 @@ if __name__ == "__main__":
 ```
 
 On the launching side, `RunConfig` is frozen, its command is a literal argument tuple that never
-sees a shell, and an enforcing run needs an explicit byte limit. Take that limit from your caller or
-from their own `observe` run, never from a fraction of the machine's memory. Each run gets its own
-report path here because a completed run keeps its journal beside the report, and a reused path is
-refused rather than overwritten. `checkpoint_timeout_ms` sets how long the supervisor waits for the
-worker's acknowledgement before it escalates anyway. `start()` returns a `GuardProcess`, so an
-adapter that wants to stream output or cancel has a handle; `wait()` gives back the typed result
-and the parsed report.
+sees a shell, and an enforcing run needs a byte limit. A limit that fits the command comes from your
+caller or from their own `observe` run, never from a fraction of the machine's memory. `"auto"` is
+a stopgap: it takes a share of what macOS reports as not wired at launch, not of total memory. Each
+run gets its own report path here because a completed run keeps its journal beside the report, and a
+reused path is refused rather than overwritten. `checkpoint_timeout_ms` sets how long the supervisor
+waits for the worker's acknowledgement before it escalates anyway. `start()` returns a
+`GuardProcess`, so an adapter that wants to stream output or cancel has a handle; `wait()` gives
+back the typed result and the parsed report.
 
 On the supervised side, `CheckpointWorker.connect()` installs a SIGUSR1 handler and completes the
 inherited-descriptor handshake, so it belongs on the main thread before the work loop starts. It

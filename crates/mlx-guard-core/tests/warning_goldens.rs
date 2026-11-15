@@ -1,19 +1,24 @@
-//! Golden tests for the launch fit line and the three warning-band lines printed during a run.
+//! Golden tests for the two launch lines (the fit line of a typed size, the automatic-limit line
+//! of `--max-footprint auto`) and the three warning-band lines printed during a run.
 //!
 //! Every row of `fixtures/explain/warnings.json` names a line kind, the arguments it is rendered
 //! from, and the exact text without the `mlx-guard: ` prefix and the newline. The link carries the
 //! literal `{version}` placeholder, filled with the version the test passes. The Python page test
 //! reads the same corpus, so a quote on the troubleshooting page that drifts from these lines
 //! turns it red.
+//!
+//! Figures are illustrative (a 6.00 GiB automatic limit from an 8.00 GiB estimate), never one
+//! Mac's readings.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use mlx_guard_core::VERSION;
 use mlx_guard_core::explain::ANCHORS;
 use mlx_guard_core::warnings::{
-    WARNING_ANCHOR, band_cleared_line, band_entered_line, band_still_line, fit_line,
+    AUTO_LIMIT_ANCHOR, WARNING_ANCHOR, auto_limit_line, band_cleared_line, band_entered_line,
+    band_still_line, fit_line,
 };
+use mlx_guard_core::{AutoLimitRule, VERSION};
 use serde::Deserialize;
 
 const WARNINGS_JSON: &str = "crates/mlx-guard-core/tests/fixtures/explain/warnings.json";
@@ -22,6 +27,11 @@ const ATOMIC_PIPE_WRITE: usize = 512;
 /// A long release-candidate version, so the link is as long as a real release can make it.
 const LONG_VERSION: &str = "10.10.10-rc.10";
 const MAX_BYTES_TEXT: &str = "18446744073709551615 bytes";
+/// The clause that tells the reader the automatic number says nothing about the command.
+const NOT_A_MEASURE: &str = "not a measure of what this command needs";
+/// The illustrative automatic limit (6.00 GiB) and the estimate it came from (8.00 GiB).
+const AUTO_LIMIT: u64 = 6_442_450_944;
+const AUTO_ESTIMATE: u64 = 8_589_934_592;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -47,6 +57,14 @@ struct StillArgs {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FitArgs {
+    limit: u64,
+    estimate: u64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AutoArgs {
+    rule: AutoLimitRule,
     limit: u64,
     estimate: u64,
 }
@@ -114,6 +132,10 @@ fn render(row: &Case, version: &str) -> String {
             let a: FitArgs = args(row);
             fit_line(a.limit, a.estimate, version)
         }
+        "auto" => {
+            let a: AutoArgs = args(row);
+            auto_limit_line(a.rule, a.limit, a.estimate, version)
+        }
         other => panic!("row {}: unknown kind {other}", row.row),
     }
 }
@@ -160,9 +182,21 @@ fn extreme_fit_lines() -> Vec<String> {
     ]
 }
 
+/// The automatic-limit line at the same two extremes: both values `u64::MAX`, and two distinct
+/// values that render alike, which forces the `{n} bytes` form for both. A real automatic limit is
+/// always under its estimate; the bound is checked past that anyway, at the longest a line can be.
+fn extreme_auto_lines() -> Vec<String> {
+    let max = u64::MAX;
+    vec![
+        auto_limit_line(AutoLimitRule::NotWired75Percent, max, max, LONG_VERSION),
+        auto_limit_line(AutoLimitRule::NotWired75Percent, max - 1, max, LONG_VERSION),
+    ]
+}
+
 fn extreme_lines() -> Vec<String> {
     let mut lines = extreme_band_lines();
     lines.extend(extreme_fit_lines());
+    lines.extend(extreme_auto_lines());
     lines
 }
 
@@ -181,7 +215,7 @@ fn every_corpus_row_renders_exactly() {
     // a dropped clause, a missing newline, "warning:" on the cleared line).
     let cases = cases();
     let kinds: Vec<&str> = cases.iter().map(|row| row.kind.as_str()).collect();
-    for kind in ["entered", "still", "cleared", "fit"] {
+    for kind in ["entered", "still", "cleared", "fit", "auto"] {
         assert!(kinds.contains(&kind), "warnings.json has no {kind} row");
     }
     for row in &cases {
@@ -230,6 +264,19 @@ fn a_line_at_the_largest_values_fits_one_atomic_pipe_write() {
         ),
         "the near-maximum fit line must reach the bytes form: {fit_bytes_form}"
     );
+    let auto_lines = extreme_auto_lines();
+    let auto_bytes_form = &auto_lines[1];
+    assert!(
+        auto_bytes_form.contains(
+            "automatic limit: 18446744073709551614 bytes, 75% of the 18446744073709551615 bytes"
+        ),
+        "the near-maximum automatic-limit line must reach the bytes form: {auto_bytes_form}"
+    );
+    // The bound holds with every clause still in the line, the "not a measure" one included.
+    for line in &auto_lines {
+        assert!(line.contains(NOT_A_MEASURE), "{line}");
+        assert!(line.contains(LONG_VERSION), "{line}");
+    }
     for line in &lines {
         assert!(
             line.len() <= ATOMIC_PIPE_WRITE,
@@ -246,6 +293,90 @@ fn a_line_at_the_largest_values_fits_one_atomic_pipe_write() {
     let longest = lines.iter().map(String::len).max().unwrap_or(0);
     println!("longest line: {longest} bytes");
     println!("longest fit line: {} bytes", fit_bytes_form.len());
+    println!(
+        "longest automatic-limit line: {} bytes",
+        auto_lines.iter().map(String::len).max().unwrap_or(0)
+    );
+}
+
+#[test]
+fn the_automatic_limit_line_links_its_own_anchor() {
+    // Bug: the launch line linked to the band lines' section or to an explain anchor, or
+    // AUTO_LIMIT_ANCHOR added to explain::ANCHORS, which Python mirrors line for line.
+    assert_eq!(AUTO_LIMIT_ANCHOR, "the-automatic-limit");
+    assert!(!ANCHORS.contains(&AUTO_LIMIT_ANCHOR));
+    let line = auto_limit_line(
+        AutoLimitRule::NotWired75Percent,
+        AUTO_LIMIT,
+        AUTO_ESTIMATE,
+        "0.6.0",
+    );
+    assert!(
+        line.ends_with(
+            ". More: https://github.com/IonDen/mlx-guard/blob/v0.6.0/docs/TROUBLESHOOTING.md\
+             #the-automatic-limit\n"
+        ),
+        "the automatic-limit line must end with its versioned link: {line}"
+    );
+    assert_eq!(line.matches('\n').count(), 1, "{line:?}");
+}
+
+#[test]
+fn the_automatic_limit_line_names_limit_share_and_estimate() {
+    // Bug: the share printed from a constant other than the rule's (80%), the limit and the
+    // estimate swapped, or the line missing its own prefix, so a reader cannot tell it from a
+    // warning.
+    let line = auto_limit_line(
+        AutoLimitRule::NotWired75Percent,
+        AUTO_LIMIT,
+        AUTO_ESTIMATE,
+        "0.6.0",
+    );
+    assert!(
+        line.starts_with(
+            "mlx-guard: automatic limit: 6.00 GiB, 75% of the 8.00 GiB macOS reported as not \
+             wired just before launch, "
+        ),
+        "{line}"
+    );
+    assert!(!line.contains("warning"), "{line}");
+}
+
+#[test]
+fn the_automatic_limit_line_says_it_is_not_a_measure_of_the_command() {
+    // Bug: the clause that says the number is not based on what the command needs dropped (or
+    // the "fixed for this run" sentence dropped), so the line reads as a limit fitted to the
+    // command.
+    let line = auto_limit_line(
+        AutoLimitRule::NotWired75Percent,
+        AUTO_LIMIT,
+        AUTO_ESTIMATE,
+        "0.6.0",
+    );
+    let text = prose(&line);
+    assert!(
+        text.contains(&format!("just before launch, {NOT_A_MEASURE}.")),
+        "{text}"
+    );
+    assert!(text.contains(" It stays fixed for this run"), "{text}");
+}
+
+#[test]
+fn automatic_limit_line_never_prints_two_equal_renderings() {
+    // Bug: the automatic-limit line formats its two numbers separately instead of through
+    // `compared_bytes`, so two different values both read "1.00 GiB".
+    let line = auto_limit_line(
+        AutoLimitRule::NotWired75Percent,
+        1_073_741_824,
+        1_073_741_825,
+        "0.6.0",
+    );
+    assert!(
+        line.starts_with(
+            "mlx-guard: automatic limit: 1073741824 bytes, 75% of the 1073741825 bytes macOS"
+        ),
+        "{line}"
+    );
 }
 
 #[test]
@@ -358,14 +489,29 @@ fn prose(line: &str) -> &str {
 #[test]
 fn the_wording_rule_holds_in_every_line() {
     // Bug: a rewording that breaks the public rule: a bare "above" for a threshold, "hard
-    // boundary", "real memory", a footprint not called OS-accounted, a path in the text, or a fit
-    // line that promises the run will not fit.
+    // boundary", "real memory", a footprint not called OS-accounted, a path in the text, a fit
+    // line that promises the run will not fit, or an automatic-limit line that calls its number
+    // safe or promises to prevent anything.
     let cases = cases();
     let mut band_lines: Vec<String> = cases
         .iter()
-        .filter(|row| row.kind != "fit")
+        .filter(|row| row.kind != "fit" && row.kind != "auto")
         .map(|row| render(row, VERSION))
         .collect();
+    let mut auto_lines: Vec<String> = cases
+        .iter()
+        .filter(|row| row.kind == "auto")
+        .map(|row| render(row, VERSION))
+        .collect();
+    assert!(!auto_lines.is_empty(), "warnings.json has no auto row");
+    auto_lines.extend(extreme_auto_lines());
+    for line in &auto_lines {
+        let text = prose(line);
+        assert!(text.contains(NOT_A_MEASURE), "{text}");
+        let lower = text.to_lowercase();
+        assert!(!lower.contains("safe"), "{text}");
+        assert!(!lower.contains("prevent"), "{text}");
+    }
     band_lines.extend(small_limit_lines());
     band_lines.extend(extreme_band_lines());
     let mut fit_lines: Vec<String> = cases
@@ -379,7 +525,7 @@ fn the_wording_rule_holds_in_every_line() {
         assert!(text.contains(" may not fit in memory "), "{text}");
         assert!(!text.to_lowercase().contains("will not fit"), "{text}");
     }
-    for line in band_lines.iter().chain(&fit_lines) {
+    for line in band_lines.iter().chain(&fit_lines).chain(&auto_lines) {
         let text = prose(line);
         for (index, _) in text.match_indices("above") {
             assert!(

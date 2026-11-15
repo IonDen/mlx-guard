@@ -21,12 +21,13 @@ use mlx_guard_core::{
     VERSION, checkpoint_signal_usr1, hangup_is_ignored, platform_support,
 };
 use mlx_guard_core::{
-    FinalizedArtifacts, PrelaunchRecord, PrelaunchWarning,
+    AutoLimitRule, AutoLimitUnavailable, FinalizedArtifacts, FootprintRequest, LimitSource,
+    MemoryCategories, PrelaunchRecord, PrelaunchWarning, ResolvedLimit,
     explain::{
         EarlyCause, StorageClass, StoragePhase, explain_early, explain_report, generic_early_cause,
     },
-    memory_categories,
-    warnings::{band_cleared_line, band_entered_line, band_still_line, fit_line},
+    memory_categories, resolve_limit,
+    warnings::{auto_limit_line, band_cleared_line, band_entered_line, band_still_line, fit_line},
 };
 
 use crate::completion::{
@@ -323,8 +324,10 @@ struct RunSetup {
     checkpoint_channel: CheckpointChannel,
     checkpoint_endpoint: CheckpointWorkerEndpoint,
     banner: String,
-    /// The launch fit line, when the limit is more than the estimate taken before the header.
-    fit_notice: Option<String>,
+    /// The line printed after the banner on a successful launch: the automatic-limit line on an
+    /// auto run, or the fit line when a typed limit is more than the estimate taken before the
+    /// header.
+    launch_notice: Option<String>,
     band_limits: BandLimits,
     policy: PolicyMachine,
     sample_config: SamplingConfig,
@@ -334,13 +337,24 @@ struct RunSetup {
     sequence: u64,
 }
 
-fn prepare_run_setup(options: &RunOptions) -> Result<RunSetup, RuntimeResult> {
+/// `read_memory` takes the one memory reading before launch (`memory_categories` in a real run);
+/// it is called after the checkpoint channel exists and before the journal does.
+fn prepare_run_setup(
+    options: &RunOptions,
+    read_memory: impl FnOnce() -> Observed<MemoryCategories>,
+) -> Result<RunSetup, RuntimeResult> {
     let ready = client_ready(options.common.client_ready_fd)?;
     let (mut checkpoint_channel, checkpoint_endpoint, initial_request_id) = checkpoint_channel()?;
-    let policy_config = run_policy_config(options);
+    // The one memory reading before launch: it picks an automatic limit, and it is recorded
+    // before the header, so even a launch that fails keeps the number in its report.
+    let (resolved, prelaunch) = resolve_run_limit(options.max_footprint, read_memory())?;
+    // One policy for the whole run: the machine, the banner, the band lines and the report's
+    // configuration all come from this value.
+    let policy_config = run_policy_config(options, resolved.limit_bytes);
     let banner = launch_banner(&policy_config);
-    let limit_bytes = policy_config.limit_bytes;
     let band_limits = BandLimits::of(&policy_config);
+    let launch_notice = launch_notice(resolved, &prelaunch);
+    let configured = policy_config.clone();
     let policy =
         match PolicyMachine::enforce_with_initial_request_id(policy_config, initial_request_id) {
             Ok(policy) => policy,
@@ -361,12 +375,9 @@ fn prepare_run_setup(options: &RunOptions) -> Result<RunSetup, RuntimeResult> {
     // The journal header carries the parent watch, so the watch is decided before the header is
     // written and never revised afterwards.
     let parent_watch = parent_watch_state(options.common.on_parent_exit);
-    // Measured before the header, so even a launch that fails keeps the number in its report.
-    let prelaunch = PrelaunchRecord::for_limit(limit_bytes, memory_categories());
-    let fit_notice = fit_notice(limit_bytes, &prelaunch);
     let (inventory, journal, sequence) = initialize(
         &options.common,
-        run_configuration(options, &parent_watch),
+        run_configuration(&configured, options, &parent_watch, resolved.source),
         true,
         Some(prelaunch),
     )?;
@@ -375,7 +386,7 @@ fn prepare_run_setup(options: &RunOptions) -> Result<RunSetup, RuntimeResult> {
         checkpoint_channel,
         checkpoint_endpoint,
         banner,
-        fit_notice,
+        launch_notice,
         band_limits,
         policy,
         sample_config,
@@ -384,6 +395,55 @@ fn prepare_run_setup(options: &RunOptions) -> Result<RunSetup, RuntimeResult> {
         journal,
         sequence,
     })
+}
+
+/// Resolve the requested limit from the reading taken before launch, or refuse an automatic
+/// request that has no usable number: exit 64, before the journal exists, so no report.
+fn resolve_run_limit(
+    request: FootprintRequest,
+    categories: Observed<MemoryCategories>,
+) -> Result<(ResolvedLimit, PrelaunchRecord), RuntimeResult> {
+    resolve_limit(request, categories).map_err(|unavailable| {
+        let (reason, cause) = match unavailable {
+            AutoLimitUnavailable::NoEstimate => (
+                "macOS gave no memory number just before launch".to_owned(),
+                EarlyCause::AutoLimitUnavailable,
+            ),
+            AutoLimitUnavailable::BelowFloor => (
+                format!(
+                    "{}% of the memory macOS reported as not wired just before launch is under \
+                     the 1 GiB minimum",
+                    AutoLimitRule::CURRENT.percent()
+                ),
+                EarlyCause::AutoLimitBelowFloor,
+            ),
+        };
+        RuntimeResult::refused(
+            SupervisorOutcome::InvalidConfiguration,
+            &format!("--max-footprint auto could not pick a limit: {reason}"),
+            cause,
+        )
+    })
+}
+
+/// The line printed after the banner on a successful launch: on an auto run the automatic-limit
+/// line, on a typed size the fit line when the limit is more than the estimate.
+fn launch_notice(resolved: ResolvedLimit, prelaunch: &PrelaunchRecord) -> Option<String> {
+    match (
+        resolved.source,
+        prelaunch.auto_limit,
+        &prelaunch.memory_estimate,
+    ) {
+        (LimitSource::Explicit, ..) => fit_notice(resolved.limit_bytes, prelaunch),
+        (LimitSource::Auto, Some(record), Observed::Available { value }) => Some(auto_limit_line(
+            record.rule,
+            resolved.limit_bytes,
+            *value,
+            VERSION,
+        )),
+        // `resolve_limit` records the rule and an available estimate on every auto run.
+        _ => None,
+    }
 }
 
 /// The fit line for a recorded `LimitMayNotFit` warning; the comparison lives in `for_limit`.
@@ -406,7 +466,7 @@ fn execute_run(options: &RunOptions, notices: &mut Notices) -> RuntimeResult {
         mut checkpoint_channel,
         checkpoint_endpoint,
         banner,
-        fit_notice,
+        launch_notice,
         band_limits,
         policy,
         sample_config,
@@ -414,7 +474,7 @@ fn execute_run(options: &RunOptions, notices: &mut Notices) -> RuntimeResult {
         inventory,
         journal,
         sequence,
-    } = match prepare_run_setup(options) {
+    } = match prepare_run_setup(options, memory_categories) {
         Ok(setup) => setup,
         Err(result) => return result,
     };
@@ -435,7 +495,7 @@ fn execute_run(options: &RunOptions, notices: &mut Notices) -> RuntimeResult {
         checkpoint_endpoint,
         sample_config,
         &banner,
-        fit_notice,
+        launch_notice,
         notices,
     ) {
         Ok(prepared) => prepared,
@@ -666,7 +726,7 @@ fn prepare_run_worker(
     inherited_checkpoint: CheckpointWorkerEndpoint,
     sample_config: SamplingConfig,
     banner: &str,
-    fit_notice: Option<String>,
+    launch_notice: Option<String>,
     notices: &mut Notices,
 ) -> Result<PreparedRun, RunLaunchFailure> {
     let mut process = OwnedProcess::launch_with_checkpoint(
@@ -682,7 +742,7 @@ fn prepare_run_worker(
     // inspection, so a command that ends before it still gets the lines. A failed launch returned
     // above, so it never emits a spurious banner.
     notices.send(format!("{banner}\n"));
-    if let Some(line) = fit_notice {
+    if let Some(line) = launch_notice {
         notices.send(line);
     }
     let root_pid = i32::try_from(process.root_pid()).map_err(|_| RunLaunchFailure {
@@ -1784,6 +1844,7 @@ fn observe_configuration(
     ReportConfiguration {
         mode: ReportMode::Observe,
         max_footprint_bytes: None,
+        max_footprint_source: None,
         warning_footprint_bytes: None,
         recovery_footprint_bytes: None,
         emergency_footprint_bytes: None,
@@ -1800,11 +1861,17 @@ fn observe_configuration(
     }
 }
 
-fn run_configuration(options: &RunOptions, parent_watch: &ParentWatchState) -> ReportConfiguration {
-    let policy = run_policy_config(options);
+/// The report's configuration for a run, read from the policy the run enforces, never rebuilt.
+fn run_configuration(
+    policy: &PolicyConfig,
+    options: &RunOptions,
+    parent_watch: &ParentWatchState,
+    source: LimitSource,
+) -> ReportConfiguration {
     ReportConfiguration {
         mode: ReportMode::Enforce,
         max_footprint_bytes: Some(policy.limit_bytes),
+        max_footprint_source: Some(source),
         warning_footprint_bytes: Some(policy.warning_bytes),
         recovery_footprint_bytes: Some(policy.recovery_bytes),
         emergency_footprint_bytes: Some(policy.emergency_bytes),
@@ -1821,8 +1888,7 @@ fn run_configuration(options: &RunOptions, parent_watch: &ParentWatchState) -> R
     }
 }
 
-fn run_policy_config(options: &RunOptions) -> PolicyConfig {
-    let limit = options.max_footprint_bytes;
+fn run_policy_config(options: &RunOptions, limit: u64) -> PolicyConfig {
     let threshold_step = policy_band_step(limit);
     let (window, age) = sample_quality_bounds(options.common.sample_interval);
     PolicyConfig {
@@ -2239,12 +2305,15 @@ mod tests {
     use super::{
         BandLimits, CommonOptions, DEFAULT_CHECKPOINT_TIMEOUT, MAX_MISSING_SAMPLES, MIN_SAMPLE_AGE,
         MIN_SAMPLE_WINDOW, REQUIRED_BREACH_SAMPLES, RunOptions, TERM_GRACE, launch_banner,
-        observe_policy_machine, run_policy_config, sample_quality_bounds, sampling_config,
+        launch_notice, observe_policy_machine, resolve_run_limit, run_policy_config,
+        sample_quality_bounds, sampling_config,
     };
     use mlx_guard_core::warnings::{band_cleared_line, band_entered_line, band_still_line};
     use mlx_guard_core::{
-        Action, BandEvent, MAX_SAMPLE_HISTORY_CAPACITY, PolicyConfig, PolicyMachine,
-        SamplingConfig, VERSION,
+        Action, AutoLimitRecord, AutoLimitRule, BandEvent, FootprintRequest, LimitSource,
+        MAX_SAMPLE_HISTORY_CAPACITY, MemoryCategories, ObservationError, Observed, PolicyConfig,
+        PolicyMachine, PrelaunchRecord, PrelaunchWarning, ResolvedLimit, SamplingConfig,
+        UnavailableReason, VERSION,
     };
 
     fn sample() -> Event {
@@ -2296,7 +2365,7 @@ mod tests {
 
     fn run_options(interval: Duration) -> RunOptions {
         RunOptions {
-            max_footprint_bytes: 1_000_000,
+            max_footprint: FootprintRequest::Bytes(1_000_000),
             wall_time: None,
             checkpoint_timeout: None,
             common: common_options(interval),
@@ -2379,7 +2448,7 @@ mod tests {
     fn the_launch_banner_names_the_limit_and_the_emergency_kill_threshold() {
         // Catches a launch banner that hides the emergency band a run authorises: choosing a limit
         // authorises KILL about 10% above it, and the banner must state that ceiling.
-        let policy = run_policy_config(&run_options(Duration::from_millis(50)));
+        let policy = run_policy_config(&run_options(Duration::from_millis(50)), 1_000_000);
         // Pin the +10 % band arithmetic independently of the banner formatting, so a regression in
         // the band derivation (e.g. 5 % instead of 10 %, or the wrong field reaching the banner)
         // cannot pass while the banner still prints the words "emergency KILL" and "10%":
@@ -2404,7 +2473,10 @@ mod tests {
         // Catches a band line naming the wrong threshold: warning and recovery swapped, the limit
         // where the emergency threshold belongs, or the missing-sample count (3) given as the
         // number of samples that stop the command (2). A 1_000_000-byte limit has a 100_000 step.
-        let limits = BandLimits::of(&run_policy_config(&run_options(Duration::from_millis(50))));
+        let limits = BandLimits::of(&run_policy_config(
+            &run_options(Duration::from_millis(50)),
+            1_000_000,
+        ));
         assert_eq!(
             limits,
             BandLimits {
@@ -2489,13 +2561,212 @@ mod tests {
         let interval = Duration::from_millis(10);
         let (window, age) = sample_quality_bounds(interval);
 
-        let policy = run_policy_config(&run_options(interval));
+        let policy = run_policy_config(&run_options(interval), 1_000_000);
         assert_eq!(policy.max_sample_window, window);
         assert_eq!(policy.max_sample_age, age);
 
         let sampler = sampling_config(&common_options(interval)).unwrap();
         assert_eq!(sampler.max_sample_window(), window);
         assert_eq!(sampler.max_sample_age(), age);
+    }
+
+    #[test]
+    fn resolve_run_limit_refuses_auto_without_an_estimate() {
+        // Bug: a missing memory number lets `auto` through (to a zero or made-up limit), refuses
+        // with another exit code, or says "below the minimum" when there was no number at all.
+        let missing: [Observed<MemoryCategories>; 5] = [
+            Observed::Unknown,
+            Observed::Unavailable {
+                reason: UnavailableReason::NotSupported,
+            },
+            Observed::Unavailable {
+                reason: UnavailableReason::NonUtf8,
+            },
+            Observed::Stale { last_seen_at_ms: 7 },
+            Observed::Error {
+                code: ObservationError::Internal,
+            },
+        ];
+        for categories in missing {
+            let Err(refusal) = resolve_run_limit(FootprintRequest::Auto, categories.clone()) else {
+                panic!("auto with {categories:?} must be refused");
+            };
+            assert_eq!(refusal.outcome, SupervisorOutcome::InvalidConfiguration);
+            assert!(refusal.stdout.is_empty());
+            assert!(
+                refusal.stderr.starts_with(
+                    "mlx-guard: --max-footprint auto could not pick a limit: macOS gave no memory \
+                     number just before launch\n"
+                ),
+                "{}",
+                refusal.stderr
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_run_limit_refusal_ends_with_the_automatic_limit_plain_lines() {
+        // Bug: the refusal keeps the generic configuration lines ("fix that setting", the
+        // command-line section), which name nothing a user of `auto` can fix.
+        let small = Observed::Available {
+            value: MemoryCategories {
+                free_bytes: 1_073_741_824,
+                active_bytes: 0,
+                inactive_bytes: 0,
+                wired_bytes: 0,
+                compressor_bytes: 0,
+            },
+        };
+        for (categories, because) in [
+            (
+                Observed::Unknown,
+                "because macOS gave no usable memory number just before launch",
+            ),
+            (
+                small,
+                "because the limit it would pick from this Mac's memory just before launch is \
+                 under the 1 GiB minimum",
+            ),
+        ] {
+            let Err(refusal) = resolve_run_limit(FootprintRequest::Auto, categories) else {
+                panic!("auto without a usable number must be refused");
+            };
+            assert!(
+                refusal.stderr.ends_with(&format!(
+                    "\nmlx-guard: what happened: --max-footprint auto could not pick a limit, \
+                     {because}, so nothing was launched and no report was written.\n\
+                     mlx-guard: what to do: pass a size instead, such as --max-footprint 16GiB, \
+                     taken from a peak you observed, then run the command again. More: \
+                     https://github.com/IonDen/mlx-guard/blob/v{VERSION}/docs/TROUBLESHOOTING.md\
+                     #64-the-automatic-limit\n"
+                )),
+                "{}",
+                refusal.stderr
+            );
+        }
+    }
+
+    #[test]
+    fn below_floor_refusal_plain_lines_name_the_minimum_not_a_missing_number() {
+        // Bug: both auto refusals share one plain line, so a below-floor refusal says "macOS gave
+        // no usable memory number" right under a first line that quotes the number's share.
+        let small = Observed::Available {
+            value: MemoryCategories {
+                free_bytes: 1_073_741_824,
+                active_bytes: 0,
+                inactive_bytes: 0,
+                wired_bytes: 0,
+                compressor_bytes: 0,
+            },
+        };
+        let Err(refusal) = resolve_run_limit(FootprintRequest::Auto, small) else {
+            panic!("three quarters of 1 GiB is under the 1 GiB minimum");
+        };
+        let (_, plain) = refusal
+            .stderr
+            .split_once("\nmlx-guard: what happened: ")
+            .unwrap_or_else(|| panic!("no plain lines: {}", refusal.stderr));
+        assert!(!plain.contains("no usable memory number"), "{plain}");
+        assert!(plain.contains("under the 1 GiB minimum"), "{plain}");
+    }
+
+    fn prelaunch_8_gib(
+        warnings: Vec<PrelaunchWarning>,
+        auto_limit: Option<AutoLimitRecord>,
+    ) -> PrelaunchRecord {
+        PrelaunchRecord {
+            memory_estimate: Observed::Available {
+                value: 8_589_934_592,
+            },
+            memory_categories: Observed::Unknown,
+            warnings,
+            auto_limit,
+        }
+    }
+
+    #[test]
+    fn launch_notice_on_an_auto_run_is_the_automatic_limit_line() {
+        // Bug: an auto run gets no launch line, the fit line, or a line with the estimate and
+        // the limit swapped.
+        let resolved = ResolvedLimit {
+            limit_bytes: 6_442_450_944,
+            source: LimitSource::Auto,
+        };
+        let record = AutoLimitRecord {
+            rule: AutoLimitRule::NotWired75Percent,
+            limit_bytes: 6_442_450_944,
+        };
+        let notice = launch_notice(resolved, &prelaunch_8_gib(Vec::new(), Some(record)))
+            .expect("an auto run announces its limit");
+        assert!(
+            notice.starts_with(
+                "mlx-guard: automatic limit: 6.00 GiB, 75% of the 8.00 GiB macOS reported as not \
+                 wired just before launch, not a measure of what this command needs."
+            ),
+            "{notice}"
+        );
+        assert!(notice.ends_with("#the-automatic-limit\n"), "{notice}");
+    }
+
+    #[test]
+    fn launch_notice_on_an_explicit_run_is_the_fit_line_or_nothing() {
+        // Bug: a typed size gets the automatic line, or loses its fit line, or gets a fit line
+        // when the limit fits.
+        let resolved = ResolvedLimit {
+            limit_bytes: 9_663_676_416,
+            source: LimitSource::Explicit,
+        };
+        let notice = launch_notice(
+            resolved,
+            &prelaunch_8_gib(vec![PrelaunchWarning::LimitMayNotFit], None),
+        )
+        .expect("a typed size above the estimate gets the fit line");
+        assert!(
+            notice.starts_with(
+                "mlx-guard: warning: your limit of 9.00 GiB is more than the 8.00 GiB macOS \
+                 reported as not wired just before launch,"
+            ),
+            "{notice}"
+        );
+        assert_eq!(
+            launch_notice(resolved, &prelaunch_8_gib(Vec::new(), None)),
+            None
+        );
+    }
+
+    #[test]
+    fn resolve_run_limit_refuses_auto_below_the_floor_and_keeps_a_typed_size() {
+        // Bug: an estimate too small for a 1 GiB limit gets the "no number" text (or a limit), or
+        // a typed size is refused for a memory reading it never needs.
+        let small = Observed::Available {
+            value: MemoryCategories {
+                free_bytes: 1_073_741_824,
+                active_bytes: 0,
+                inactive_bytes: 0,
+                wired_bytes: 0,
+                compressor_bytes: 0,
+            },
+        };
+        let Err(refusal) = resolve_run_limit(FootprintRequest::Auto, small) else {
+            panic!("three quarters of 1 GiB is under the 1 GiB minimum");
+        };
+        assert_eq!(refusal.outcome, SupervisorOutcome::InvalidConfiguration);
+        assert!(
+            refusal.stderr.starts_with(
+                "mlx-guard: --max-footprint auto could not pick a limit: 75% of the memory macOS \
+                 reported as not wired just before launch is under the 1 GiB minimum\n"
+            ),
+            "{}",
+            refusal.stderr
+        );
+
+        let Ok((resolved, _)) =
+            resolve_run_limit(FootprintRequest::Bytes(100_000_007), Observed::Unknown)
+        else {
+            panic!("a typed size needs no memory number");
+        };
+        assert_eq!(resolved.limit_bytes, 100_000_007);
+        assert_eq!(resolved.source, LimitSource::Explicit);
     }
 
     #[test]
@@ -3269,5 +3540,60 @@ mod finalize_without_worker_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod prepare_run_setup_tests {
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Duration;
+
+    use mlx_guard_core::{FootprintRequest, Observed};
+
+    use super::{CommonOptions, OnParentExitOption, RunOptions, prepare_run_setup};
+
+    #[test]
+    fn auto_without_a_reading_exits_64_before_any_journal_or_report_exists() {
+        // Bug: the reading is resolved after `initialize`, so an auto run refused for want of a
+        // memory number leaves a journal beside the report path, and "no report" is false.
+        let directory = std::env::temp_dir().join(format!(
+            "mlx-guard-auto-refusal-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).unwrap();
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700)).unwrap();
+        let options = RunOptions {
+            max_footprint: FootprintRequest::Auto,
+            wall_time: None,
+            checkpoint_timeout: None,
+            common: CommonOptions {
+                sample_interval: Duration::from_millis(100),
+                report_path: directory.join("report.json"),
+                cwd: None,
+                clear_env: false,
+                env: BTreeMap::new(),
+                client_ready_fd: None,
+                on_parent_exit: OnParentExitOption::Terminate,
+                command: vec![OsString::from("true")],
+            },
+        };
+
+        let result = prepare_run_setup(&options, || Observed::Unknown);
+        let left = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect::<Vec<_>>();
+        let exit_code = result.err().map(|refusal| refusal.outcome.exit_code());
+        fs::remove_dir_all(&directory).unwrap();
+
+        assert_eq!(exit_code, Some(64));
+        assert!(left.is_empty(), "files beside the report path: {left:?}");
     }
 }
