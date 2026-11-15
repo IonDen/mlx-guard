@@ -5,6 +5,41 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-15
+
+### Added
+
+- `mlx-guard run --max-footprint auto`. Instead of a size, `auto` sets the limit to 75 % of the memory
+  macOS had not locked as wired just before launch, rounded down to a whole MiB, and enforces it like
+  a size you typed. It is meant to catch a run that grows out of control. It counts memory other
+  programs are using as room, so a run can push them into compression or swap before it reaches the
+  limit; it does not account for jobs started after launch and knows nothing about what your command
+  needs. A job that needs more memory than that limit is stopped by it: give it a size, with
+  headroom above a peak you observed. It reduces the risk that a runaway uses up this
+  Mac's memory; it does not prevent slowdowns, paging, crashes or a kernel panic. `run` prints one
+  `mlx-guard: automatic limit:` line after the start-of-run notice, and a run stopped at that limit
+  says the limit was chosen automatically. If macOS gives no usable number, or the limit it would
+  pick is under the 1 GiB minimum, `run` stops with exit code 64 and asks for a size; nothing is
+  launched and no report is written. A later release may change the share, always under a new rule
+  id. See `docs/TROUBLESHOOTING.md#the-automatic-limit`.
+- Two optional report fields: `configuration.max_footprint_source` (`explicit` or `auto`) on every
+  `run` report, and `prelaunch.auto_limit` (`rule`, `limit_bytes`) on automatic runs. Report schema
+  v1 is unchanged.
+- Python: `RunConfig(max_footprint_bytes="auto")`.
+
+### Changed
+
+- Earlier releases had no automatic limit; `--max-footprint auto` adds one, and nothing changes
+  unless you pass it. For an accepted size, the stderr and the enforced policy are identical to
+  0.5.2; the report gains one field, `max_footprint_source: "explicit"`. A `run` without
+  `--max-footprint` still stops with exit code 64.
+- The advice printed for a rejected or missing `--max-footprint` now also offers `auto`.
+- Python: `RunConfig.max_footprint_bytes` is now typed `int | Literal["auto"]` and is still
+  required. Code that does arithmetic on the field needs a type check. An automatic run that stops
+  before launch with exit code 64 raises `ConfigurationError`. The usual cause is that macOS gave no
+  usable memory number, or one too small for the 1 GiB minimum; other refusals before launch raise
+  it too.
+
 ## [0.5.2] - 2026-11-13
 
 Version 0.5.1 was tagged but never published; this release carries its fix.
@@ -415,7 +450,8 @@ Version 0.5.1 was tagged but never published; this release carries its fix.
   strict Python report permissions, unpredictable checkpoint request IDs, locked dependencies,
   CycloneDX SBOM, release checksums, and a self-contained Trusted Publishing workflow.
 
-[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/IonDen/mlx-guard/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/IonDen/mlx-guard/compare/v0.5.2...v0.6.0
 [0.5.2]: https://github.com/IonDen/mlx-guard/compare/v0.5.0...v0.5.2
 [0.5.0]: https://github.com/IonDen/mlx-guard/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/IonDen/mlx-guard/compare/v0.3.1...v0.4.0
