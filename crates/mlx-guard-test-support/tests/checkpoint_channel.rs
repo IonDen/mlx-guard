@@ -244,15 +244,28 @@ fn endpoint_exit_and_protocol_cancellation_are_typed() {
     );
 }
 
-#[test]
+/// Size of the mapping the `checkpoint-allocate` worker makes in its handler before it acknowledges.
 #[cfg(target_os = "macos")]
-fn bounded_checkpoint_allocation_remains_observable_until_acknowledged() {
-    // Catches pausing footprint observation while a checkpoint handler allocates memory.
-    const ALLOCATION_BYTES: u64 = 8 * 1024 * 1024;
-    let (mut process, _output, mut channel) = launch("checkpoint-allocate", ALLOCATION_BYTES);
+const ALLOCATION_BYTES: u64 = 8 * 1024 * 1024;
+
+/// What the sample-then-poll loop saw, so a caller that forces an interleaving can prove it did.
+#[cfg(target_os = "macos")]
+struct AllocationLoop {
+    passes: u32,
+    growth_before_ack: bool,
+}
+
+/// Request a checkpoint from an allocating worker, sample its footprint and poll for the
+/// acknowledgement until it arrives, then assert the handler's allocation was observed.
+/// `between_sample_and_poll` runs once per pass, after that pass's sample and before its poll.
+#[cfg(target_os = "macos")]
+fn observe_allocation_until_acknowledged(
+    process: &mut OwnedProcess,
+    channel: &mut CheckpointChannel,
+    mut between_sample_and_poll: impl FnMut(),
+) -> AllocationLoop {
     let inventory = NativeProcessInventory::new();
-    let tracker =
-        IdentityTracker::new(root_identity(&process), process.process_group_id()).unwrap();
+    let tracker = IdentityTracker::new(root_identity(process), process.process_group_id()).unwrap();
     let config = mlx_guard_core::SamplingConfig::new(
         Duration::from_millis(10),
         Duration::from_millis(100),
@@ -266,24 +279,101 @@ fn bounded_checkpoint_allocation_remains_observable_until_acknowledged() {
         SampleOutcome::Complete { total_bytes } => total_bytes,
         ref outcome => panic!("unexpected baseline: {outcome:?}"),
     };
-    request_and_signal(&process, &mut channel, epoch, Duration::from_secs(2));
+    let grew = |outcome: &SampleOutcome| {
+        matches!(outcome, SampleOutcome::Complete { total_bytes }
+            if *total_bytes >= baseline + ALLOCATION_BYTES / 2)
+    };
+    request_and_signal(process, channel, epoch, Duration::from_secs(2));
 
     let deadline = Instant::now() + Duration::from_secs(2);
+    let mut passes = 0;
     let mut observed_growth = false;
     let mut acknowledged = false;
     while Instant::now() < deadline && !acknowledged {
-        let sample = sampler.sample_native(&inventory, epoch);
-        if let SampleOutcome::Complete { total_bytes } = sample.outcome {
-            observed_growth |= total_bytes >= baseline + ALLOCATION_BYTES / 2;
-        }
+        passes += 1;
+        observed_growth |= grew(&sampler.sample_native(&inventory, epoch).outcome);
+        between_sample_and_poll();
         acknowledged = channel
             .poll(epoch.elapsed())
             .unwrap()
             .acknowledgement
             .is_some();
     }
+    let growth_before_ack = observed_growth;
+    // The acknowledgement can land between a pass's sample and its poll, which ends the loop before
+    // any sample saw the mapping. The handler keeps the mapping after acknowledging, so one more
+    // sample here still sees it.
+    observed_growth |= grew(&sampler.sample_native(&inventory, epoch).outcome);
     assert!(observed_growth);
     assert!(acknowledged);
+    AllocationLoop {
+        passes,
+        growth_before_ack,
+    }
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn checkpoint_handler_allocation_is_seen_by_the_native_sampler() {
+    // Catches a native sampler that misses the 8 MiB mapping a checkpoint handler makes before it
+    // acknowledges: no sample, before or after the acknowledgement, then reads 4 MiB of growth.
+    let (mut process, _output, mut channel) = launch("checkpoint-allocate", ALLOCATION_BYTES);
+    observe_allocation_until_acknowledged(&mut process, &mut channel, || {});
+    process.kill_group().unwrap();
+    process.wait_root().unwrap();
+}
+
+#[cfg(target_os = "macos")]
+fn send_signal(signal: &str, pid: i32) {
+    let status = std::process::Command::new("/bin/kill")
+        .args([signal, &pid.to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success(), "kill {signal} {pid}: {status}");
+}
+
+#[cfg(target_os = "macos")]
+fn is_stopped(pid: i32) -> bool {
+    let output = std::process::Command::new("/bin/ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout)
+        .trim_start()
+        .starts_with('T')
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn allocation_stays_observed_when_the_ack_lands_between_a_sample_and_its_poll() {
+    // Catches ending the observation at the acknowledgement: with the worker held stopped until the
+    // first pass has sampled, the handler allocates and acknowledges before that pass polls, so no
+    // in-loop sample can see the mapping.
+    let (mut process, mut output, mut channel) = launch("checkpoint-allocate", ALLOCATION_BYTES);
+    let pid = process.root_pid().cast_signed();
+    send_signal("-STOP", pid);
+    let stopped_by = Instant::now() + Duration::from_secs(1);
+    while !is_stopped(pid) {
+        assert!(Instant::now() < stopped_by, "the worker never stopped");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let mut released = false;
+    let forced = observe_allocation_until_acknowledged(&mut process, &mut channel, || {
+        if released {
+            return;
+        }
+        released = true;
+        // Resuming the worker lets it handle the checkpoint signal that waited while it was stopped.
+        send_signal("-CONT", pid);
+        // The worker writes ACKED only after its acknowledgement is flushed to the channel, so the
+        // poll that follows finds it; the worker's own watchdog bounds this read.
+        read_phase(&mut output, "ACKED");
+    });
+    assert_eq!(
+        forced.passes, 1,
+        "the acknowledgement missed the first poll"
+    );
+    assert!(!forced.growth_before_ack, "a pass sampled the mapping");
     process.kill_group().unwrap();
     process.wait_root().unwrap();
 }
