@@ -479,6 +479,15 @@ mod tests {
     use super::stuck_writer::{Timeline, stuck_writer};
     use super::{Notices, Pending, State, Trace, spawn_thread};
 
+    /// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+    fn audit_telemetry(line: &str) {
+        std::io::Write::write_all(
+            &mut std::io::stderr(),
+            format!("\naudit-telemetry: {line}\n").as_bytes(),
+        )
+        .ok();
+    }
+
     fn timeline() -> Timeline {
         Arc::new(Mutex::new(Vec::new()))
     }
@@ -537,6 +546,10 @@ mod tests {
         let waited = finished
             .recv_timeout(Duration::from_secs(5))
             .expect("finish(false) must return while the writer is stuck");
+        audit_telemetry(&format!(
+            "U2 finish_without_plain_lines_returns_within_the_drain_bound_when_the_writer_is_stuck waited_ms={} floor_ms=250 bound_ms=2000",
+            waited.as_millis()
+        ));
 
         assert!(
             waited >= Duration::from_millis(250),
@@ -554,11 +567,18 @@ mod tests {
         let mut notices = Notices::with_writer(writer);
         notices.send("stuck\n".to_owned());
         gate.wait_for_a_blocked_write();
+        let audit_t0 = Instant::now();
         thread::sleep(Duration::from_millis(300));
+        let audit_slept = audit_t0.elapsed();
 
         let (waited, _) = finish_clean_exit(notices, &lines)
             .recv_timeout(Duration::from_secs(5))
             .expect("finish(false) must return while the writer is stuck");
+        audit_telemetry(&format!(
+            "U3 finish_without_plain_lines_gives_a_write_blocked_before_it_the_whole_drain_bound slept_ms={} sleep_ms=300 waited_ms={} floor_ms=250 bound_ms=2000",
+            audit_slept.as_millis(),
+            waited.as_millis()
+        ));
 
         assert!(
             waited >= Duration::from_millis(250),
@@ -579,6 +599,7 @@ mod tests {
         notices.send("second\n".to_owned());
         notices.send("third\n".to_owned());
 
+        let audit_t0 = Instant::now();
         let (returned, finished) = mpsc::channel();
         thread::spawn(move || {
             notices.finish(true);
@@ -592,11 +613,17 @@ mod tests {
             "finish(true) returned with a write still blocked"
         );
         assert!(written(&lines).is_empty());
+        let audit_held = audit_t0.elapsed();
 
         gate.release();
         finished
             .recv_timeout(Duration::from_secs(5))
             .expect("finish(true) must return once the write went through");
+        audit_telemetry(&format!(
+            "U4 finish_waits_for_a_stuck_write_when_plain_lines_follow held_ms={} window_ms=500 returned_ms={}",
+            audit_held.as_millis(),
+            audit_t0.elapsed().as_millis()
+        ));
         assert_eq!(written(&lines), ["first\n", "second\n", "third\n"]);
     }
 
@@ -650,6 +677,7 @@ mod tests {
 
         // The gate stays shut while `finish(false)` starts, so nothing can be written before it
         // returns unless it waited; it opens well inside the drain bound.
+        let audit_t0 = std::time::Instant::now();
         let (returned, finished) = mpsc::channel();
         let snapshot = Arc::clone(&lines);
         thread::spawn(move || {
@@ -657,11 +685,18 @@ mod tests {
             returned.send(written(&snapshot)).ok();
         });
         thread::sleep(Duration::from_millis(50));
+        let audit_released = audit_t0.elapsed();
         gate.release();
 
         let seen_on_return = finished
             .recv_timeout(Duration::from_secs(5))
             .expect("finish(false) must return");
+        audit_telemetry(&format!(
+            "finish_without_plain_lines_delivers_what_a_healthy_writer_can_take released_after_ms={} returned_ms={} lines={}",
+            audit_released.as_millis(),
+            audit_t0.elapsed().as_millis(),
+            seen_on_return.len()
+        ));
         assert_eq!(seen_on_return, ["first\n", "second\n"]);
     }
 
@@ -824,11 +859,18 @@ mod tests {
         notices.send("fit line\n".to_owned());
 
         let finished = finish_clean_exit(notices, &lines);
+        let audit_t0 = Instant::now();
         thread::sleep(Duration::from_millis(400));
+        let audit_slept = audit_t0.elapsed();
         drop(start);
         finished
             .recv_timeout(Duration::from_secs(5))
             .expect("finish(false) must return");
+        audit_telemetry(&format!(
+            "U6 a_writer_that_starts_late_is_traced_from_the_queue_to_the_finish slept_ms={} sleep_ms=400 returned_ms={} cap_ms=2000",
+            audit_slept.as_millis(),
+            audit_t0.elapsed().as_millis()
+        ));
 
         assert_eq!(
             events(&traced),
@@ -922,6 +964,10 @@ mod tests {
         let (waited, seen_on_return) = finished
             .recv_timeout(Duration::from_secs(5))
             .expect("finish(false) must return");
+        audit_telemetry(&format!(
+            "finish_without_plain_lines_delivers_the_lines_of_a_writer_that_starts_late waited_ms={}",
+            waited.as_millis()
+        ));
         assert_eq!(seen_on_return, ["banner\n", "fit line\n"]);
         // The writer ends at about 400 ms; a wait that is never woken returns at the 2 s cap.
         assert!(
@@ -943,6 +989,10 @@ mod tests {
         let (waited, seen_on_return) = finish_clean_exit(notices, &lines)
             .recv_timeout(Duration::from_secs(10))
             .expect("finish(false) must return while the writer never starts");
+        audit_telemetry(&format!(
+            "finish_without_plain_lines_gives_up_at_the_cap_on_a_writer_that_never_starts waited_ms={}",
+            waited.as_millis()
+        ));
         drop(start);
 
         assert!(
@@ -978,12 +1028,20 @@ mod tests {
         }
 
         let finished = finish_clean_exit(notices, &lines);
+        let audit_t0 = std::time::Instant::now();
         thread::sleep(Duration::from_millis(1500));
+        let audit_slept = audit_t0.elapsed();
         drop(start);
 
         let (waited, seen_on_return) = finished
             .recv_timeout(Duration::from_secs(10))
             .expect("finish(false) must return while the writer keeps writing");
+        audit_telemetry(&format!(
+            "finish_without_plain_lines_gives_up_at_the_cap_on_a_writer_that_keeps_writing slept_ms={} waited_ms={} lines={}",
+            audit_slept.as_millis(),
+            waited.as_millis(),
+            seen_on_return.len()
+        ));
         assert!(waited < Duration::from_millis(3500), "it waited {waited:?}");
         assert!(
             !seen_on_return.is_empty() && seen_on_return.len() < 8,
@@ -1004,6 +1062,10 @@ mod tests {
         let waited = drop_on_a_thread(notices)
             .recv_timeout(Duration::from_secs(5))
             .expect("dropping must return while the writer is stuck");
+        audit_telemetry(&format!(
+            "U10 dropping_an_unfinished_notices_gives_up_on_a_stuck_write_before_the_cap waited_ms={} bound_ms=2000",
+            waited.as_millis()
+        ));
         assert!(waited < Duration::from_secs(2), "it waited {waited:?}");
     }
 
@@ -1019,6 +1081,10 @@ mod tests {
         let waited = drop_on_a_thread(notices)
             .recv_timeout(Duration::from_secs(10))
             .expect("dropping must return while the writer never starts");
+        audit_telemetry(&format!(
+            "U11 dropping_notices_whose_writer_never_starts_gives_up_at_the_cap waited_ms={} floor_ms=2000 bound_ms=3000",
+            waited.as_millis()
+        ));
         drop(start);
 
         assert!(

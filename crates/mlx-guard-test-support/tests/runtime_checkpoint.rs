@@ -126,6 +126,21 @@ fn authenticated_checkpoint_precedes_term_in_the_complete_runtime() {
     assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
     assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
+    audit_telemetry(&format!(
+        "#52 authenticated_checkpoint_precedes_term_in_the_complete_runtime transition_at_ms={:?} signal_at_ms={:?} outcome_at_ms={} wall_ms=1000 ack_bound_ms=1000 checkpoint={:?}",
+        report
+            .transitions
+            .iter()
+            .map(|transition| transition.at_ms)
+            .collect::<Vec<_>>(),
+        report
+            .signals
+            .iter()
+            .map(|signal| signal.at_ms)
+            .collect::<Vec<_>>(),
+        report.outcome.at_ms,
+        report.checkpoint.status
+    ));
     // Pins the shipped default: a real cooperative worker missed the former 100 ms bound on the
     // 3 vCPU CI runner, so the acknowledgement window defaults to one second (see docs/POLICY.md).
     assert_eq!(report.configuration.checkpoint_timeout_ms, Some(1_000));
@@ -225,6 +240,18 @@ fn a_worker_reported_artifact_reaches_the_report_verbatim() {
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
+    audit_telemetry(&format!(
+        "#53 a_worker_reported_artifact_reaches_the_report_verbatim transition_at_ms={} signals={} outcome_at_ms={} wall_ms=1000 ack_bound_ms=1000 checkpoint={:?}",
+        report
+            .transitions
+            .iter()
+            .map(|transition| transition.at_ms.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+        audit_signals(&report),
+        report.outcome.at_ms,
+        report.checkpoint.status
+    ));
     assert_eq!(
         report.checkpoint.status,
         CheckpointStatus::AcknowledgedUnverifiedDurability,
@@ -431,6 +458,12 @@ fn checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline() {
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_two_plain_lines(&result.stderr, "75-the-wall-time-limit");
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
+    audit_telemetry(&format!(
+        "#54 checkpoint_timeout_cannot_delay_term_beyond_the_policy_deadline signals={} checkpoint_at_ms={:?} gap_bound_ms=500 checkpoint_timeout_ms=100 checkpoint={:?}",
+        audit_signals(&report),
+        report.checkpoint.at_ms,
+        report.checkpoint.status
+    ));
     assert_eq!(report.configuration.checkpoint_timeout_ms, Some(100));
     assert_eq!(report.checkpoint.status, CheckpointStatus::TimedOut);
     // The blocked worker sleeps 500 ms and then acknowledges (its 3 s argument is only its own
@@ -499,6 +532,12 @@ fn escaped_descendant_is_reported_as_containment_uncertainty() {
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     let report = ReportV1::from_json(&fs::read_to_string(report_path).unwrap()).unwrap();
+    audit_telemetry(&format!(
+        "#55 escaped_descendant_is_reported_as_containment_uncertainty detected={:?} samples={} outcome_at_ms={} wall_ms=300",
+        report.escape.detected,
+        report.samples.len(),
+        report.outcome.at_ms
+    ));
     assert_eq!(
         report.escape.detected,
         mlx_guard_core::Observed::Available { value: true }
@@ -541,4 +580,29 @@ fn sighup_is_captured_unless_the_caller_already_ignored_it() {
         hangup_is_ignored().unwrap(),
         "drop must not clobber the caller's SIG_IGN"
     );
+}
+
+/// Every recorded signal as `number@at_ms:result:reason`, comma-joined, for one
+/// `audit-telemetry:` value.
+fn audit_signals(report: &ReportV1) -> String {
+    report
+        .signals
+        .iter()
+        .map(|signal| {
+            format!(
+                "{}@{}:{:?}:{:?}",
+                signal.signal, signal.at_ms, signal.result, signal.reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

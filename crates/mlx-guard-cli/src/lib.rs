@@ -537,6 +537,17 @@ mod tests {
     }
 
     /// Records each write on the timeline the notices' writer shares.
+    /// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not
+    /// capture.
+    #[cfg(unix)]
+    fn audit_telemetry(line: &str) {
+        std::io::Write::write_all(
+            &mut std::io::stderr(),
+            format!("\naudit-telemetry: {line}\n").as_bytes(),
+        )
+        .ok();
+    }
+
     #[cfg(unix)]
     struct Recording(notices::stuck_writer::Timeline);
 
@@ -591,8 +602,14 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(1));
         }
+        let audit_summary_ms = started.elapsed().as_millis();
+        let audit_hold_t0 = Instant::now();
         // Twice the clean-exit bound, so a wait that gave up on a timer has already moved on.
         std::thread::sleep(Duration::from_millis(500));
+        audit_telemetry(&format!(
+            "U12 the_summary_goes_first_then_every_notice_then_the_plain_lines summary_ms={audit_summary_ms} bound_ms=5000 held_ms={} hold_ms=500",
+            audit_hold_t0.elapsed().as_millis()
+        ));
         assert_eq!(
             *timeline.lock().unwrap(),
             ["summary\n"],

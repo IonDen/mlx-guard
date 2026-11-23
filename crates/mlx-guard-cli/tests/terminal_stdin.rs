@@ -96,6 +96,14 @@ fn wait_bounded(mut child: Child, deadline: Duration) -> (ExitStatus, Vec<u8>, V
     loop {
         if child.try_wait().unwrap().is_some() {
             let output = child.wait_with_output().unwrap();
+            audit_telemetry(&format!(
+                "I36 {} finish_ms={} bound_ms={} code={:?} stderr_lines={}",
+                thread::current().name().unwrap_or("wait_bounded"),
+                started.elapsed().as_millis(),
+                deadline.as_millis(),
+                output.status.code(),
+                String::from_utf8_lossy(&output.stderr).lines().count()
+            ));
             return (output.status, output.stdout, output.stderr);
         }
         if started.elapsed() >= deadline {
@@ -291,4 +299,13 @@ fn a_non_terminal_stdin_is_inherited_without_a_diagnostic() {
         report_kind(&report_path),
         mlx_guard_core::TerminalKind::ChildExited { code: 0 }
     );
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

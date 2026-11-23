@@ -201,7 +201,28 @@ mod real_runs {
             .expect("the command must run")
     }
 
+    /// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+    fn audit_telemetry(line: &str) {
+        std::io::Write::write_all(
+            &mut std::io::stderr(),
+            format!("\naudit-telemetry: {line}\n").as_bytes(),
+        )
+        .ok();
+    }
+
     fn assert_exited_zero(output: &Output) {
+        audit_telemetry(&format!(
+            "I37 {} code={:?} stderr_lines={} banner_first={}",
+            std::thread::current()
+                .name()
+                .unwrap_or("assert_exited_zero"),
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).lines().count(),
+            String::from_utf8_lossy(&output.stderr)
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains("emergency KILL"))
+        ));
         assert_eq!(
             output.status.code(),
             Some(0),

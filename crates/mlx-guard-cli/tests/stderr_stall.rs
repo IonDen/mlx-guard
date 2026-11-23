@@ -74,6 +74,13 @@ mod darwin {
 
     use super::{DeadPipe, GUARD};
 
+    /// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+    fn audit_telemetry(line: &str) {
+        io::stderr()
+            .write_all(format!("\naudit-telemetry: {line}\n").as_bytes())
+            .ok();
+    }
+
     /// 32 MiB in bytes, the limit of the ramp runs.
     const RAMP_LIMIT_BYTES: u64 = 33_554_432;
     /// The launch notice for `--max-footprint 1TiB`, which is one line and never changes wording.
@@ -502,6 +509,7 @@ mod darwin {
             let mut pipe = FullPipe::new();
             let mut writer = pipe.writer_clone();
             let (finished, write_returned) = mpsc::channel();
+            let audit_t0 = Instant::now();
             let blocked = thread::spawn(move || {
                 let result = writer.write(&vec![b'!'; size]);
                 finished.send(()).ok();
@@ -514,6 +522,11 @@ mod darwin {
                 "a {size}-byte blocking write returned on a pipe filled with {} bytes",
                 pipe.filler_bytes
             );
+            audit_telemetry(&format!(
+                "I3 a_filled_pipe_blocks_a_writer_of_any_size size={size} held_ms={} window_ms=500 filler_bytes={}",
+                audit_t0.elapsed().as_millis(),
+                pipe.filler_bytes
+            ));
 
             pipe.release();
             let error = blocked.join().unwrap().unwrap_err();
@@ -558,6 +571,10 @@ mod darwin {
             .at_ms
             .checked_sub(first_at_limit.captured_at_ms)
             .expect("the signal must come after the sample that caused it");
+        audit_telemetry(&format!(
+            "a_full_unread_stderr_pipe_does_not_stop_a_footprint_intervention delay_ms={delay} at_limit_ms={}",
+            first_at_limit.captured_at_ms
+        ));
         assert!(
             delay <= 500,
             "the first group signal came {delay} ms after the first sample at the limit"
@@ -846,6 +863,10 @@ mod darwin {
             let reading = reading
                 .recv_timeout(Duration::from_secs(15))
                 .expect("the pipe must reach end of file");
+            audit_telemetry(&format!(
+                "I9 the_banner_is_not_split_by_the_commands_output repetition={repetition} exit={exit:?} flood_before={} flood_after={} floor=1",
+                reading.flood_before_banner, reading.flood_after_banner
+            ));
 
             assert_eq!(exit, Some(75), "repetition {repetition}");
             assert!(
@@ -926,6 +947,9 @@ mod darwin {
         );
         append_to_step_summary(&telemetry);
         write_to_job_log(&telemetry);
+        audit_telemetry(&format!(
+            "a_full_pipe_keeps_the_sample_cadence_inside_the_band {telemetry}"
+        ));
         let term = term.unwrap_or_else(|| {
             panic!("the wall time must send TERM to the group; samples at {captured:?} ms")
         });
@@ -1255,8 +1279,15 @@ mod darwin {
                 "stderr full until the report",
             );
             assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
+            let audit_t0 = Instant::now();
             thread::sleep(Duration::from_millis(500));
+            let audit_slept = audit_t0.elapsed();
             let lines = lines_of(&pipe.drain());
+            audit_telemetry(&format!(
+                "I12 a_reader_that_resumes_gets_the_end_of_run_lines_last repetition={repetition} slept_ms={} sleep_ms=500 drained_lines={}",
+                audit_slept.as_millis(),
+                lines.len()
+            ));
             assert_eq!(
                 supervisor.exit_code_within(Duration::from_secs(5), "stderr drained"),
                 Some(75),

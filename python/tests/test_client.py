@@ -769,6 +769,7 @@ with worker:
         time.sleep(0.001)
 """
         with tempfile.TemporaryDirectory() as temporary:
+            audit_t0 = time.monotonic()
             result = mlx_guard.run(
                 mlx_guard.RunConfig(
                     command=(sys.executable, "-c", script),
@@ -781,6 +782,14 @@ with worker:
             )
 
         checkpoint = result.report.payload["checkpoint"]
+        print(
+            "audit-telemetry: test_real_worker_helper_acknowledges_before_policy_intervention"
+            f" run_ms={(time.monotonic() - audit_t0) * 1000:.0f}"
+            f" returncode={result.returncode}"
+            f" checkpoint={json.dumps(checkpoint, default=str)}"
+            f" signals={json.dumps(result.report.payload.get('signals'), default=str)}",
+            file=sys.stderr,
+        )
         # `run` prints the emergency-band banner on stderr as it launches; whether it reaches the
         # captured buffer is timing-dependent, so tolerate it being present or absent. A 1 TiB
         # limit is more than any Mac's launch estimate, so the fit line follows the banner. After

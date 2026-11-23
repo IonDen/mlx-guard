@@ -84,6 +84,11 @@ fn reasons(report: &ReportV1) -> Vec<(u8, Option<SignalReason>)> {
 fn root_exit_with_a_surviving_member_keeps_the_root_status_after_term_cleanup() {
     // Catches labelling survivor cleanup as a policy intervention or as measurement loss.
     let (result, report) = run_report(&["--", FIXTURE, "fast-root-exit", "1", "5000"]);
+    audit_telemetry(&format!(
+        "#49 root_exit_with_a_surviving_member_keeps_the_root_status_after_term_cleanup signals={} outcome_at_ms={} grace_ms=1000",
+        audit_signals(&report),
+        report.outcome.at_ms
+    ));
 
     assert_eq!(result.outcome, SupervisorOutcome::ChildExited(23));
     assert!(result.stderr.is_empty());
@@ -146,6 +151,11 @@ fn exit_inside_the_term_grace_keeps_75_and_records_the_real_code() {
         "1",
         "5000",
     ]);
+    audit_telemetry(&format!(
+        "#50 exit_inside_the_term_grace_keeps_75_and_records_the_real_code signals={} outcome_at_ms={} wall_ms=1000 grace_ms=1000",
+        audit_signals(&report),
+        report.outcome.at_ms
+    ));
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_eq!(
@@ -191,6 +201,16 @@ fn exit_between_checkpoint_request_and_acknowledgement_is_truthful() {
         report.outcome.child_status,
         Some(ChildStatus::Exited { code: 0 })
     );
+    audit_telemetry(&format!(
+        "#51 exit_between_checkpoint_request_and_acknowledgement_is_truthful signal_at_ms={:?} outcome_at_ms={} wall_ms=1000 checkpoint={:?}",
+        report
+            .signals
+            .iter()
+            .map(|signal| signal.at_ms)
+            .collect::<Vec<_>>(),
+        report.outcome.at_ms,
+        report.checkpoint.status
+    ));
     // The wall-time deadline opens the checkpoint request; the child exits before any
     // acknowledgement or timeout, so that request is the only signal ever recorded.
     assert_eq!(
@@ -272,4 +292,23 @@ fn an_emergency_band_breach_kills_at_once_and_names_the_footprint() {
     assert_eq!(report.checkpoint.status, CheckpointStatus::NotNegotiated);
     assert_eq!(report.checkpoint.reason, None, "{report:#?}");
     assert_eq!(report.checkpoint.request_id, None, "{report:#?}");
+}
+
+/// Every recorded signal as `number@at_ms:result`, comma-joined, for one `audit-telemetry:` value.
+fn audit_signals(report: &ReportV1) -> String {
+    report
+        .signals
+        .iter()
+        .map(|signal| format!("{}@{}:{:?}", signal.signal, signal.at_ms, signal.result))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

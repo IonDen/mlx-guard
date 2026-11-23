@@ -3224,6 +3224,7 @@ mod tests {
         // find the recorded identity provably still alive and retry, never latch a false exit off
         // one inconclusive read.
         let inventory = NativeProcessInventory;
+        let audit_t0 = std::time::Instant::now();
         let mut child = Command::new("/bin/sleep")
             .arg("5")
             .spawn()
@@ -3248,11 +3249,16 @@ mod tests {
         };
 
         let result = parent_has_exited(&mut state, inventory, Duration::from_millis(9));
+        let audit_call_ms = audit_t0.elapsed().as_millis();
 
         child
             .kill()
             .expect("the throwaway child must accept SIGKILL");
         child.wait().expect("the throwaway child must be reaped");
+        audit_telemetry(&format!(
+            "U14 a_recorded_identity_still_alive_after_a_ppid_change_is_inconclusive_not_fatal call_ms={audit_call_ms} child_life_ms=5000 result={result} exited_at_ms={:?}",
+            state.exited_at_ms
+        ));
 
         assert!(
             !result,
@@ -3340,6 +3346,16 @@ mod tests {
             failure.diagnostic,
             "child exited before checkpoint negotiation"
         );
+    }
+
+    /// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not
+    /// capture.
+    fn audit_telemetry(line: &str) {
+        std::io::Write::write_all(
+            &mut std::io::stderr(),
+            format!("\naudit-telemetry: {line}\n").as_bytes(),
+        )
+        .ok();
     }
 }
 

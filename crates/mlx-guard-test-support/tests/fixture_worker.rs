@@ -110,6 +110,7 @@ fn rejects_requests_outside_the_hard_caps() {
 #[test]
 fn allocate_worker_acknowledges_release_and_exit() {
     // Catches missing or reordered allocate, release, and exit phases.
+    let audit_t0 = Instant::now();
     let mut session = Session::spawn("allocate", 8 * 1024 * 1024, 1_000);
     session.expect_line("READY mode=allocate bytes=8388608");
     session.send("allocate");
@@ -118,14 +119,23 @@ fn allocate_worker_acknowledges_release_and_exit() {
     session.expect_line("RELEASED");
     session.send("exit");
     session.expect_line("EXIT");
+    audit_telemetry(&format!(
+        "#12 allocate_worker_acknowledges_release_and_exit exchange_ms={} wall_ms=1000",
+        audit_t0.elapsed().as_millis()
+    ));
     assert!(session.child.wait().expect("fixture must exit").success());
 }
 
 #[test]
 fn watchdog_terminates_a_stalled_interactive_fixture() {
     // Catches a blocking stdin read that can outlive the advertised wall ceiling.
+    let audit_t0 = Instant::now();
     let mut session = Session::spawn("allocate", 1, 50);
     session.expect_line("READY mode=allocate bytes=1");
+    audit_telemetry(&format!(
+        "#13 watchdog_terminates_a_stalled_interactive_fixture ready_ms={} wall_ms=50",
+        audit_t0.elapsed().as_millis()
+    ));
     let status = session
         .child
         .wait()
@@ -136,10 +146,18 @@ fn watchdog_terminates_a_stalled_interactive_fixture() {
 #[test]
 fn cpu_stall_worker_remains_bounded() {
     // Catches an unbounded busy loop or a mode that never performs work.
+    let audit_t0 = std::time::Instant::now();
     let output = Command::new(FIXTURE)
         .args(["cpu-stall", "1", "25"])
         .output()
         .expect("fixture must run");
+    audit_telemetry(&format!(
+        "cpu_stall_worker_remains_bounded code={:?} ms={} stdout={:?}",
+        output.status.code(),
+        audit_t0.elapsed().as_millis(),
+        String::from_utf8_lossy(&output.stdout)
+    ));
+    forward_fixture_audit("#14 cpu_stall_worker_remains_bounded", &output.stderr);
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.starts_with("READY mode=cpu-stall bytes=1\n"));
@@ -155,10 +173,21 @@ fn cpu_stall_worker_remains_bounded() {
 #[test]
 fn fanout_worker_exposes_a_bounded_real_process_group() {
     // Catches replacing the 16-member performance fixture with synthetic identity records.
+    let audit_t0 = std::time::Instant::now();
     let output = Command::new(FIXTURE)
         .args(["fanout-stall", "16", "100"])
         .output()
         .expect("fanout fixture must run");
+    audit_telemetry(&format!(
+        "fanout_worker_exposes_a_bounded_real_process_group code={:?} ms={} stdout={:?}",
+        output.status.code(),
+        audit_t0.elapsed().as_millis(),
+        String::from_utf8_lossy(&output.stdout)
+    ));
+    forward_fixture_audit(
+        "#15 fanout_worker_exposes_a_bounded_real_process_group",
+        &output.stderr,
+    );
     assert_eq!(output.status.code(), Some(124));
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
@@ -169,6 +198,7 @@ fn fanout_worker_exposes_a_bounded_real_process_group() {
 #[test]
 fn shared_mapping_worker_acknowledges_unmap() {
     // Catches substituting MAP_PRIVATE or a synthetic acknowledgement for the shared mapping.
+    let audit_t0 = Instant::now();
     let mut session = Session::spawn("shared", 8 * 1024 * 1024, 1_000);
     session.expect_line("READY mode=shared bytes=8388608");
     session.send("allocate");
@@ -177,23 +207,36 @@ fn shared_mapping_worker_acknowledges_unmap() {
     session.expect_line("RELEASED");
     session.send("exit");
     session.expect_line("EXIT");
+    audit_telemetry(&format!(
+        "#12b shared_mapping_worker_acknowledges_unmap exchange_ms={} wall_ms=1000",
+        audit_t0.elapsed().as_millis()
+    ));
     assert!(session.child.wait().expect("fixture must exit").success());
 }
 
 #[test]
 fn churn_and_fast_root_exit_are_real_process_behaviors() {
     // Catches a churn mode that only prints synthetic PIDs or a root that waits for its child.
+    let audit_t0 = std::time::Instant::now();
     let churn = Command::new(FIXTURE)
         .args(["spawn-churn", "1", "1000"])
         .output()
         .expect("churn fixture must run");
+    audit_telemetry(&format!(
+        "churn_and_fast_root_exit_are_real_process_behaviors code={:?} ms={} stdout={:?}",
+        churn.status.code(),
+        audit_t0.elapsed().as_millis(),
+        String::from_utf8_lossy(&churn.stdout)
+    ));
     assert!(churn.status.success());
     assert!(String::from_utf8_lossy(&churn.stdout).contains("CHURNED children=6"));
 
+    let audit_fast_t0 = Instant::now();
     let fast = Command::new(FIXTURE)
         .args(["fast-root-exit", "1", "1000"])
         .output()
         .expect("fast-exit fixture must run");
+    let audit_root_ms = audit_fast_t0.elapsed().as_millis();
     assert_eq!(fast.status.code(), Some(23));
     let stdout = String::from_utf8_lossy(&fast.stdout);
     let child_pid: i32 = stdout
@@ -202,16 +245,26 @@ fn churn_and_fast_root_exit_are_real_process_behaviors() {
         .expect("fixture must report its real child")
         .parse()
         .expect("reported child PID must be numeric");
+    audit_telemetry(&format!(
+        "#17 churn_and_fast_root_exit_are_real_process_behaviors root_ms={audit_root_ms} check_at_ms={} child_wall_ms=1000",
+        audit_fast_t0.elapsed().as_millis()
+    ));
     assert_eq!(unsafe { libc::kill(child_pid, 0) }, 0);
 }
 
 #[test]
 fn setsid_and_ignore_term_modes_expose_real_unix_state() {
     // Catches a fake escape report or a TERM handler that still terminates normally.
+    let audit_t0 = Instant::now();
     let escaped = Command::new(FIXTURE)
         .args(["setsid", "1", "100"])
         .output()
         .expect("setsid fixture must run");
+    audit_telemetry(&format!(
+        "#18 setsid_and_ignore_term_modes_expose_real_unix_state setsid_ms={} wall_ms=100 code={:?}",
+        audit_t0.elapsed().as_millis(),
+        escaped.status.code()
+    ));
     assert!(escaped.status.success());
     let stdout = String::from_utf8_lossy(&escaped.stdout);
     let fields: Vec<_> = stdout
@@ -226,6 +279,7 @@ fn setsid_and_ignore_term_modes_expose_real_unix_state() {
 
     // A 2 s wall budget (matching the other ignore-term fixtures) keeps the liveness check below
     // from racing the watchdog on a slow shared CI runner; the final wait still proves exit 124.
+    let audit_t0 = Instant::now();
     let mut ignored = Session::spawn("ignore-term", 1, 2_000);
     ignored.expect_line(&format!(
         "READY mode=ignore-term pid={}",
@@ -233,7 +287,13 @@ fn setsid_and_ignore_term_modes_expose_real_unix_state() {
     ));
     let result = unsafe { libc::kill(ignored.child.id().cast_signed(), libc::SIGTERM) };
     assert_eq!(result, 0);
+    let audit_term_at = audit_t0.elapsed();
     thread::sleep(Duration::from_millis(20));
+    audit_telemetry(&format!(
+        "#19 setsid_and_ignore_term_modes_expose_real_unix_state slept_ms={} sleep_ms=20 check_at_ms={} wall_ms=2000",
+        audit_t0.elapsed().saturating_sub(audit_term_at).as_millis(),
+        audit_t0.elapsed().as_millis()
+    ));
     assert!(ignored.child.try_wait().expect("wait must work").is_none());
     assert_eq!(
         ignored.child.wait().expect("watchdog must finish").code(),
@@ -246,11 +306,18 @@ fn fanout_ignore_term_group_survives_term_until_the_watchdog() {
     // Mirrors fixture_worker.rs:227-241's margins (wall 2_000, post-TERM settle 20 ms — the
     // committed widths judged against the 3 vCPU CI runner). Liveness via try_wait(), never
     // kill(pid, 0), which is falsely green on a zombie (#20).
+    let audit_t0 = Instant::now();
     let mut session = Session::spawn("fanout-ignore-term", 4, 2_000);
     session.expect_line("READY mode=fanout-ignore-term members=4");
     let result = unsafe { libc::kill(session.child.id().cast_signed(), libc::SIGTERM) };
     assert_eq!(result, 0);
+    let audit_term_at = audit_t0.elapsed();
     thread::sleep(Duration::from_millis(20));
+    audit_telemetry(&format!(
+        "#20 fanout_ignore_term_group_survives_term_until_the_watchdog slept_ms={} sleep_ms=20 check_at_ms={} wall_ms=2000",
+        audit_t0.elapsed().saturating_sub(audit_term_at).as_millis(),
+        audit_t0.elapsed().as_millis()
+    ));
     assert!(session.child.try_wait().expect("wait must work").is_none());
     assert_eq!(
         session.child.wait().expect("watchdog must finish").code(),
@@ -308,6 +375,7 @@ fn inherited_fd_frame_is_binary_and_separate_from_stdout() {
         -1
     );
 
+    let audit_t0 = Instant::now();
     let child = Command::new(FIXTURE)
         .args(["raw-fd", "1", "100"])
         .env("MLX_GUARD_FIXTURE_FD", writer.as_raw_fd().to_string())
@@ -322,6 +390,12 @@ fn inherited_fd_frame_is_binary_and_separate_from_stdout() {
     let output = child
         .wait_with_output()
         .expect("raw-fd fixture must finish");
+    audit_telemetry(&format!(
+        "#22 inherited_fd_frame_is_binary_and_separate_from_stdout run_ms={} wall_ms=100 code={:?} frame_bytes={}",
+        audit_t0.elapsed().as_millis(),
+        output.status.code(),
+        frame.len()
+    ));
     assert!(output.status.success());
     assert_eq!(frame, b"\0\0\0\x0ffixture-frame\0\xff");
     assert!(
@@ -344,11 +418,17 @@ fn artifact_failure_is_observed_without_creating_a_file() {
         std::process::id(),
     ));
     fs::create_dir(&path).expect("temporary blocker directory must be created");
+    let audit_t0 = Instant::now();
     let output = Command::new(FIXTURE)
         .args(["artifact-failure", "1", "100"])
         .env("MLX_GUARD_FIXTURE_PATH", &path)
         .output()
         .expect("artifact fixture must run");
+    audit_telemetry(&format!(
+        "#23 artifact_failure_is_observed_without_creating_a_file run_ms={} wall_ms=100 code={:?}",
+        audit_t0.elapsed().as_millis(),
+        output.status.code()
+    ));
     fs::remove_dir(&path).expect("temporary blocker directory must be removable");
     assert_eq!(output.status.code(), Some(74));
     assert!(String::from_utf8_lossy(&output.stderr).contains("artifact create failed"));
@@ -410,6 +490,12 @@ fn checkpoint_worker_hanging_before_ready_is_killable() {
         assert_eq!(process.try_wait_root().unwrap(), None);
         thread::sleep(Duration::from_millis(1));
     }
+    audit_telemetry(&format!(
+        "#25 checkpoint_worker_hanging_before_ready_is_killable held_until_ms_past_deadline={} window_ms=200 wall_ms=2000",
+        Instant::now()
+            .saturating_duration_since(deadline)
+            .as_millis()
+    ));
     process.kill_group().unwrap();
     process.wait_root().unwrap();
 }
@@ -450,11 +536,13 @@ fn fast_root_exit_reports_a_term_ignoring_survivor_by_pid_file() {
         std::process::id(),
     ));
 
+    let audit_t0 = Instant::now();
     let output = Command::new(FIXTURE)
         .args(["fast-root-exit", "2", "5000"])
         .env("MLX_GUARD_FIXTURE_PID_FILE", &pid_path)
         .output()
         .expect("fast-exit fixture must run");
+    let audit_root_ms = audit_t0.elapsed().as_millis();
     assert_eq!(output.status.code(), Some(23));
     assert!(
         pid_path.exists(),
@@ -469,7 +557,13 @@ fn fast_root_exit_reports_a_term_ignoring_survivor_by_pid_file() {
     fs::remove_file(&pid_path).ok();
 
     assert_eq!(unsafe { libc::kill(child_pid, libc::SIGTERM) }, 0);
+    let audit_term_at = audit_t0.elapsed();
     thread::sleep(Duration::from_millis(20));
+    audit_telemetry(&format!(
+        "#27 fast_root_exit_reports_a_term_ignoring_survivor_by_pid_file root_ms={audit_root_ms} slept_ms={} sleep_ms=20 check_at_ms={} wall_ms=5000",
+        audit_t0.elapsed().saturating_sub(audit_term_at).as_millis(),
+        audit_t0.elapsed().as_millis()
+    ));
     assert_eq!(
         unsafe { libc::kill(child_pid, 0) },
         0,
@@ -487,5 +581,21 @@ fn fast_root_exit_reports_a_term_ignoring_survivor_by_pid_file() {
             "survivor must be gone within the wait budget after SIGKILL"
         );
         thread::sleep(Duration::from_millis(1));
+    }
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::stderr()
+        .write_all(format!("\naudit-telemetry: {line}\n").as_bytes())
+        .ok();
+}
+
+/// Passes the fixture's own `audit-telemetry:` stderr lines on to the raw stderr under `row`.
+fn forward_fixture_audit(row: &str, stderr: &[u8]) {
+    for line in String::from_utf8_lossy(stderr).lines() {
+        if let Some(reading) = line.strip_prefix("audit-telemetry: ") {
+            audit_telemetry(&format!("{row} {reading}"));
+        }
     }
 }

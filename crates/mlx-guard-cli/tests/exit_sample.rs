@@ -179,6 +179,23 @@ fn allocate_then_exit(directory: &Path, mode: Mode, run: usize) -> ExitRun {
     }))
     .expect("the final report must validate");
 
+    audit_telemetry(&format!(
+        "I33 allocate_then_exit mode={mode:?} run={run} first_band_ms={:?} first_allocation_sample_ms={:?} watchdog_ms=200 code={:?}",
+        report
+            .transitions
+            .iter()
+            .find(|record| record.from == PolicyState::Normal && record.to == PolicyState::Warning)
+            .map(|record| record.at_ms),
+        report
+            .samples
+            .iter()
+            .find(|window| matches!(
+                window.aggregate_footprint_bytes,
+                Observed::Available { value } if value >= ALLOCATION_BYTES
+            ))
+            .map(|window| window.captured_at_ms),
+        status.code()
+    ));
     // Preconditions: the run held its memory (in the band, when enforcing). A failure here is
     // the machine, not the bug these tests look for.
     match mode {
@@ -268,7 +285,9 @@ fn only_a_value_of_one_requires_the_exit_window() {
 /// 0, so read it before trusting one.
 fn require_the_window_where_asked(runs: &[ExitRun], mode: Mode) {
     let raced = raced_count(runs);
-    eprintln!("{mode:?}: {raced} of {RUNS} runs hit the exit window");
+    audit_telemetry(&format!(
+        "I34 require_the_window_where_asked {mode:?}: {raced} of {RUNS} runs hit the exit window"
+    ));
     if exit_race_required(std::env::var_os(REQUIRE_EXIT_RACE).as_deref()) {
         assert!(
             raced >= 1,
@@ -386,4 +405,11 @@ fn an_observed_command_that_exits_keeps_its_exit_code_and_records_no_transition(
         wrong.join("\n")
     );
     require_the_window_where_asked(runs, Mode::Observe);
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::stderr()
+        .write_all(format!("\naudit-telemetry: {line}\n").as_bytes())
+        .ok();
 }

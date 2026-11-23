@@ -98,6 +98,13 @@ fn anonymous_allocation_and_release_match_the_predeclared_reference_bounds() {
     send(&mut input, "allocate");
     read_phase(&mut output, "ALLOCATED");
     let allocated = sampler.sample_native(&inventory, epoch).clone();
+    audit_telemetry(&format!(
+        "anonymous_allocation_and_release_match_the_predeclared_reference_bounds allocated_window_us={:?}",
+        allocated
+            .finished_at
+            .checked_sub(allocated.started_at)
+            .map(|d| d.as_micros())
+    ));
     let allocated_delta = complete_bytes(&allocated).saturating_sub(baseline);
     let magnitude_error = allocated_delta.abs_diff(ALLOCATION_BYTES);
     assert!(
@@ -117,6 +124,13 @@ fn anonymous_allocation_and_release_match_the_predeclared_reference_bounds() {
     send(&mut input, "release");
     read_phase(&mut output, "RELEASED");
     let released = sampler.sample_native(&inventory, epoch).clone();
+    audit_telemetry(&format!(
+        "anonymous_allocation_and_release_match_the_predeclared_reference_bounds released_window_us={:?}",
+        released
+            .finished_at
+            .checked_sub(released.started_at)
+            .map(|d| d.as_micros())
+    ));
     let release_residual = complete_bytes(&released).saturating_sub(baseline);
     assert!(
         release_residual <= ALLOCATION_BYTES / 100,
@@ -207,6 +221,10 @@ fn bounded_ramp_exposes_incremental_growth_instead_of_one_immediate_allocation()
         );
         thread::sleep(Duration::from_millis(5));
     };
+    audit_telemetry(&format!(
+        "#29 bounded_ramp_exposes_incremental_growth_instead_of_one_immediate_allocation found_ms={} window_ms=1000 deadline_ms=3000 growth={intermediate} ceiling={CEILING_BYTES}",
+        epoch.elapsed().as_millis()
+    ));
     assert!(intermediate < CEILING_BYTES);
 
     process.kill_group().unwrap();
@@ -261,11 +279,19 @@ fn targeted_sampling_observes_real_child_churn_without_growing_history() {
     let epoch = Instant::now();
     let deadline = Instant::now() + Duration::from_millis(1_800);
     let mut saw_child = false;
+    let mut audit_samples = 0_u32;
+    let mut audit_multi = 0_u32;
     while Instant::now() < deadline && process.try_wait_root().unwrap().is_none() {
         let sample = sampler.sample_native(&inventory, epoch);
         saw_child |= sample.members.len() > 1;
+        audit_samples += 1;
+        audit_multi += u32::from(sample.members.len() > 1);
         thread::sleep(Duration::from_millis(2));
     }
+    audit_telemetry(&format!(
+        "#30 targeted_sampling_observes_real_child_churn_without_growing_history saw_child={saw_child} multi_member_samples={audit_multi} floor=1 samples={audit_samples} loop_ms={} window_ms=1800",
+        epoch.elapsed().as_millis()
+    ));
     assert!(saw_child);
     assert!(sampler.history_len() <= sampler.history_capacity());
 }
@@ -288,6 +314,12 @@ fn sixteen_member_group_sample_window_p95_stays_within_ten_milliseconds() {
     windows.sort_unstable();
     let p95 = windows[47];
     eprintln!("sixteen_member_sample_window_p95={p95:?}");
+    audit_telemetry(&format!(
+        "sixteen_member_group_sample_window_p95_stays_within_ten_milliseconds total_ms={} p95_us={} max_us={}",
+        epoch.elapsed().as_millis(),
+        p95.as_micros(),
+        windows[49].as_micros()
+    ));
     // Sixteen CPU-stalling members starve the sampler thread on the 3 vCPU CI runner; 50 ms still
     // catches serial per-member waits, and reference calibration proves the published 10 ms bound.
     assert!(p95 <= Duration::from_millis(50), "p95={p95:?}");
@@ -791,4 +823,13 @@ fn pid_churn_sampler_rss_stays_bounded_despite_many_distinct_children() {
         "history_len={}",
         sampler.history_len()
     );
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

@@ -110,13 +110,20 @@ fn wait_until_gone(pid: i32) {
 
 fn assert_stays_alive(pid: i32) {
     let deadline = Instant::now() + Duration::from_millis(250);
+    let audit_t0 = Instant::now();
+    let mut audit_probes = 0_u32;
     while Instant::now() < deadline {
+        audit_probes += 1;
         assert!(
             process_exists(pid),
             "process {pid} received an endpoint-only signal"
         );
         thread::sleep(Duration::from_millis(10));
     }
+    audit_telemetry(&format!(
+        "#47 checkpoint_signal_reaches_only_the_negotiated_endpoint probes={audit_probes} observed_ms={} window_ms=250",
+        audit_t0.elapsed().as_millis()
+    ));
 }
 
 #[test]
@@ -192,6 +199,7 @@ fn piped_stdio_round_trips_without_becoming_control_data() {
     // Catches stdio inheritance hardcoding or parsing child output as supervisor control frames.
     let mut options = fixture("allocate", 1_000);
     options.stdin = StdioMode::Piped;
+    let audit_t0 = Instant::now();
     let mut process = OwnedProcess::launch(&options).unwrap();
     let mut input = process.take_stdin().unwrap();
     let mut output = BufReader::new(process.take_stdout().unwrap());
@@ -201,6 +209,10 @@ fn piped_stdio_round_trips_without_becoming_control_data() {
     input.write_all(b"allocate\nrelease\nexit\n").unwrap();
     input.flush().unwrap();
     let remainder = read_all(output);
+    audit_telemetry(&format!(
+        "#44 piped_stdio_round_trips_without_becoming_control_data exchange_ms={} wall_ms=1000",
+        audit_t0.elapsed().as_millis()
+    ));
     assert_eq!(remainder, "ALLOCATED\nRELEASED\nEXIT\n");
     assert_eq!(process.wait_root().unwrap(), RootOutcome::Exited(0));
 }
@@ -346,6 +358,10 @@ fn dropping_an_owned_process_does_not_wait_for_a_root_that_left_its_group() {
     drop(process);
     let elapsed = started.elapsed();
     let alive = process_exists(root);
+    audit_telemetry(&format!(
+        "#45 dropping_an_owned_process_does_not_wait_for_a_root_that_left_its_group drop_ms={} bound_ms=4000 alive_after={alive}",
+        elapsed.as_millis()
+    ));
     assert!(
         elapsed < Duration::from_secs(4),
         "drop waited {elapsed:?} for a root out of the group kill's reach (alive after: {alive})"
@@ -390,8 +406,14 @@ fn repeated_terminal_signal_routes_through_policy_to_group_kill() {
         process.forward_terminal_signal(term).unwrap(),
         SignalResult::Delivered
     );
+    let audit_t0 = Instant::now();
     thread::sleep(Duration::from_millis(20));
+    let audit_slept_us = audit_t0.elapsed().as_micros();
     assert_eq!(process.try_wait_root().unwrap(), None);
+    audit_telemetry(&format!(
+        "#46 repeated_terminal_signal_routes_through_policy_to_group_kill slept_us={audit_slept_us} sleep_ms=20 check_at_us={}",
+        audit_t0.elapsed().as_micros()
+    ));
     assert_eq!(
         policy.apply(Event::ExternalSignal {
             at: Duration::from_millis(2),
@@ -518,4 +540,13 @@ fn fixture_watchdog_ends_the_fixture_when_its_stderr_is_full() {
         "the filler wrote 1 MiB into an unread pipe"
     );
     assert_eq!(status.code(), Some(124));
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

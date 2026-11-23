@@ -477,6 +477,9 @@ fn real_churn_double_fork_and_root_zombie_keep_bound_identities() {
         .identity;
     let mut tracker = IdentityTracker::new(root, churn.process_group_id()).unwrap();
     let deadline = Instant::now() + Duration::from_millis(1_800);
+    let audit_loop_t0 = Instant::now();
+    let mut audit_samples = 0_u32;
+    let mut audit_multi = 0_u32;
     let mut saw_child = false;
     while Instant::now() < deadline && churn.try_wait_root().unwrap().is_none() {
         let frame = tracker.update(inventory.snapshot().unwrap());
@@ -484,8 +487,20 @@ fn real_churn_double_fork_and_root_zombie_keep_bound_identities() {
             .owned_members
             .iter()
             .any(|member| member.identity != root);
+        audit_samples += 1;
+        if frame
+            .owned_members
+            .iter()
+            .any(|member| member.identity != root)
+        {
+            audit_multi += 1;
+        }
         thread::sleep(Duration::from_millis(5));
     }
+    audit_telemetry(&format!(
+        "#33 real_churn_double_fork_and_root_zombie_keep_bound_identities saw_child={saw_child} multi_member_samples={audit_multi} floor=1 samples={audit_samples} loop_ms={} window_ms=1800",
+        audit_loop_t0.elapsed().as_millis()
+    ));
     assert!(saw_child);
     drop(churn);
 
@@ -560,12 +575,20 @@ fn setsid_escape_and_cleanup_survivors_are_reported_without_unrelated_signals() 
     assert_eq!(tracker.escaped_count(), 1);
     drop(escaped);
     assert!(process_exists(escaped_pid));
+    let audit_wait_t0 = Instant::now();
     let report = wait_for_owned_group_empty(
         &inventory,
         &mut tracker,
         Duration::from_millis(50),
         Duration::from_millis(5),
     );
+    audit_telemetry(&format!(
+        "#35 setsid_escape_and_cleanup_survivors_are_reported_without_unrelated_signals group_empty={} survivors={} complete={} wait_ms={} bound_ms=50",
+        report.owned_group_empty,
+        report.survivors.len(),
+        report.complete,
+        audit_wait_t0.elapsed().as_millis()
+    ));
     assert!(report.owned_group_empty);
     assert!(!report.complete);
     assert!(report.escaped_identities.contains(&escaped_identity));
@@ -584,12 +607,19 @@ fn setsid_escape_and_cleanup_survivors_are_reported_without_unrelated_signals() 
         .identity;
     let mut tracker = IdentityTracker::new(root, resistant.process_group_id()).unwrap();
     resistant.terminate_group().unwrap();
+    let audit_wait_t0 = Instant::now();
     let report = wait_for_owned_group_empty(
         &inventory,
         &mut tracker,
         Duration::from_millis(50),
         Duration::from_millis(5),
     );
+    audit_telemetry(&format!(
+        "#36 setsid_escape_and_cleanup_survivors_are_reported_without_unrelated_signals group_empty={} survivors={} wait_ms={} window_ms=50",
+        report.owned_group_empty,
+        report.survivors.len(),
+        audit_wait_t0.elapsed().as_millis()
+    ));
     assert!(!report.owned_group_empty);
     assert!(report.survivors.contains(&root));
     resistant.kill_group().unwrap();
@@ -601,4 +631,13 @@ fn setsid_escape_and_cleanup_survivors_are_reported_without_unrelated_signals() 
         Duration::from_millis(5),
     );
     assert!(report.owned_group_empty);
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

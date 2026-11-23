@@ -326,12 +326,21 @@ fn detach_leaves_the_run_alone_and_records_the_orphan_time() {
     kill_and_reap(&mut launcher);
 
     // Positive control: the orphaned supervisor keeps supervising instead of shutting down.
+    let audit_t0 = Instant::now();
     thread::sleep(Duration::from_secs(1));
+    let audit_slept = audit_t0.elapsed();
     assert!(
         process_exists(supervisor),
         "a detached supervisor must outlive the parent that launched it"
     );
     let report = read_report_within(&report_path, Duration::from_secs(10));
+    audit_telemetry(&format!(
+        "I29 detach_leaves_the_run_alone_and_records_the_orphan_time slept_ms={} sleep_ms=1000 report_after_ms={} parent_exited_at_ms={:?} outcome_at_ms={} child_ms=5000",
+        audit_slept.as_millis(),
+        audit_t0.elapsed().as_millis(),
+        report.outcome.parent_exited_at_ms,
+        report.outcome.at_ms
+    ));
     wait_until_gone(supervisor);
     assert_eq!(
         report.outcome.kind,
@@ -401,6 +410,7 @@ fn a_dead_stdout_reader_does_not_turn_the_result_into_a_panic() {
     // the default SIGPIPE disposition in children, so a writing worker would die 141 of its own.
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
+    let audit_t0 = Instant::now();
     let mut guard = Command::new(SUPERVISOR)
         .args([
             "run",
@@ -423,6 +433,11 @@ fn a_dead_stdout_reader_does_not_turn_the_result_into_a_panic() {
     );
 
     let status = guard.wait().expect("supervisor must terminate");
+    audit_telemetry(&format!(
+        "a_dead_stdout_reader_does_not_turn_the_result_into_a_panic code={:?} ms={}",
+        status.code(),
+        audit_t0.elapsed().as_millis()
+    ));
 
     assert_eq!(
         status.code(),
@@ -615,9 +630,28 @@ fn observe_escalates_to_kill_when_the_group_ignores_the_parent_exit_term() {
         ],
         "{report:#?}"
     );
+    audit_telemetry(&format!(
+        "I31 observe_escalates_to_kill_when_the_group_ignores_the_parent_exit_term child_status={:?} expected=None signal_at_ms={:?} outcome_at_ms={}",
+        report.outcome.child_status,
+        report
+            .signals
+            .iter()
+            .map(|signal| signal.at_ms)
+            .collect::<Vec<_>>(),
+        report.outcome.at_ms
+    ));
     // The escalation returns the moment the KILL is out, so the root this run killed is reaped
     // only by the later cleanup on drop — after the report was written, hence no status here.
     assert_eq!(report.outcome.child_status, None, "{report:#?}");
     assert_eq!(report.outcome.owned_group_survivors, Some(true));
     assert!(report.outcome.parent_exited_at_ms.is_some(), "{report:#?}");
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

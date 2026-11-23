@@ -81,10 +81,31 @@ fn assert_only_launch_banner_traced(stderr: &[u8], trace: &std::path::Path) {
     check_only_launch_banner(stderr, &format!("\nnotice writer trace:\n{events}"));
 }
 
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+#[cfg(target_os = "macos")]
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
+}
+
 #[cfg(target_os = "macos")]
 fn check_only_launch_banner(stderr: &[u8], trace: &str) {
     let text = String::from_utf8_lossy(stderr);
     let lines: Vec<&str> = text.lines().collect();
+    audit_telemetry(&format!(
+        "I13 {} stderr_lines={} banner_first={} fit_second={}",
+        std::thread::current()
+            .name()
+            .unwrap_or("check_only_launch_banner"),
+        lines.len(),
+        lines
+            .first()
+            .is_some_and(|line| line.contains("emergency KILL")),
+        lines.get(1).is_some_and(|line| is_fit_line(line))
+    ));
     assert!(
         lines.len() == 1 || (lines.len() == 2 && is_fit_line(lines[1])),
         "a successful run's stderr must be only the launch banner and the fit line: {text:?}{trace}"
@@ -415,6 +436,7 @@ fn wait_or_fail_on_hang(mut run: TrappedRun) -> std::process::Output {
         );
         thread::sleep(Duration::from_millis(5));
     };
+    let audit_reaped = Instant::now();
     let drained_by = Instant::now() + Duration::from_secs(2);
     let mut streams = [Vec::new(), Vec::new()];
     for _ in 0..2 {
@@ -423,6 +445,10 @@ fn wait_or_fail_on_hang(mut run: TrappedRun) -> std::process::Output {
             .expect("hang: the command still held the supervisor's output open 2 s after it ended");
         streams[index] = bytes;
     }
+    audit_telemetry(&format!(
+        "wait_or_fail_on_hang drained_ms={}",
+        audit_reaped.elapsed().as_millis()
+    ));
     run.supervisor = None;
     let [stdout, stderr] = streams;
     std::process::Output {
@@ -747,6 +773,10 @@ fn observe_supervises_a_real_child_and_writes_a_valid_report() {
     // leave a short command with a single sample), so the line is checked against the report's
     // own count.
     let n = report.samples.len();
+    audit_telemetry(&format!(
+        "I20 observe_supervises_a_real_child_and_writes_a_valid_report samples={n} floor=1 outcome_at_ms={} child_ms=500 interval_ms=10",
+        report.outcome.at_ms
+    ));
     let noun = if n == 1 { "sample" } else { "samples" };
     assert_eq!(
         summary,
@@ -817,6 +847,11 @@ fn observe_prints_a_single_sample_in_the_singular() {
         &fs::read_to_string(&report_path).expect("final report must exist"),
     )
     .unwrap();
+    audit_telemetry(&format!(
+        "I21 observe_prints_a_single_sample_in_the_singular samples={} expected=1 outcome_at_ms={} interval_ms=4000 child_ms=2000",
+        report.samples.len(),
+        report.outcome.at_ms
+    ));
     assert_eq!(
         report.samples.len(),
         1,
@@ -889,6 +924,15 @@ fn run_wall_limit_drives_policy_term_and_returns_intervention_status() {
         report.checkpoint.status,
         mlx_guard_core::CheckpointStatus::NotNegotiated
     );
+    audit_telemetry(&format!(
+        "I22 run_wall_limit_drives_policy_term_and_returns_intervention_status term_at_ms={:?} wall_ms=30 outcome_at_ms={} child_ms=1000",
+        report
+            .signals
+            .iter()
+            .find(|signal| signal.signal == 15)
+            .map(|signal| signal.at_ms),
+        report.outcome.at_ms
+    ));
     // Red if the wall row names the wrong limit, or the TERM time is taken from anything but
     // the TERM record.
     let term = report
@@ -1080,6 +1124,16 @@ fn run_emergency_footprint_breach_kills_the_owned_group() {
         &fs::read_to_string(report_path).expect("final report must exist"),
     )
     .unwrap();
+    audit_telemetry(&format!(
+        "I23 run_emergency_footprint_breach_kills_the_owned_group kill_at_ms={:?} samples={} outcome_at_ms={} child_ms=1000",
+        report
+            .signals
+            .iter()
+            .find(|signal| signal.signal == 9)
+            .map(|signal| signal.at_ms),
+        report.samples.len(),
+        report.outcome.at_ms
+    ));
     assert_eq!(
         report.outcome.kind,
         mlx_guard_core::TerminalKind::PolicyIntervention
@@ -1150,14 +1204,23 @@ fn first_sigint_is_forwarded_and_the_child_signal_status_is_preserved() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("the command must run");
+    let audit_spawned = Instant::now();
     wait_for_first_sample(&journal_path);
+    let audit_sample_after = audit_spawned.elapsed();
 
     let delivered = Command::new("/bin/kill")
         .args(["-INT", &guard.id().to_string()])
         .status()
         .expect("SIGINT delivery command must run");
     assert!(delivered.success());
+    let audit_sent_after = audit_spawned.elapsed();
     let output = guard.wait_with_output().expect("supervisor must terminate");
+    audit_telemetry(&format!(
+        "first_sigint_is_forwarded_and_the_child_signal_status_is_preserved first_sample_ms={} sent_after_ms={} code={:?}",
+        audit_sample_after.as_millis(),
+        audit_sent_after.as_millis(),
+        output.status.code()
+    ));
 
     assert_eq!(output.status.code(), Some(130));
     // Red if a forwarded SIGINT is told as a signal from somewhere else.
@@ -1213,7 +1276,12 @@ fn repeated_terminal_signal_escalates_to_group_kill() {
 
     signal_supervisor("-TERM", run.supervisor_pid());
     wait_for_first_signal_record(&journal_path);
+    let audit_recorded = Instant::now();
     signal_supervisor("-INT", run.supervisor_pid());
+    audit_telemetry(&format!(
+        "repeated_terminal_signal_escalates_to_group_kill second_signal_gap_ms={}",
+        audit_recorded.elapsed().as_millis()
+    ));
     let output = wait_or_fail_on_hang(run);
 
     let report = assert_second_signal_kill(&output, &report_path);
@@ -1262,7 +1330,12 @@ fn repeated_sigint_escalates_to_group_kill() {
 
     signal_supervisor("-INT", run.supervisor_pid());
     wait_for_first_signal_record(&journal_path);
+    let audit_recorded = Instant::now();
     signal_supervisor("-INT", run.supervisor_pid());
+    audit_telemetry(&format!(
+        "repeated_sigint_escalates_to_group_kill second_signal_gap_ms={}",
+        audit_recorded.elapsed().as_millis()
+    ));
     let output = wait_or_fail_on_hang(run);
 
     let report = assert_second_signal_kill(&output, &report_path);
@@ -1324,6 +1397,14 @@ fn back_to_back_terminal_signals_escalate_to_group_kill() {
     // The supervisor can record INT first although TERM was sent first (seen once in 30 runs), and
     // the policy counts terminal signals without caring which is which.
     let signals: Vec<u8> = report.signals.iter().map(|signal| signal.signal).collect();
+    audit_telemetry(&format!(
+        "I19 back_to_back_terminal_signals_escalate_to_group_kill signals={signals:?} at_ms={:?}",
+        report
+            .signals
+            .iter()
+            .map(|signal| signal.at_ms)
+            .collect::<Vec<_>>()
+    ));
     assert!(
         matches!(signals.as_slice(), [15 | 2, 9]),
         "expected the first terminal signal (15 or 2) passed on, then KILL: {signals:?}"
@@ -1345,7 +1426,9 @@ fn observe_forwards_sigterm_without_turning_it_into_policy_intervention() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("the command must run");
+    let audit_spawned = Instant::now();
     wait_for_first_sample(&journal_path);
+    let audit_sample_after = audit_spawned.elapsed();
     assert!(
         Command::new("/bin/kill")
             .args(["-TERM", &guard.id().to_string()])
@@ -1353,7 +1436,14 @@ fn observe_forwards_sigterm_without_turning_it_into_policy_intervention() {
             .expect("SIGTERM delivery command must run")
             .success()
     );
+    let audit_sent_after = audit_spawned.elapsed();
     let output = guard.wait_with_output().expect("supervisor must terminate");
+    audit_telemetry(&format!(
+        "observe_forwards_sigterm_without_turning_it_into_policy_intervention first_sample_ms={} sent_after_ms={} code={:?}",
+        audit_sample_after.as_millis(),
+        audit_sent_after.as_millis(),
+        output.status.code()
+    ));
 
     assert_eq!(output.status.code(), Some(143));
     // Observe prints no banner, so the plain lines are the whole of stderr. Red if observe's
@@ -1518,9 +1608,16 @@ fn late_storage_loss_does_not_stop_wall_time_intervention() {
         );
         thread::sleep(Duration::from_millis(1));
     }
+    let audit_removed_at = started.elapsed();
     fs::remove_file(&journal_path).expect("the test must remove only its private journal");
 
     let output = guard.wait_with_output().expect("supervisor must terminate");
+    audit_telemetry(&format!(
+        "late_storage_loss_does_not_stop_wall_time_intervention removed_after_ms={} total_ms={} code={:?}",
+        audit_removed_at.as_millis(),
+        started.elapsed().as_millis(),
+        output.status.code()
+    ));
     assert_eq!(output.status.code(), Some(74));
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2145,9 +2242,16 @@ mod band {
         // The same footprint that enters the band under `run --max-footprint 70MiB`, then a few
         // more samples, so a line printed at the crossing has had time to arrive.
         run.wait_for_sample(|value| value >= WARNING_BYTES);
+        let audit_t0 = Instant::now();
         thread::sleep(Duration::from_millis(200));
+        let audit_slept = audit_t0.elapsed();
         run.send("release");
         let (code, stderr) = run.finish();
+        super::audit_telemetry(&format!(
+            "I27 observe_prints_no_band_line slept_ms={} sleep_ms=200 code={code:?} stderr_bytes={}",
+            audit_slept.as_millis(),
+            stderr.len()
+        ));
 
         assert_eq!(code, Some(0), "stderr: {stderr:?}");
         assert!(stderr.is_empty(), "observe wrote to stderr: {stderr:?}");
@@ -2239,6 +2343,13 @@ mod fit {
         let estimate = recorded_estimate(&prelaunch);
         let text = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = text.lines().collect();
+        super::audit_telemetry(&format!(
+            "I39 a_limit_beyond_this_machine_prints_the_fit_line_and_still_runs stderr_lines={} expected=2 banner_first={}",
+            lines.len(),
+            lines
+                .first()
+                .is_some_and(|line| line.contains("emergency KILL"))
+        ));
         assert_eq!(lines.len(), 2, "the banner, then the fit line: {text:?}");
         assert!(lines[0].contains("emergency KILL"), "{text:?}");
         assert_eq!(lines[1], beyond_line(estimate));
@@ -2268,6 +2379,13 @@ mod fit {
         );
         let text = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = text.lines().collect();
+        super::audit_telemetry(&format!(
+            "I39 a_modest_limit_prints_no_fit_line stderr_lines={} expected=1 banner_first={}",
+            lines.len(),
+            lines
+                .first()
+                .is_some_and(|line| line.contains("emergency KILL"))
+        ));
         assert_eq!(lines.len(), 1, "the banner alone: {text:?}");
         assert!(lines[0].contains("emergency KILL"), "{text:?}");
         let prelaunch = read_report(&report_path)

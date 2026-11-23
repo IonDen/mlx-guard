@@ -195,6 +195,11 @@ fn spoofed_acknowledgement_cannot_suppress_real_term() {
             .contains(&CheckpointRejection::WrongNonce)
         {
             saw_spoof = true;
+            audit_telemetry(&format!(
+                "spoofed_acknowledgement_cannot_suppress_real_term rejections={} event_none={}",
+                observation.rejections.len(),
+                observation.event.is_none()
+            ));
             assert_eq!(observation.event, None);
             assert_eq!(engine.policy().state(), PolicyState::CheckpointRequested);
         }
@@ -243,6 +248,10 @@ fn blocked_checkpoint_cannot_extend_the_policy_deadline() {
         engine.handle(Event::Tick { at: ms(60) }).as_slice(),
         [Action::SendTerm { .. }]
     ));
+    audit_telemetry(&format!(
+        "#40 blocked_checkpoint_cannot_extend_the_policy_deadline tick_us={} bound_ms=1000 worker_block_ms=1500",
+        started.elapsed().as_micros()
+    ));
     assert!(started.elapsed() < Duration::from_secs(1));
 
     drop(engine);
@@ -280,6 +289,10 @@ fn ignored_term_reaches_policy_deadline_then_kill_without_blocking_group_checks(
     assert!(engine.actuator().owned_group_exists().unwrap());
     // The ignore-term worker stays alive for its full 2 s wall, so a group check that blocks on
     // worker exit takes at least that long; one second separates it from a nonblocking check.
+    audit_telemetry(&format!(
+        "#41 ignored_term_reaches_policy_deadline_then_kill_without_blocking_group_checks group_check_us={} bound_ms=1000 worker_wall_ms=2000",
+        checked_at.elapsed().as_micros()
+    ));
     assert!(checked_at.elapsed() < Duration::from_secs(1));
     assert_eq!(engine.policy().next_deadline(), Some(ms(50)));
     assert_eq!(
@@ -352,5 +365,21 @@ fn threshold_decision_to_first_signal_p95_stays_within_ten_milliseconds() {
     } else {
         ms(50)
     };
+    audit_telemetry(&format!(
+        "#42 threshold_decision_to_first_signal_p95_stays_within_ten_milliseconds p95_us={} min_us={} max_us={} bound_ms={} runs={REPETITIONS}",
+        p95.as_micros(),
+        latencies[0].as_micros(),
+        latencies[REPETITIONS - 1].as_micros(),
+        bound.as_millis()
+    ));
     assert!(p95 <= bound, "first-signal p95 {p95:?} exceeded {bound:?}");
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

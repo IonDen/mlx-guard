@@ -165,6 +165,14 @@ fn a_setsid_escape_is_counted_once_and_an_empty_group_is_not_containment() {
     let (_runtime_lock, result, report, escapees) =
         run_escape_scenario("300ms", &[FIXTURE, "setsid-parent", "1", "4000"]);
     let _cleanup = EscapeeCleanup(escapees.clone());
+    audit_telemetry(&format!(
+        "#56 a_setsid_escape_is_counted_once_and_an_empty_group_is_not_containment detected={} count={:?} samples={} signals={} outcome_at_ms={} wall_ms=300",
+        format!("{:?}", report.escape.detected).replace(' ', ""),
+        report.escape.escaped_count,
+        report.samples.len(),
+        audit_signals(&report),
+        report.outcome.at_ms
+    ));
 
     assert_eq!(escapees.len(), 1, "the fixture published {escapees:?}");
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
@@ -213,6 +221,13 @@ fn a_daemonized_grandchild_is_a_counted_escape() {
         run_escape_scenario("2s", &[FIXTURE, "daemonize", "1", "4000"]);
     let _cleanup = EscapeeCleanup(escapees.clone());
 
+    audit_telemetry(&format!(
+        "a_daemonized_grandchild_is_a_counted_escape detected={:?} count={:?} samples={} escapees={}",
+        report.escape.detected,
+        report.escape.escaped_count,
+        report.samples.len(),
+        escapees.len()
+    ));
     assert_eq!(escapees.len(), 1, "the fixture published {escapees:?}");
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_eq!(
@@ -233,6 +248,12 @@ fn a_plain_double_fork_reparents_without_escaping() {
     // process group, so the group's own termination still reaches it.
     let (_runtime_lock, result, report, _escapees) =
         run_escape_scenario("300ms", &[FIXTURE, "double-fork", "1", "800"]);
+    audit_telemetry(&format!(
+        "#58 a_plain_double_fork_reparents_without_escaping signals={} outcome_at_ms={} wall_ms=300 fixture_wall_ms=800 detected={}",
+        audit_signals(&report),
+        report.outcome.at_ms,
+        format!("{:?}", report.escape.detected).replace(' ', "")
+    ));
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_eq!(
@@ -267,6 +288,12 @@ fn a_flood_past_the_evidence_cap_counts_every_escape_exactly() {
     let (_runtime_lock, result, report, escapees) =
         run_escape_scenario("3s", &[FIXTURE, "escape-flood", members.as_str(), "5000"]);
     let _cleanup = EscapeeCleanup(escapees.clone());
+    audit_telemetry(&format!(
+        "#59 a_flood_past_the_evidence_cap_counts_every_escape_exactly count={:?} expected={FLOOD_MEMBERS} published={} samples={}",
+        report.escape.escaped_count,
+        escapees.len(),
+        report.samples.len()
+    ));
 
     assert_eq!(
         u64::try_from(escapees.len()).unwrap(),
@@ -307,4 +334,29 @@ fn a_flood_past_the_evidence_cap_counts_every_escape_exactly() {
         }),
         "{report:#?}"
     );
+}
+
+/// Every recorded signal as `number@at_ms:result:reason`, comma-joined, for one
+/// `audit-telemetry:` value.
+fn audit_signals(report: &ReportV1) -> String {
+    report
+        .signals
+        .iter()
+        .map(|signal| {
+            format!(
+                "{}@{}:{:?}:{:?}",
+                signal.signal, signal.at_ms, signal.result, signal.reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

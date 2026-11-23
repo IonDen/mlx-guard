@@ -94,10 +94,18 @@ fn setsid_churn_accumulates_distinct_escapes_with_the_evidence_cap_held() {
     let mut sampler = soak_sampler_for(&process, inventory);
     let epoch = Instant::now();
     let deadline = Instant::now() + Duration::from_secs(8);
+    let mut audit_samples = 0_u32;
     while Instant::now() < deadline && sampler.escaped_count() < 80 {
         sampler.sample_native(&inventory, epoch);
+        audit_samples += 1;
         thread::sleep(Duration::from_millis(2));
     }
+    audit_telemetry(&format!(
+        "#64 setsid_churn_accumulates_distinct_escapes_with_the_evidence_cap_held escapes={} floor=80 samples={audit_samples} ms={} deadline_ms=8000 evidence_len={} cap=64",
+        sampler.escaped_count(),
+        epoch.elapsed().as_millis(),
+        sampler.escaped_evidence_len()
+    ));
     assert!(
         sampler.escaped_count() >= 80,
         "distinct escapes never reached the floor: escaped_count={}",
@@ -826,4 +834,13 @@ fn real_binary_supervising_escaping_churn_stays_bounded() {
             "binary cpu_percent={cpu_percent:.3} exceeds ceiling {SOAK_MAX_BINARY_CPU_PERCENT}"
         );
     }
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

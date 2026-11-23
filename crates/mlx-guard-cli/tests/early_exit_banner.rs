@@ -230,11 +230,25 @@ fn run_guard(
     if let Some(library) = interposer {
         command.env(INSERT_ENV, library);
     }
+    let audit_t0 = Instant::now();
     let mut supervisor = command.spawn().expect("the supervisor must start");
     let status = wait_within_deadline(&mut supervisor);
+    let audit_run = audit_t0.elapsed();
 
     let stdout = fs::read_to_string(&stdout_path).unwrap();
     let stderr = fs::read_to_string(&stderr_path).unwrap();
+    audit_telemetry(&format!(
+        "I35 {} run={name} run_ms={} bound_ms={} code={:?} stderr_lines={} banner_first={}",
+        thread::current().name().unwrap_or("run_guard"),
+        audit_run.as_millis(),
+        RUN_DEADLINE.as_millis(),
+        status.code(),
+        stderr.lines().count(),
+        stderr
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains(BANNER_WORDS))
+    ));
     let held = fs::read_to_string(&marker).ok();
     let trace_text =
         fs::read_to_string(&trace).unwrap_or_else(|error| format!("unreadable: {error}"));
@@ -458,4 +472,13 @@ fn the_supervised_command_does_not_inherit_the_interposer() {
         .as_ref()
         .unwrap_or_else(|| panic!("the run must write its report:\n{observed}"));
     assert_eq!(report.samples.len(), 0, "{observed}");
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

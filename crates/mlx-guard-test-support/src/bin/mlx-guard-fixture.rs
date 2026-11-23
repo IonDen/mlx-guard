@@ -285,6 +285,7 @@ fn run_ramp(limits: FixtureLimits) -> Result<(), RunError> {
 }
 
 fn run_cpu_stall(limits: FixtureLimits) -> Result<(), RunError> {
+    let audit_started = Instant::now();
     write_phase(&format!(
         "READY mode=cpu-stall bytes={}",
         limits.allocation_bytes()
@@ -295,10 +296,23 @@ fn run_cpu_stall(limits: FixtureLimits) -> Result<(), RunError> {
     while Instant::now() < deadline {
         iterations = black_box(iterations.wrapping_add(1));
     }
+    let audit_elapsed = audit_started.elapsed();
+    io::stderr()
+        .write_all(
+            format!(
+                "audit-telemetry: cpu-stall loop_end_us={} slack_us={} wall_ms={}\n",
+                audit_elapsed.as_micros(),
+                limits.wall_time().saturating_sub(audit_elapsed).as_micros(),
+                limits.wall_time().as_millis()
+            )
+            .as_bytes(),
+        )
+        .ok();
     write_phase(&format!("DONE iterations={iterations}"))
 }
 
 fn run_fanout_stall(limits: FixtureLimits) -> Result<(), RunError> {
+    let audit_started = Instant::now();
     let member_count = usize::try_from(limits.allocation_bytes())
         .map_err(|_| RunError::fixture("member count does not fit usize"))?;
     if !(2..=16).contains(&member_count) {
@@ -320,6 +334,16 @@ fn run_fanout_stall(limits: FixtureLimits) -> Result<(), RunError> {
     }
     black_box(&children);
     write_phase(&format!("READY mode=fanout-stall members={member_count}"))?;
+    io::stderr()
+        .write_all(
+            format!(
+                "audit-telemetry: fanout-stall ready_us={} wall_ms={}\n",
+                audit_started.elapsed().as_micros(),
+                limits.wall_time().as_millis()
+            )
+            .as_bytes(),
+        )
+        .ok();
     loop {
         thread::park();
     }

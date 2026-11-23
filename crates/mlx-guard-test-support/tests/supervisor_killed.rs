@@ -273,13 +273,20 @@ fn sigkilled_supervisor_orphans_its_group_and_leaves_only_the_journal() {
     // The command outlives its supervisor, held for half a second so a delayed group kill
     // (a watcher that fires shortly after the supervisor dies) would still be caught.
     let observed_until = Instant::now() + Duration::from_millis(500);
+    let audit_t0 = Instant::now();
+    let mut audit_probes = 0_u32;
     while Instant::now() < observed_until {
+        audit_probes += 1;
         assert!(
             process_exists(command_pid),
             "the command {command_pid} died with its SIGKILLed supervisor"
         );
         thread::sleep(Duration::from_millis(10));
     }
+    audit_telemetry(&format!(
+        "#66 sigkilled_supervisor_orphans_its_group_and_leaves_only_the_journal probes={audit_probes} observed_ms={} window_ms=500",
+        audit_t0.elapsed().as_millis()
+    ));
     let (parent, group) = parent_and_group(command_pid);
     assert_eq!(parent, 1, "the orphan must be reparented to launchd");
     assert_eq!(
@@ -304,4 +311,13 @@ fn sigkilled_supervisor_orphans_its_group_and_leaves_only_the_journal() {
     // Cleanup: the guard removes the orphan, and the orphan is then gone.
     drop(orphan_group);
     wait_until_gone(command_pid);
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

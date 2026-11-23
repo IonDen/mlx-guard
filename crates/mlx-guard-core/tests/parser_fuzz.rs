@@ -58,6 +58,11 @@ fn checkpoint_parsers_reject_bounded_deterministic_fuzz_without_panicking() {
         let _ = protocol.ingest(Duration::from_nanos(1), &input);
         assert!(protocol.buffered_bytes() <= MAX_CHECKPOINT_INPUT);
     }
+    audit_telemetry(&format!(
+        "C2 checkpoint_parsers_reject_bounded_deterministic_fuzz_without_panicking elapsed_ms={} bound_ms={}",
+        started.elapsed().as_millis(),
+        MAX_CASE_RUNTIME.as_millis()
+    ));
     assert!(started.elapsed() < MAX_CASE_RUNTIME);
 }
 
@@ -90,6 +95,11 @@ fn report_parser_handles_bounded_mutated_and_jsonish_inputs_without_panicking() 
             let _ = ReportV1::from_json(text);
         }
     }
+    audit_telemetry(&format!(
+        "C3 report_parser_handles_bounded_mutated_and_jsonish_inputs_without_panicking elapsed_ms={} bound_ms={}",
+        started.elapsed().as_millis(),
+        MAX_CASE_RUNTIME.as_millis()
+    ));
     assert!(started.elapsed() < MAX_CASE_RUNTIME);
 }
 
@@ -148,6 +158,11 @@ fn journal_recovery_handles_bounded_mutated_records_without_panicking() {
         fuzz_file.sync_data().unwrap();
         let _ = JournalRecovery::read(&fuzz_path).and_then(|recovery| recovery.to_report());
     }
+    audit_telemetry(&format!(
+        "C4 journal_recovery_handles_bounded_mutated_records_without_panicking elapsed_ms={} bound_ms={}",
+        started.elapsed().as_millis(),
+        MAX_CASE_RUNTIME.as_millis()
+    ));
     assert!(started.elapsed() < MAX_CASE_RUNTIME);
 }
 
@@ -175,4 +190,13 @@ impl Drop for TestDirectory {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.0).unwrap();
     }
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

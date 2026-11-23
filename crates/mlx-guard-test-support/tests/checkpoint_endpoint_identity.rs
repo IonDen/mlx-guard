@@ -115,7 +115,10 @@ fn a_checkpoint_endpoint_whose_start_token_no_longer_matches_is_refused_before_d
 
     // The refusal has to be behavioural and not merely a return value: nothing may reach the worker.
     let silence_deadline = Instant::now() + REFUSAL_SILENCE;
+    let audit_silence_t0 = Instant::now();
+    let mut audit_polls = 0_u32;
     while Instant::now() < silence_deadline {
+        audit_polls += 1;
         let poll = channel.poll(epoch.elapsed()).unwrap();
         assert!(
             poll.acknowledgement.is_none(),
@@ -128,6 +131,7 @@ fn a_checkpoint_endpoint_whose_start_token_no_longer_matches_is_refused_before_d
         );
         std::thread::sleep(Duration::from_millis(1));
     }
+    let audit_silence_ms = audit_silence_t0.elapsed().as_millis();
 
     // Positive control, same worker and same in-flight request: the silence above was this fix
     // refusing delivery, not a starved runner that had not got round to acknowledging yet.
@@ -138,6 +142,7 @@ fn a_checkpoint_endpoint_whose_start_token_no_longer_matches_is_refused_before_d
             .unwrap(),
         SignalResult::Delivered
     );
+    let audit_ack_t0 = Instant::now();
     let deadline = Instant::now() + ACKNOWLEDGEMENT_DEADLINE;
     let acknowledgement = loop {
         let poll = channel.poll(epoch.elapsed()).unwrap();
@@ -155,8 +160,23 @@ fn a_checkpoint_endpoint_whose_start_token_no_longer_matches_is_refused_before_d
         );
         std::thread::sleep(Duration::from_millis(1));
     };
+    audit_telemetry(&format!(
+        "#8 a_checkpoint_endpoint_whose_start_token_no_longer_matches_is_refused_before_delivery silence_polls={audit_polls} silence_window_ms={audit_silence_ms} silence_ms={} ack_after_ms={} ack_deadline_ms={}",
+        REFUSAL_SILENCE.as_millis(),
+        audit_ack_t0.elapsed().as_millis(),
+        ACKNOWLEDGEMENT_DEADLINE.as_millis()
+    ));
     assert_eq!(acknowledgement.status, CheckpointWorkerStatus::Completed);
 
     process.kill_group().unwrap();
     process.wait_root().unwrap();
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

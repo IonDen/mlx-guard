@@ -477,6 +477,11 @@ fn argv_markers_never_survive_projection() {
         );
     }
 
+    audit_telemetry(&format!(
+        "C5 argv_markers_never_survive_projection elapsed_ms={} bound_ms={}",
+        started.elapsed().as_millis(),
+        MAX_CASE_RUNTIME.as_millis()
+    ));
     assert!(started.elapsed() < MAX_CASE_RUNTIME);
     let total = ok_count + err_count;
     assert!(
@@ -522,6 +527,11 @@ fn correlation_hash_is_caller_supplied_never_derived() {
         }
     }
 
+    audit_telemetry(&format!(
+        "C6 correlation_hash_is_caller_supplied_never_derived elapsed_ms={} bound_ms={}",
+        started.elapsed().as_millis(),
+        MAX_CASE_RUNTIME.as_millis()
+    ));
     assert!(started.elapsed() < MAX_CASE_RUNTIME);
 }
 
@@ -573,6 +583,11 @@ fn adversarial_run_ids_are_rejected() {
         );
     }
 
+    audit_telemetry(&format!(
+        "C7 adversarial_run_ids_are_rejected elapsed_ms={} bound_ms={}",
+        started.elapsed().as_millis(),
+        MAX_CASE_RUNTIME.as_millis()
+    ));
     assert!(started.elapsed() < MAX_CASE_RUNTIME);
 }
 
@@ -1112,6 +1127,11 @@ fn adversarial_field_values_never_panic_validation() {
         }
     }
 
+    audit_telemetry(&format!(
+        "C8 adversarial_field_values_never_panic_validation elapsed_ms={} bound_ms={}",
+        started.elapsed().as_millis(),
+        MAX_CASE_RUNTIME.as_millis()
+    ));
     assert!(started.elapsed() < MAX_CASE_RUNTIME);
     assert!(
         ok_count > 0,
@@ -1212,4 +1232,13 @@ fn checkpoint_artifact_size_bytes_round_trips_as_a_bare_number() {
             "size_bytes={value}: typed round-trip drifted"
         );
     }
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

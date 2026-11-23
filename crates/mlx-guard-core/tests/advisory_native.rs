@@ -71,6 +71,11 @@ fn advisory_snapshot_p95_stays_inside_one_minimum_sampling_window() {
     durations.sort_unstable();
     let p95 = durations[durations.len() * 95 / 100];
     eprintln!("advisory snapshot p95: {p95:?}");
+    audit_telemetry(&format!(
+        "advisory_snapshot_p95_stays_inside_one_minimum_sampling_window p95_us={} max_us={}",
+        p95.as_micros(),
+        durations[durations.len() - 1].as_micros()
+    ));
     assert!(p95 <= Duration::from_millis(10), "p95={p95:?}");
 }
 
@@ -154,4 +159,14 @@ fn memory_categories_are_typed_unavailable_off_macos() {
             reason: UnavailableReason::NotSupported,
         }
     );
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+#[cfg(target_os = "macos")]
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

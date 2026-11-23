@@ -190,6 +190,13 @@ fn a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention() {
         report,
         hold_record,
     } = run_under_wall_limit(&[FIXTURE, "checkpoint-fail-linger", "1", "5000"]);
+    audit_telemetry(&format!(
+        "#61 a_failed_acknowledgement_from_an_exiting_worker_keeps_the_intervention hold={} signals={} status={:?} outcome_at_ms={} wall_ms=1000",
+        audit_hold(hold_record.as_deref()),
+        audit_signals(&report),
+        report.checkpoint.status,
+        report.outcome.at_ms
+    ));
 
     assert_eq!(
         hold_record.as_deref(),
@@ -266,6 +273,13 @@ fn a_terminal_signal_while_the_group_dies_does_not_fail_the_supervisor() {
         report,
         hold_record,
     } = run_under_wall_limit(&[FIXTURE, "term-held-zombie", "1", "5000"]);
+    audit_telemetry(&format!(
+        "#62 a_terminal_signal_while_the_group_dies_does_not_fail_the_supervisor hold={} signals={} status={:?} outcome_at_ms={} wall_ms=1000",
+        audit_hold(hold_record.as_deref()),
+        audit_signals(&report),
+        report.checkpoint.status,
+        report.outcome.at_ms
+    ));
 
     assert_eq!(
         hold_record.as_deref(),
@@ -327,6 +341,11 @@ fn a_live_term_ignoring_group_still_escalates_to_a_delivered_kill() {
     // `a_refused_group_signal_with_a_live_member_stays_a_failure` in mlx-guard-core.
     let Run { result, report, .. } =
         run_under_wall_limit(&[FIXTURE, "fanout-ignore-term", "2", "5000"]);
+    audit_telemetry(&format!(
+        "#63 a_live_term_ignoring_group_still_escalates_to_a_delivered_kill signals={} outcome_at_ms={} wall_ms=1000",
+        audit_signals(&report),
+        report.outcome.at_ms
+    ));
 
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_eq!(report.outcome.kind, TerminalKind::PolicyIntervention);
@@ -343,4 +362,37 @@ fn a_live_term_ignoring_group_still_escalates_to_a_delivered_kill() {
         ],
         "{report:#?}"
     );
+}
+
+/// The holder's record with spaces and the newline made visible, for one `audit-telemetry:` value.
+fn audit_hold(hold_record: Option<&str>) -> String {
+    hold_record.map_or_else(
+        || "none".to_owned(),
+        |record| record.trim_end().replace(' ', "_"),
+    )
+}
+
+/// Every recorded signal as `number@at_ms:result:reason`, comma-joined, for one
+/// `audit-telemetry:` value.
+fn audit_signals(report: &ReportV1) -> String {
+    report
+        .signals
+        .iter()
+        .map(|signal| {
+            format!(
+                "{}@{}:{:?}:{:?}",
+                signal.signal, signal.at_ms, signal.result, signal.reason
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

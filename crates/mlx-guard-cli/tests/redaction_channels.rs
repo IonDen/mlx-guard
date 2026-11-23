@@ -755,6 +755,11 @@ fn a_run_in_the_warning_band_keeps_argv_and_environment_out_of_the_band_line() {
     let band_lines: Vec<&[u8]> = supervisor_lines(&output.stderr)
         .filter(|line| line.starts_with(b"mlx-guard: warning: "))
         .collect();
+    audit_telemetry(&format!(
+        "I38 a_run_in_the_warning_band_keeps_argv_and_environment_out_of_the_band_line band_lines={} floor=1 code={:?} wall_ms=3000",
+        band_lines.len(),
+        output.status.code()
+    ));
     assert!(
         !band_lines.is_empty(),
         "a run held in the band must print a warning line: {}",
@@ -801,6 +806,11 @@ fn a_limit_beyond_the_launch_estimate_keeps_argv_and_environment_out_of_the_fit_
     let fit_lines: Vec<&[u8]> = supervisor_lines(&output.stderr)
         .filter(|line| line.starts_with(b"mlx-guard: warning: your limit of "))
         .collect();
+    audit_telemetry(&format!(
+        "I42 a_limit_beyond_the_launch_estimate_keeps_argv_and_environment_out_of_the_fit_line fit_lines={} expected=1 code={:?}",
+        fit_lines.len(),
+        output.status.code()
+    ));
     assert_eq!(
         fit_lines.len(),
         1,
@@ -814,4 +824,11 @@ fn a_limit_beyond_the_launch_estimate_keeps_argv_and_environment_out_of_the_fit_
             String::from_utf8_lossy(fit_lines[0])
         );
     }
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::stderr()
+        .write_all(format!("\naudit-telemetry: {line}\n").as_bytes())
+        .ok();
 }

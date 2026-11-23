@@ -131,6 +131,10 @@ fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
     let calibration = report
         .calibration
         .expect("observe reports carry calibration");
+    audit_telemetry(&format!(
+        "observe_survives_a_loop_of_short_lived_children_at_the_default_interval complete={} incomplete={} total={}",
+        calibration.complete_samples, calibration.incomplete_samples, calibration.total_samples
+    ));
     assert_eq!(
         calibration.incomplete_samples, 0,
         "a child's exit still made a sample incomplete: {calibration:?}"
@@ -148,4 +152,13 @@ fn observe_survives_a_loop_of_short_lived_children_at_the_default_interval() {
         !churn_loop_alive(),
         "the churn loop outlived the supervisor's terminal-signal forwarding"
     );
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }

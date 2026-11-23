@@ -198,6 +198,11 @@ fn blocked_handler_times_out_without_blocking_the_supervisor() {
         assert!(started.elapsed() < Duration::from_secs(1));
         std::thread::sleep(Duration::from_millis(1));
     };
+    audit_telemetry(&format!(
+        "#4 blocked_handler_times_out_without_blocking_the_supervisor late_ms={} bound_ms=1000 worker_block_ms=1500 rejections={:?}",
+        started.elapsed().as_millis(),
+        poll.rejections
+    ));
     assert_eq!(poll.rejections, [CheckpointRejection::Late]);
     assert!(started.elapsed() < Duration::from_secs(1));
     process.kill_group().unwrap();
@@ -271,7 +276,9 @@ fn bounded_checkpoint_allocation_remains_observable_until_acknowledged() {
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut observed_growth = false;
     let mut acknowledged = false;
+    let mut audit_passes = 0u32;
     while Instant::now() < deadline && !acknowledged {
+        audit_passes += 1;
         let sample = sampler.sample_native(&inventory, epoch);
         if let SampleOutcome::Complete { total_bytes } = sample.outcome {
             observed_growth |= total_bytes >= baseline + ALLOCATION_BYTES / 2;
@@ -282,8 +289,22 @@ fn bounded_checkpoint_allocation_remains_observable_until_acknowledged() {
             .acknowledgement
             .is_some();
     }
+    audit_telemetry(&format!(
+        "bounded_checkpoint_allocation_remains_observable_until_acknowledged growth={observed_growth} ack={acknowledged} passes={audit_passes} loop_end_ms={} baseline={baseline} after_ack={:?}",
+        epoch.elapsed().as_millis(),
+        sampler.sample_native(&inventory, epoch).outcome
+    ));
     assert!(observed_growth);
     assert!(acknowledged);
     process.kill_group().unwrap();
     process.wait_root().unwrap();
+}
+
+/// Writes one `audit-telemetry:` line to the raw stderr, which the test harness does not capture.
+fn audit_telemetry(line: &str) {
+    std::io::Write::write_all(
+        &mut std::io::stderr(),
+        format!("\naudit-telemetry: {line}\n").as_bytes(),
+    )
+    .ok();
 }
