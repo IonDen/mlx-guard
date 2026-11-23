@@ -929,9 +929,20 @@ fn run_checkpoint_worker(mode: &str, limits: FixtureLimits) -> Result<(), RunErr
         .write_all(&acknowledgement)
         .and_then(|()| channel.flush())
         .map_err(|error| RunError::protocol(format!("checkpoint ack failed: {error}")))?;
+    announce_acknowledged(mode)?;
     black_box(&allocation);
     loop {
         thread::park();
+    }
+}
+
+/// Write ACKED for the allocating worker once its acknowledgement is flushed, so a test can wait
+/// for the acknowledgement to be readable on the channel instead of guessing with a timer.
+fn announce_acknowledged(mode: &str) -> Result<(), RunError> {
+    if mode == "allocate" {
+        write_phase("ACKED")
+    } else {
+        Ok(())
     }
 }
 
