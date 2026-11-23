@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::process::{Command, Stdio};
 use std::ptr;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -19,7 +19,8 @@ use std::time::{Duration, Instant};
 use mlx_guard_core::{
     CHECKPOINT_FD_ENV, CheckpointAcknowledgement, CheckpointArtifactKind,
     CheckpointArtifactMetadata, CheckpointHello, CheckpointNonce, CheckpointRequest,
-    CheckpointWorkerStatus, JournalEntry, JournalRecovery, MAX_CHECKPOINT_FRAME_BYTES,
+    CheckpointWorkerStatus, JournalEntry, JournalRecord, JournalRecovery,
+    MAX_CHECKPOINT_FRAME_BYTES,
 };
 use mlx_guard_test_support::FixtureLimits;
 
@@ -31,6 +32,20 @@ const TIMEOUT_EXIT: i32 = 124;
 
 /// How long the wall-time watchdog lets its stderr notice take before it exits anyway.
 const WATCHDOG_NOTICE_GRACE: Duration = Duration::from_millis(100);
+
+/// How long past its wall a `cpu-stall` fixture whose loop has stopped counting may take to
+/// write DONE and exit before the watchdog ends it anyway.
+///
+/// A loaded machine can leave the main thread off the CPU for several scheduler quanta at the
+/// wall; one second covers that by a wide margin, and extends a `cpu-stall` fixture's life by at
+/// most one second past its wall.
+const CPU_STALL_FINISH_GRACE: Duration = Duration::from_secs(1);
+
+/// How often the watchdog rereads the `cpu-stall` iteration count once the wall has passed.
+const CPU_STALL_PROGRESS_PROBE: Duration = Duration::from_millis(1);
+
+/// Iterations the `cpu-stall` busy loop has completed, published for the wall-time watchdog.
+static CPU_STALL_ITERATIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Wall time each `escape-flood` member gets after it announces its own escape.
 ///
@@ -47,14 +62,6 @@ const FLOOD_MEMBER_WALL_MS: u64 = 2_000;
 /// accumulating across the run.
 const CHURN_MEMBER_HOLD_MS: u64 = 50;
 
-/// How long a daemonizing intermediate stays alive after its grandchild announces a new session.
-///
-/// The grandchild is reachable as a descendant only through this parent link, and a fixture cannot
-/// observe the supervisor's sampler, so this is the window in which the escape can be seen. It is
-/// twenty times the 10 ms sampling interval the escape tests use, which keeps several samples in
-/// the window even on a starved machine whose sampling loop runs far slower than it asked to.
-const DAEMONIZE_OBSERVATION_HOLD: Duration = Duration::from_millis(200);
-
 /// Size the `checkpoint-artifact` worker claims for the state it says it saved.
 ///
 /// A distinctive value no other fixture number could be confused with, and nothing is written to
@@ -62,12 +69,14 @@ const DAEMONIZE_OBSERVATION_HOLD: Duration = Duration::from_millis(200);
 /// fact.
 const ARTIFACT_SIZE_BYTES: u64 = 1_048_576;
 
-/// Environment variable naming the supervisor journal a `zombie-holder` watches.
+/// Environment variable naming the supervisor journal a `zombie-holder` or a daemonizing
+/// intermediate watches.
 ///
 /// The holder keeps the owned group open, with no live member in it, until that journal records
-/// the signal it waits for. The hold therefore ends on the supervisor's own evidence that the
-/// signal was sent, not on a timer that a slow runner could outlast. The fixture's wall-time
-/// watchdog is the only other way the hold ends.
+/// the signal it waits for; the intermediate stays alive until that journal holds a sample taken
+/// after its grandchild left the owned group. Each hold therefore ends on the supervisor's own
+/// evidence, not on a timer that a slow runner could outlast. The fixture's wall-time watchdog is
+/// the only other way a hold ends.
 const RELEASE_JOURNAL_ENV: &str = "MLX_GUARD_FIXTURE_RELEASE_JOURNAL";
 
 /// Environment variable naming the file a `zombie-holder` creates once it has seen its signal
@@ -83,6 +92,16 @@ const INTERRUPT_PID_ENV: &str = "MLX_GUARD_FIXTURE_INTERRUPT_PID";
 
 /// Internal: the hex-encoded acknowledgement a `zombie-holder` writes once its launcher has exited.
 const ACKNOWLEDGEMENT_ENV: &str = "MLX_GUARD_FIXTURE_ACKNOWLEDGEMENT";
+
+/// Test-only: milliseconds a `cpu-stall` main thread sleeps after its busy loop and before its
+/// DONE write, so a test can force the descheduling a loaded machine produces there at random.
+/// No other mode reads it; children a mode starts inherit it.
+const PAUSE_BEFORE_DONE_ENV: &str = "MLX_GUARD_FIXTURE_PAUSE_BEFORE_DONE_MS";
+
+/// Test-only: milliseconds a `cpu-stall` main thread sleeps after its READY write and before its
+/// busy loop starts, so a test can force the descheduling a loaded machine produces there at
+/// random. No other mode reads it; children a mode starts inherit it.
+const PAUSE_BEFORE_LOOP_ENV: &str = "MLX_GUARD_FIXTURE_PAUSE_BEFORE_LOOP_MS";
 
 static CHECKPOINT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
@@ -107,14 +126,17 @@ fn run() -> Result<(), RunError> {
 
     let limits = FixtureLimits::new(allocation_bytes, Duration::from_millis(wall_ms))
         .map_err(|error| RunError::usage(error.to_string()))?;
-    start_watchdog(limits.wall_time());
+    // One start for both the wall-time watchdog and the cpu-stall loop's deadline, so nothing
+    // that holds the main thread between the two can move the deadline past the wall.
+    let started = Instant::now();
+    start_watchdog(started, limits.wall_time(), mode == "cpu-stall");
 
     match mode.as_str() {
         "allocate" => run_allocate(limits),
         "shared" => run_shared(limits),
         "shared-live" => run_shared_live(limits),
         "ramp" => run_ramp(limits),
-        "cpu-stall" => run_cpu_stall(limits),
+        "cpu-stall" => run_cpu_stall(limits, started),
         "fanout-stall" => run_fanout_stall(limits),
         "fanout-ignore-term" => run_fanout_ignore_term(limits),
         "fanout-ignore-term-member" => run_fanout_ignore_term_member(),
@@ -161,9 +183,12 @@ fn parse_u64(value: Option<String>, name: &str) -> Result<u64, RunError> {
         .map_err(|_| RunError::usage(format!("invalid {name}")))
 }
 
-fn start_watchdog(wall_time: Duration) {
+fn start_watchdog(started: Instant, wall_time: Duration, cpu_stall: bool) {
     thread::spawn(move || {
-        thread::sleep(wall_time);
+        thread::sleep((started + wall_time).saturating_duration_since(Instant::now()));
+        if cpu_stall {
+            wait_while_cpu_stall_loop_is_still();
+        }
         // The bug this replaces: `eprintln!("fixture wall-time ceiling reached");` ahead of the
         // exit. It blocked on a full stderr pipe and panicked on a closed one, ending only this
         // thread, so a parked fixture outlived its ceiling. The notice is now best effort, written
@@ -180,6 +205,34 @@ fn start_watchdog(wall_time: Duration) {
         }
         std::process::exit(TIMEOUT_EXIT);
     });
+}
+
+/// Hold the watchdog past the wall while a `cpu-stall` main thread is not running its loop.
+///
+/// The loop stops counting 5 ms before the wall, then writes DONE. A main thread the scheduler
+/// sets aside across the wall, inside that tail or anywhere after it, does not count either, and
+/// it gets `CPU_STALL_FINISH_GRACE` to write DONE and exit 0 instead of losing to this watchdog.
+/// The loop's deadline and this watchdog's wall come from the same start instant, read in `run()`
+/// before the watchdog starts, and the deadline falls 5 ms before the wall; so a loop still
+/// counting past the wall is the unbounded-loop bug, whatever the scheduler did to main before
+/// the loop. At most one iteration can complete after the wall: the one whose deadline check ran
+/// before it, or, for a main thread that reaches the loop only after the wall, the loop's
+/// unconditional first iteration. A second one returns within a few scheduler quanta and the
+/// fixture exits 124. A main thread held off the CPU for the whole work time runs that one
+/// iteration and writes `DONE iterations=1`.
+fn wait_while_cpu_stall_loop_is_still() {
+    let give_up = Instant::now() + CPU_STALL_FINISH_GRACE;
+    let at_wall = CPU_STALL_ITERATIONS.load(Ordering::Relaxed);
+    while Instant::now() < give_up {
+        thread::sleep(CPU_STALL_PROGRESS_PROBE);
+        if CPU_STALL_ITERATIONS
+            .load(Ordering::Relaxed)
+            .wrapping_sub(at_wall)
+            >= 2
+        {
+            return;
+        }
+    }
 }
 
 fn run_allocate(limits: FixtureLimits) -> Result<(), RunError> {
@@ -284,18 +337,45 @@ fn run_ramp(limits: FixtureLimits) -> Result<(), RunError> {
     }
 }
 
-fn run_cpu_stall(limits: FixtureLimits) -> Result<(), RunError> {
+fn run_cpu_stall(limits: FixtureLimits, started: Instant) -> Result<(), RunError> {
     write_phase(&format!(
         "READY mode=cpu-stall bytes={}",
         limits.allocation_bytes()
     ))?;
+    // Test-only: stand in for a main thread the scheduler sets aside before its loop starts.
+    pause_if_requested(PAUSE_BEFORE_LOOP_ENV, "before-loop")?;
     let work_time = limits.wall_time().saturating_sub(Duration::from_millis(5));
-    let deadline = Instant::now() + work_time;
+    let deadline = started + work_time;
     let mut iterations = 0_u64;
-    while Instant::now() < deadline {
+    // Bounded by its deadline; an unbounded loop here never prints DONE, keeps counting past the
+    // wall, and the watchdog's 124 fails `cpu_stall_worker_remains_bounded`. The body runs once
+    // before the first deadline check, so a main thread that reaches the loop after its deadline
+    // still does one unit of work instead of writing `DONE iterations=0`.
+    loop {
         iterations = black_box(iterations.wrapping_add(1));
+        CPU_STALL_ITERATIONS.store(iterations, Ordering::Relaxed);
+        if Instant::now() >= deadline {
+            break;
+        }
     }
+    // Test-only: stand in for a main thread the scheduler sets aside between its loop and DONE.
+    pause_if_requested(PAUSE_BEFORE_DONE_ENV, "before-done")?;
     write_phase(&format!("DONE iterations={iterations}"))
+}
+
+/// Sleep for the milliseconds a test-only pause knob names, after writing `PAUSED ms=<n> at=<at>`
+/// so the test can tell the pause happened.
+fn pause_if_requested(knob: &str, at: &str) -> Result<(), RunError> {
+    let Some(pause) = env::var_os(knob) else {
+        return Ok(());
+    };
+    let pause_ms = pause
+        .to_str()
+        .and_then(|text| text.parse::<u64>().ok())
+        .ok_or_else(|| RunError::usage(format!("{knob} must be numeric")))?;
+    write_phase(&format!("PAUSED ms={pause_ms} at={at}"))?;
+    thread::sleep(Duration::from_millis(pause_ms));
+    Ok(())
 }
 
 fn run_fanout_stall(limits: FixtureLimits) -> Result<(), RunError> {
@@ -509,6 +589,7 @@ fn run_double_fork_intermediate(limits: FixtureLimits) -> Result<(), RunError> {
 fn run_daemonize(limits: FixtureLimits) -> Result<(), RunError> {
     // The `double-fork` scaffolding, except the grandchild also opens its own session: it leaves
     // the owned process group instead of only losing its parent.
+    required_path(RELEASE_JOURNAL_ENV)?;
     let executable = env::current_exe()
         .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
     let wall_ms = limits.wall_time().as_millis().to_string();
@@ -543,7 +624,15 @@ fn run_daemonize(limits: FixtureLimits) -> Result<(), RunError> {
     }
 }
 
+/// Start a daemon in a new session, then stay its parent until the supervisor has sampled it.
+///
+/// The grandchild is reachable as a descendant only through this parent link, so this process
+/// exits only once the supervisor's journal proves a sample was taken after the escape: a sample
+/// already in flight when the baseline is read may predate it, so the hold ends at the second
+/// sample recorded after that read, whose snapshot began after it. If no such sample is ever
+/// recorded, the wall-time watchdog ends the hold with a failing exit status.
 fn run_daemonize_intermediate(limits: FixtureLimits) -> Result<(), RunError> {
+    let journal = required_path(RELEASE_JOURNAL_ENV)?;
     let executable = env::current_exe()
         .map_err(|error| RunError::fixture(format!("current executable unavailable: {error}")))?;
     let wall_ms = limits.wall_time().as_millis().to_string();
@@ -570,7 +659,10 @@ fn run_daemonize_intermediate(limits: FixtureLimits) -> Result<(), RunError> {
             "daemon announcement was unexpected: {announcement:?}"
         )));
     }
-    thread::sleep(DAEMONIZE_OBSERVATION_HOLD);
+    let baseline = journaled_samples(&wait_for_journal(&journal, |_| true));
+    wait_for_journal(&journal, |records| {
+        journaled_samples(records) >= baseline.saturating_add(2)
+    });
     write_phase(&format!("GRANDCHILD pid={}", child.id()))
 }
 
@@ -721,8 +813,8 @@ fn run_setsid_churn(limits: FixtureLimits) -> Result<(), RunError> {
             }
         }));
     }
-    // The watchdog installed by start_watchdog(limits.wall_time()) exits this process at the
-    // fixture ceiling, taking the spawner threads and their live escapees with it.
+    // The wall-time watchdog `run()` starts before every mode exits this process at the fixture
+    // ceiling, taking the spawner threads and their live escapees with it.
     for handle in handles {
         let _ = handle.join();
     }
@@ -1203,17 +1295,41 @@ fn write_inherited_checkpoint_frame(frame: &[u8]) -> Result<(), RunError> {
 /// The record is written only after the signal attempt returned, so once it is present the
 /// signal met the group while the parked member still held it open. The watchdog bounds the wait.
 fn wait_for_recorded_signal(journal: &std::path::Path, signal: u8) {
+    wait_for_journal(journal, |records| {
+        records.iter().any(
+            |record| matches!(&record.entry, JournalEntry::Signal(sent) if sent.signal == signal),
+        )
+    });
+}
+
+/// Poll the supervisor's journal until `condition` holds for its complete records, and return
+/// them.
+///
+/// A journal that cannot be read yet is polled again, never taken as empty. The watchdog bounds
+/// the wait.
+fn wait_for_journal(
+    journal: &std::path::Path,
+    condition: impl Fn(&[JournalRecord]) -> bool,
+) -> Vec<JournalRecord> {
     loop {
-        let recorded = JournalRecovery::read(journal).is_ok_and(|recovery| {
-            recovery.records.iter().any(|record| {
-                matches!(&record.entry, JournalEntry::Signal(sent) if sent.signal == signal)
-            })
-        });
-        if recorded {
-            return;
+        if let Ok(recovery) = JournalRecovery::read(journal)
+            && condition(&recovery.records)
+        {
+            return recovery.records;
         }
         thread::sleep(Duration::from_millis(1));
     }
+}
+
+/// Count the samples the supervisor journaled while it was running.
+///
+/// Its terminal records restate recent samples after a history reset; those are not new samples.
+fn journaled_samples(records: &[JournalRecord]) -> usize {
+    records
+        .iter()
+        .take_while(|record| !matches!(record.entry, JournalEntry::SampleHistoryReset))
+        .filter(|record| matches!(record.entry, JournalEntry::Sample(_)))
+        .count()
 }
 
 /// Park an exited member in the owned group, then idle with the default TERM disposition.

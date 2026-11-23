@@ -135,12 +135,20 @@ fn watchdog_terminates_a_stalled_interactive_fixture() {
 
 #[test]
 fn cpu_stall_worker_remains_bounded() {
-    // Catches an unbounded busy loop or a mode that never performs work.
+    // Catches an unbounded busy loop, a mode that never performs work, and a loop that stops
+    // before its deadline: the 25 ms wall leaves the loop 20 ms of work, which starts after
+    // `launched`, so the fixture cannot finish sooner.
+    let launched = Instant::now();
     let output = Command::new(FIXTURE)
         .args(["cpu-stall", "1", "25"])
         .output()
         .expect("fixture must run");
+    let elapsed = launched.elapsed();
     assert!(output.status.success());
+    assert!(
+        elapsed >= Duration::from_millis(20),
+        "the loop must run until its 20 ms work time is up; the fixture finished in {elapsed:?}"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.starts_with("READY mode=cpu-stall bytes=1\n"));
     let iterations: u64 = stdout
@@ -150,6 +158,96 @@ fn cpu_stall_worker_remains_bounded() {
         .parse()
         .expect("iteration count must be numeric");
     assert!(iterations > 0);
+}
+
+/// Run `cpu-stall` with one pause knob set and check the fixture both paused and finished.
+///
+/// The `PAUSED` line proves the knob was read and the pause happened; without it a renamed or
+/// lost knob read would leave these tests as copies of `cpu_stall_worker_remains_bounded`.
+/// `spawn-churn` children run the same watchdog path, so
+/// `churn_and_fast_root_exit_are_real_process_behaviors` needs no paused twin. Returns the
+/// fixture's stdout.
+fn assert_paused_cpu_stall_finishes(wall_ms: &str, knob: &str, pause_ms: &str, at: &str) -> String {
+    let output = Command::new(FIXTURE)
+        .args(["cpu-stall", "1", wall_ms])
+        .env(knob, pause_ms)
+        .output()
+        .expect("fixture must run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let paused = format!("PAUSED ms={pause_ms} at={at}");
+    assert!(
+        stdout.lines().any(|line| line == paused),
+        "the fixture never wrote {paused:?}: {:?} stdout={stdout:?} stderr={stderr:?}",
+        output.status
+    );
+    assert!(
+        output.status.success(),
+        "{:?} stdout={stdout:?} stderr={stderr:?}",
+        output.status
+    );
+    assert!(stdout.starts_with("READY mode=cpu-stall bytes=1\n"));
+    let iterations: u64 = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("DONE iterations="))
+        .expect("CPU fixture must report completed work")
+        .parse()
+        .expect("iteration count must be numeric");
+    assert!(iterations > 0);
+    stdout.into_owned()
+}
+
+#[test]
+fn cpu_stall_worker_finishes_when_descheduled_before_done() {
+    // Catches a watchdog that exits 124 at the wall while a finished loop's main thread is not
+    // running: the main thread is held off the CPU after its loop for 30 ms, longer than the
+    // 5 ms the loop leaves before the 1000 ms wall, so the pause always spans the wall and no
+    // scheduling luck lets the DONE write beat the watchdog by itself. The wall leaves the loop
+    // 995 ms to count at least once, which a loaded runner's late start cannot use up; a 25 ms
+    // wall left 20 ms, and losing that gave `DONE iterations=0`.
+    assert_paused_cpu_stall_finishes(
+        "1000",
+        "MLX_GUARD_FIXTURE_PAUSE_BEFORE_DONE_MS",
+        "30",
+        "before-done",
+    );
+}
+
+#[test]
+fn cpu_stall_worker_finishes_when_descheduled_before_its_loop() {
+    // Catches a loop deadline taken later than the watchdog's start: the main thread is held off
+    // the CPU for 50 ms after READY and before the loop, far more than the 5 ms the loop leaves
+    // before the 1000 ms wall. A deadline read after the pause keeps the loop counting past the
+    // wall and the watchdog exits 124 with no DONE; one shared start leaves the loop 945 ms of
+    // work and DONE before the wall. The wall is that long so a loaded runner that overshoots
+    // the pause or the READY write still leaves the loop work to do: a 100 ms wall left 45 ms,
+    // and losing that gave `DONE iterations=0`.
+    assert_paused_cpu_stall_finishes(
+        "1000",
+        "MLX_GUARD_FIXTURE_PAUSE_BEFORE_LOOP_MS",
+        "50",
+        "before-loop",
+    );
+}
+
+#[test]
+fn cpu_stall_worker_counts_once_when_its_loop_starts_after_its_work_time() {
+    // Catches a loop that checks its deadline before its first iteration: on the 25 ms wall of
+    // `cpu_stall_worker_remains_bounded` the loop's deadline is 20 ms after the fixture's start,
+    // and a main thread held off the CPU after READY for the whole 25 ms (as a slow READY write
+    // on a loaded runner does) reaches the loop after that deadline. A check-first loop then
+    // never counts and writes `DONE iterations=0`; a loop that counts before it checks writes 1.
+    // It also catches that one iteration being counted twice, which writes 2.
+    let stdout = assert_paused_cpu_stall_finishes(
+        "25",
+        "MLX_GUARD_FIXTURE_PAUSE_BEFORE_LOOP_MS",
+        "25",
+        "before-loop",
+    );
+    assert!(
+        stdout.lines().any(|line| line == "DONE iterations=1"),
+        "a loop reached only after its deadline must count exactly once: {stdout:?}"
+    );
 }
 
 #[test]

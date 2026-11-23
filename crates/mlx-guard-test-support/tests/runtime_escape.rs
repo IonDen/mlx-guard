@@ -128,11 +128,27 @@ fn run_escape_scenario(
     wall_time: &str,
     command: &[&str],
 ) -> (MutexGuard<'static, ()>, RuntimeResult, ReportV1, Vec<i32>) {
+    run_sampled_escape_scenario(wall_time, "10ms", command)
+}
+
+/// Supervise one escaping fixture command at the given sampling interval.
+///
+/// The fixture is also told where the supervisor's journal lives, so a fixture that must outlast
+/// a sample can wait for the supervisor's own record of one instead of guessing with a timer.
+fn run_sampled_escape_scenario(
+    wall_time: &str,
+    sample_interval: &str,
+    command: &[&str],
+) -> (MutexGuard<'static, ()>, RuntimeResult, ReportV1, Vec<i32>) {
     let runtime_lock = RUNTIME_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
     let directory = TestDirectory::new();
     let report_path = directory.0.join("report.json");
     let pid_path = directory.0.join("escapees.pid");
     let pid_file_assignment = format!("MLX_GUARD_FIXTURE_PID_FILE={}", pid_path.display());
+    let journal_assignment = format!(
+        "MLX_GUARD_FIXTURE_RELEASE_JOURNAL={}",
+        directory.0.join(".report.json.journal").display()
+    );
     let mut arguments = vec![
         "mlx-guard",
         "run",
@@ -141,11 +157,13 @@ fn run_escape_scenario(
         "--wall-time",
         wall_time,
         "--sample-interval",
-        "10ms",
+        sample_interval,
         "--report",
         report_path.to_str().unwrap(),
         "--env",
         pid_file_assignment.as_str(),
+        "--env",
+        journal_assignment.as_str(),
         "--",
     ];
     arguments.extend_from_slice(command);
@@ -205,14 +223,56 @@ fn a_daemonized_grandchild_is_a_counted_escape() {
     // Catches losing a daemonized descendant once its intermediate exits, and catches counting
     // that exited intermediate as a second escape.
     //
+    // The fixture's intermediate stays alive until the supervisor's journal holds a sample taken
+    // after the grandchild left the owned group, so the escape is seen however slowly the loop
+    // samples; the test below proves that at a one-second interval.
+    //
     // The wall is what ends this run, not what it measures: daemonizing costs three sequential
-    // process launches plus the fixture's 200 ms observation hold, about 230 ms on an idle
-    // machine. Both cushions stay above a second for a starved runner: the run outlasts the
-    // daemonizing by ~1.8 s, and the fixture's own watchdog outlasts the run by 2 s.
+    // process launches plus two sampling intervals, about 50 ms on an idle machine. Both cushions
+    // stay above a second for a starved runner: the run outlasts the daemonizing by over 1.9 s,
+    // and the fixture's own watchdog outlasts the run by 2 s.
     let (_runtime_lock, result, report, escapees) =
         run_escape_scenario("2s", &[FIXTURE, "daemonize", "1", "4000"]);
     let _cleanup = EscapeeCleanup(escapees.clone());
 
+    assert_eq!(escapees.len(), 1, "the fixture published {escapees:?}");
+    assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
+    assert_eq!(
+        report.escape.detected,
+        Observed::Available { value: true },
+        "{report:#?}"
+    );
+    assert_eq!(report.escape.escaped_count, Some(1), "{report:#?}");
+    assert!(
+        process_exists(escapees[0]),
+        "the daemon must still be running after the owned group is gone"
+    );
+}
+
+#[test]
+fn a_daemonized_grandchild_is_counted_however_slowly_the_supervisor_samples() {
+    // Catches a daemonizing fixture whose intermediate exits on a timer before any sample has
+    // seen the grandchild through it: at a one-second interval no sample can land inside a short
+    // fixed hold, so the escape would go uncounted for reasons that have nothing to do with the
+    // tracker. The same tracker bug as above also turns this red.
+    //
+    // The intermediate is released by the supervisor's second journaled sample after the
+    // announcement, about two intervals; the wall gives that about two more seconds, so a launch
+    // that slips the release by one sample still ends before the wall, and the fixture's own
+    // watchdog outlasts the run by 2 s.
+    //
+    // "Two more samples" holds because the supervisor's run loop samples and journals on one
+    // thread: `sample_once` in the CLI's runtime takes a sample, then records it, before the next
+    // sample starts. The first record after the baseline read may come from a snapshot already in
+    // flight at that read, but the second one's snapshot began only after the first was recorded,
+    // so after the read. A supervisor that overlapped snapshots, or started the next one before
+    // recording the last, would break that count.
+    let (_runtime_lock, result, report, escapees) =
+        run_sampled_escape_scenario("4s", "1s", &[FIXTURE, "daemonize", "1", "6000"]);
+    let _cleanup = EscapeeCleanup(escapees.clone());
+
+    // The scenario really sampled at one second, so the hold was tested against slow sampling.
+    assert_eq!(report.configuration.sample_interval_ms, 1000, "{report:#?}");
     assert_eq!(escapees.len(), 1, "the fixture published {escapees:?}");
     assert_eq!(result.outcome, SupervisorOutcome::PolicyIntervention);
     assert_eq!(
