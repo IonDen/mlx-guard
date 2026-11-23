@@ -30,6 +30,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -120,18 +121,30 @@ int main(void) {
 }
 "#;
 
+/// The number of the next scratch directory this process makes; it keeps two directories made at
+/// the same clock reading apart.
+static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
+
 /// An owner-only scratch directory (the supervisor refuses any other), removed on drop.
 struct TestDirectory(PathBuf);
 
 impl TestDirectory {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "mlx-guard-early-exit-banner-{}-{}",
-            std::process::id(),
+        Self::at(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+        )
+    }
+
+    /// The directory for a clock reading of `nanos`. Tests run on parallel threads and the clock
+    /// advances in steps, so two calls with the same reading must still get two directories.
+    fn at(nanos: u128) -> Self {
+        let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "mlx-guard-early-exit-banner-{}-{nanos}-{sequence}",
+            std::process::id()
         ));
         fs::create_dir(&path).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
@@ -143,6 +156,23 @@ impl Drop for TestDirectory {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn two_scratch_directories_made_at_the_same_clock_reading_are_two_directories() {
+    // Catches the scratch name being built from the process id and the clock alone: two tests on
+    // parallel threads that read the same instant then pick the same name, and the second one
+    // panics with "File exists" before it runs.
+    let instant = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let first = TestDirectory::at(instant);
+    let second = TestDirectory::at(instant);
+
+    assert_ne!(first.0, second.0);
+    assert!(first.0.is_dir(), "{:?} must exist", first.0);
+    assert!(second.0.is_dir(), "{:?} must exist", second.0);
 }
 
 /// Compile `source_text` with the system `cc` into `directory`, as `name`, passing `flags` first.
